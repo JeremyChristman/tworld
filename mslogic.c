@@ -2401,6 +2401,25 @@ static int advancegame(gamelogic* logic) {
     done:
     finalhousekeeping();
     preparedisplay();
+#ifdef TRACE_DESYNC
+    /* MOD (Jeremy): per-tick desync trace. No-op unless built with
+     * -DTRACE_DESYNC. Dumps shared-RNG value + blob/walker positions each
+     * engine tick to stderr, for diffing vs SuperCC's trace to pin the
+     * first-divergence tick. See tileWorldDevelopment ..\MSCC Desync RE\. */
+    {
+        int _i;
+        fprintf(stderr, "TWTICK\t%d\t%lu\t",
+                (int)currenttime(), (unsigned long)(mainprng()->value));
+        for (_i = 0; _i < creaturecount; ++_i) {
+            creature* _c = creatures[_i];
+            if ((_c->id == Blob || _c->id == Walker) && !_c->hidden)
+                fprintf(stderr, "%c@%d,%d/%d ",
+                        _c->id == Blob ? 'B' : 'W',
+                        (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID), (int)_c->dir);
+        }
+        fprintf(stderr, "\n");
+    }
+#endif
     return r;
 }
 
