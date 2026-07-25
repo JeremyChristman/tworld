@@ -32,7 +32,11 @@ TileWorldApp* g_pApp = nullptr;
 TileWorldMainWnd* g_pMainWnd = nullptr;
 
 
-const QString TileWorldApp::s_sTitle = QStringLiteral("Tile World");
+// MOD (Jeremy): fork build tag shown in the window/dialog title. Bump this
+// string on each production deploy (jc-1, jc-2, ...) so the running build is
+// always identifiable. Combined with the pack + level subtitle set in
+// tworld.c, the title reads "Tile World [jc-N] - <pack> - <level>".
+const QString TileWorldApp::s_sTitle = QStringLiteral("Tile World [jc-1]");
 
 
 TileWorldApp::TileWorldApp(int& argc, char** argv)
