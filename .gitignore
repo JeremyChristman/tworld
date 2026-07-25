@@ -1,0 +1,13 @@
+*.o
+*.obj
+*.a
+*.exe
+/comptime.h
+/comptime.bat
+/oshw-qt/ui_*.h
+/oshw-qt/moc_*.cpp
+/build
+/build-static
+/out
+CMakeCache.txt
+CMakeFiles/
