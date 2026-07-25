@@ -1,3 +1,10 @@
+> **This is a personal fork** of [SicklySilverMoon/tworld](https://github.com/SicklySilverMoon/tworld)
+> (tag 2.3.1) with a pack-name window-title mod and optional desync-trace instrumentation.
+> See **[FORK.md](FORK.md)** for what's changed, build instructions, and the SuperCC-replay
+> reverse-engineering project this supports. The text below is upstream's original README.
+
+---
+
 # Tile World
 
 Tile World is an emulation of the game "Chip's Challenge" for the Atari Lynx,
