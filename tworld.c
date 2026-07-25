@@ -1489,7 +1489,30 @@ static int runcurrentlevel(gamespec* gs) {
 
     valid = initgamestate(gs->series.games + gs->currentgame,
                           gs->series.ruleset);
-    changesubtitle(gs->series.games[gs->currentgame].name);
+    /* MOD (Jeremy): window title shows the level pack's name instead of
+     * the current level's name. series.name is the set filename (e.g.
+     * "Joshie.dat-ms.dac"), so strip known extensions off the end.
+     */
+    {
+        static char const *knownexts[] = { "dac", "dat", "ccl",
+                                           "dat-ms", "dat-lynx" };
+        static char packname[256];
+        char *dot;
+        unsigned int i;
+        int again = 1;
+        strcpy(packname, gs->series.name);
+        while (again && (dot = strrchr(packname, '.')) != NULL) {
+            again = 0;
+            for (i = 0 ; i < sizeof knownexts / sizeof *knownexts ; ++i) {
+                if (!stricmp(dot + 1, knownexts[i])) {
+                    *dot = '\0';
+                    again = 1;
+                    break;
+                }
+            }
+        }
+        changesubtitle(packname);
+    }
     passwordseen(gs, gs->currentgame);
     if (!islastinseries(gs, gs->currentgame))
         if (!valid || gs->series.games[gs->currentgame].unsolvable)

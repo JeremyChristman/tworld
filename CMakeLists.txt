@@ -142,7 +142,23 @@ if(WIN32)
 endif()
 
 if(OSHW STREQUAL "qt")
-    target_link_libraries(${TWORLD_EXE} PRIVATE SDL2::SDL2)
+    # MOD (Jeremy): when configured against a static Qt (CMAKE_PREFIX_PATH=
+    # /mingw64/qt5-static), link the windows platform plugin in and go
+    # fully static so the exe needs no bundled DLLs. Dynamic builds are
+    # unaffected (plugin target doesn't exist there).
+    if(TARGET Qt5::QWindowsIntegrationPlugin)
+        if(TARGET SDL2::SDL2-static)
+            target_link_libraries(${TWORLD_EXE} PRIVATE SDL2::SDL2-static)
+        else()
+            target_link_libraries(${TWORLD_EXE} PRIVATE SDL2::SDL2)
+        endif()
+        target_link_libraries(${TWORLD_EXE} PRIVATE Qt5::QWindowsIntegrationPlugin)
+        if(WIN32)
+            target_link_options(${TWORLD_EXE} PRIVATE -static)
+        endif()
+    else()
+        target_link_libraries(${TWORLD_EXE} PRIVATE SDL2::SDL2)
+    endif()
 endif()
 
 # Generate the current compile time

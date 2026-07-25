@@ -18,6 +18,15 @@
 #include <cstring>
 #include <cstdlib>
 
+/* MOD (Jeremy): when linking against a static Qt, the windows platform
+ * plugin must be compiled in explicitly (no platforms/qwindows.dll).
+ * No effect on dynamic-Qt builds.
+ */
+#if defined(QT_STATIC) || defined(QT_STATICPLUGIN)
+#include <QtPlugin>
+Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
+#endif
+
 
 TileWorldApp* g_pApp = nullptr;
 TileWorldMainWnd* g_pMainWnd = nullptr;
