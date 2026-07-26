@@ -70,6 +70,11 @@ enum {
  */
 static int advancecreature(creature* cr, int dir);
 
+#ifdef TRACE_DESYNC
+/* MOD (Jeremy): TRUE when the current level/tick is inside the traced window. */
+static int tracethistick(void);
+#endif
+
 /* The most recently used stepping phase value.
  */
 static int laststepping = 0;
@@ -1792,6 +1797,22 @@ static void activatecloner(int buttonpos) {
         dummy.id = creatureid(tileid);
         dummy.dir = creaturedirid(tileid);
         dummy.pos = pos;
+#ifdef TRACE_DESYNC
+        /* MOD (Jeremy): why a clone was or was not created. */
+        if (tracethistick()) {
+            int _to = pos, _ok;
+            int _y = pos / CXGRID + (dummy.dir == NORTH ? -1 : dummy.dir == SOUTH ? +1 : 0);
+            int _x = pos % CXGRID + (dummy.dir == WEST ? -1 : dummy.dir == EAST ? +1 : 0);
+            if (_y >= 0 && _y < CYGRID && _x >= 0 && _x < CXGRID)
+                _to = _y * CXGRID + _x;
+            _ok = canmakemove(&dummy, dummy.dir, CMM_CLONECANTBLOCK);
+            fprintf(stderr, "C\t%d\t%d\tcloner@%d,%d\ttile=%02X\tdir=%d\tdest=%d,%d\tdesttop=%02X\tcanmake=%d\n",
+                    (int)state->game->number, (int)currenttime(),
+                    (int)(pos % CXGRID), (int)(pos / CXGRID), tileid, (int)dummy.dir,
+                    (int)(_to % CXGRID), (int)(_to / CXGRID),
+                    (int)cellat(_to)->top.id, _ok);
+        }
+#endif
         if (!canmakemove(&dummy, dummy.dir, CMM_CLONECANTBLOCK))
             return;
         cr = awakencreature(pos);
@@ -2871,8 +2892,15 @@ static int advancegame(gamelogic* logic) {
             _k = ((int)_c->id - Chip) / 4;
             if (_k < 0 || _k >= (int)(sizeof _crletter))
                 continue;
-            fprintf(stderr, "%c,%d,%d ", _crletter[_k],
-                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID));
+            /* Direction as a canonical letter: the two engines encode it
+             * differently (bit flags here, enum ordinals in SuperCC), so the
+             * trace states it in terms both can agree on. Without this the diff
+             * is blind to a creature that is in the right place facing the wrong
+             * way -- which is exactly how GAP'sSub#10's real divergence hid. */
+            fprintf(stderr, "%c,%d,%d,%c ", _crletter[_k],
+                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID),
+                    _c->dir == NORTH ? 'N' : _c->dir == WEST ? 'W' :
+                    _c->dir == SOUTH ? 'S' : _c->dir == EAST ? 'E' : '-');
         }
         fprintf(stderr, "\tB:");
         for (_i = 0; _i < CXGRID * CYGRID; ++_i) {
