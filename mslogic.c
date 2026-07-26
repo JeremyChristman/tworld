@@ -24,6 +24,20 @@
 #define	FIX_ROW32_CLONER	1
 #endif
 
+/* MOD (Jeremy): the two Stage-2 desync fixes, likewise ON by default now that the
+ * A/B run they were flagged for is finished (269 MS sets / 21,342 solutions plus
+ * 909 Lynx solutions: 2 fixed, 0 regressions). Each makes the MS engine agree with
+ * a rule it already applies elsewhere -- see the comments at each site.
+ * Build with -DNO_FIX_BROKEN_TELEPORT_SLIDE / -DNO_FIX_TELEPORT_BLOCK_ONTO_CHIP
+ * to restore the old behaviour individually.
+ */
+#if !defined(NO_FIX_BROKEN_TELEPORT_SLIDE) && !defined(FIX_BROKEN_TELEPORT_SLIDE)
+#define	FIX_BROKEN_TELEPORT_SLIDE	1
+#endif
+#if !defined(NO_FIX_TELEPORT_BLOCK_ONTO_CHIP) && !defined(FIX_TELEPORT_BLOCK_ONTO_CHIP)
+#define	FIX_TELEPORT_BLOCK_ONTO_CHIP	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else

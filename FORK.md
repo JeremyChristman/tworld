@@ -26,8 +26,24 @@ exactly what's mine:
    ways: **on = 4 fixes, 0 regressions**; off reproduces the old behaviour exactly, down to an
    identical stderr warning census.
 
-3. **Per-tick desync trace** (`mslogic.c`, `#ifdef TRACE_DESYNC`).
-   A **no-op in normal builds.** When compiled with `-DTRACE_DESYNC`, `advancegame()` dumps the
+3. **Broken-teleport slide state** (`mslogic.c`, `NO_FIX_BROKEN_TELEPORT_SLIDE`).
+   A teleport lying under a floor tile is flagged `FS_BROKEN` at load, and every place that *acts* on
+   a teleport honours that — `teleportcreature()` and `endmovement()` both skip it. The slide code did
+   not: after bouncing Chip off a blocked slide it re-armed his slip state, and `choosechipmove()`
+   discards input from a slipping Chip, so the player's next move was swallowed. Fixes `TCCLP#283`.
+
+4. **Teleporting a block onto Chip** (`mslogic.c`, `NO_FIX_TELEPORT_BLOCK_ONTO_CHIP`).
+   A block may normally shove into Chip — that is how blocks squash him — but as a *teleport
+   destination* test MSCC judges the exit by what lies **under** Chip. Tile World answered TRUE
+   unconditionally and so picked a different exit teleport. Monsters already get this treatment in
+   the next branch of `canmakemove()`; blocks did not. Scoped to `CMM_TELEPORTPUSH`, which
+   `teleportcreature()` is the only caller to pass. Fixes `PeterM2#25`.
+
+5. **Per-tick desync trace** (`mslogic.c`, `#ifdef TRACE_DESYNC`).
+   A **no-op in normal builds.** Emits one canonical per-tick line (Chip, all creatures, all blocks,
+   as grid positions) tagged with the level number, matching the format SuperCC's `TraceLevel.java`
+   produces so the two can be diffed directly. Set `TW_TRACE_LEVEL=<n>` to trace a single level out
+   of a batch run. When compiled with `-DTRACE_DESYNC`, `advancegame()` dumps the
    shared-RNG value + blob/walker positions each engine tick to stderr, for diffing against
    SuperCC's trace to pin SuperCC→Tile World solution-replay desyncs. See the RE writeup below.
 
