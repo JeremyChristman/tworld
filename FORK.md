@@ -39,7 +39,20 @@ exactly what's mine:
    the next branch of `canmakemove()`; blocks did not. Scoped to `CMM_TELEPORTPUSH`, which
    `teleportcreature()` is the only caller to pass. Fixes `PeterM2#25`.
 
-5. **Per-tick desync trace** (`mslogic.c`, `#ifdef TRACE_DESYNC`).
+5. **Controller direction from stalled creatures** (`mslogic.c`, `NO_FIX_CONTROLLERDIR_STALLED`).
+   A Bug / Paramecium / Teeth standing on a beartrap or clone machine does not choose its own
+   direction — it takes `controllerdir()`, the MSCC "controller bug". Tile World wiped that to NIL
+   whenever it skipped a `CS_HASMOVED` creature (in practice a stalled tank), leaving the trapped
+   creature with no direction and costing it a move it should have made. SuperCC never clears it: its
+   list walk does `direction = monster.getDirection()` for every creature where `!isAffectedByCB()`
+   (all but Teeth/Bug/Paramecium), moved or not. **Fixes 11 desyncs** — the largest single win so far.
+   **Known cost:** `GAP'sSub#10 "Dimension Hole"` no longer replays. That was accepted deliberately.
+   Measured against SuperCC on that level, the old engine diverges at tick 119 and this one at tick
+   353, and at 119 SuperCC agrees with *this* engine — the old replay was completing by luck. It now
+   reaches a separate, unrelated bug: a spurious tank clone at (12,1) from the cloner wired to the
+   button at (1,19). That spurious clone is the next thing to chase.
+
+6. **Per-tick desync trace** (`mslogic.c`, `#ifdef TRACE_DESYNC`).
    A **no-op in normal builds.** Emits one canonical per-tick line (Chip, all creatures, all blocks,
    as grid positions) tagged with the level number, matching the format SuperCC's `TraceLevel.java`
    produces so the two can be diffed directly. Set `TW_TRACE_LEVEL=<n>` to trace a single level out

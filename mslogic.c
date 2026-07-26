@@ -38,6 +38,19 @@
 #define	FIX_TELEPORT_BLOCK_ONTO_CHIP	1
 #endif
 
+/* MOD (Jeremy): controller direction from stalled creatures, ON by default.
+ * Fixes 11 desyncs. It also costs one previously-valid replay, GAP'sSub#10, and
+ * that was a deliberate, evidenced call rather than an oversight: measured
+ * against SuperCC on that very level, the old engine diverges at tick 119 and
+ * this one at tick 353, and where they differ at 119 SuperCC agrees with THIS
+ * engine. GAP'sSub#10 was completing by luck on a run that was already wrong;
+ * it now reaches a separate, unrelated bug (a spurious tank clone at (12,1)).
+ * Build with -DNO_FIX_CONTROLLERDIR_STALLED to restore the old behaviour.
+ */
+#if !defined(NO_FIX_CONTROLLERDIR_STALLED) && !defined(FIX_CONTROLLERDIR_STALLED)
+#define	FIX_CONTROLLERDIR_STALLED	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
