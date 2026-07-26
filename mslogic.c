@@ -13,6 +13,17 @@
 #include    "logic.h"
 #include    "encoding.h"	/* MOD (Jeremy): fileidtotileid(), for the row-32 cloner glitch */
 
+/* MOD (Jeremy): the MSCC row-32 cloner glitch is ON by default. It went in as an
+ * opt-in flag purely so the same tree could be built both ways for an A/B run;
+ * that run is done (269 MS sets / 20,332 solutions plus 909 Lynx solutions:
+ * 4 fixed, 0 regressions), so the default build is now the emulating one -- a
+ * default nobody actually ships is just a second, untested engine.
+ * Build with -DNO_FIX_ROW32_CLONER to get the old discard-the-wiring behaviour.
+ */
+#if !defined(NO_FIX_ROW32_CLONER) && !defined(FIX_ROW32_CLONER)
+#define	FIX_ROW32_CLONER	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
