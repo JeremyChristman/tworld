@@ -1197,7 +1197,35 @@ static void choosecreaturemove(creature* cr) {
         } /* Actually, successful (0,0) moves don't kill Chip */
     }
     if (cr->state & CS_HASMOVED) {
+#ifdef FIX_CONTROLLERDIR_STALLED
+        /* MOD (Jeremy): a creature skipped here -- in practice a stalled tank --
+         * used to wipe the controller direction. MSCC does not: SuperCC's list
+         * walk does `direction = monster.getDirection()` for every creature that
+         * is not itself affected by the controller bug, whether or not it goes on
+         * to move (MSCreatureList.tick). So a stalled tank still contributes its
+         * FACING to the controller direction.
+         *
+         * That matters because a Bug / Paramecium / Teeth standing on a beartrap
+         * or clone machine takes its move direction straight from
+         * controllerdir(). Wiping it leaves such a creature with nothing to move
+         * on, so it sits still for a cycle it should have escaped.
+         *
+         * Found on TomP1Fixed#98 "TRAPS": at ct 644 both tanks ahead of the
+         * trapped bug are CS_HASMOVED, the bug inherits NIL instead of the second
+         * tank's north, misses its escape, so never presses the red button at
+         * (21,15) and the glider clone at (19,22) never happens.
+         *
+         * Only creatures that are NOT themselves subject to the controller bug
+         * contribute -- SuperCC guards this with isAffectedByCB(), which is true
+         * exactly for Teeth, Bug and Paramecium. Those three leave the direction
+         * untouched rather than setting or clearing it. Setting it for them too
+         * broke GAP'sSub#10 "Dimension Hole" (95 clone machines, 36 monsters on
+         * them), which is how the corpus caught the over-broad first version. */
+        if (cr->id != Teeth && cr->id != Bug && cr->id != Paramecium)
+            controllerdir() = cr->dir;
+#else
         controllerdir() = NIL;
+#endif
         return;
     }
     if (cr->state & (CS_SLIP | CS_SLIDE))
@@ -2648,6 +2676,29 @@ static int initgame(gamelogic* logic) {
     return TRUE;
 }
 
+#ifdef TRACE_DESYNC
+/* MOD (Jeremy): TRUE when the current level and tick fall inside the traced
+ * window. TW_TRACE_LEVEL picks the level (unset = all); TW_TRACE_TICK_LO/HI
+ * bound the ticks (unset = all). Used by the per-creature decision trace. */
+static int tracethistick(void) {
+    static int only = -2, lo = -2, hi = -2;
+    char const* e;
+
+    if (only == -2) {
+        e = getenv("TW_TRACE_LEVEL");   only = e ? atoi(e) : -1;
+        e = getenv("TW_TRACE_TICK_LO"); lo   = e ? atoi(e) : -1;
+        e = getenv("TW_TRACE_TICK_HI"); hi   = e ? atoi(e) : -1;
+    }
+    if (only >= 0 && (int)state->game->number != only)
+        return FALSE;
+    if (lo >= 0 && (int)currenttime() < lo)
+        return FALSE;
+    if (hi >= 0 && (int)currenttime() > hi)
+        return FALSE;
+    return TRUE;
+}
+#endif
+
 /* Advance the game state by one tick.
  */
 static int advancegame(gamelogic* logic) {
@@ -2672,7 +2723,40 @@ static int advancegame(gamelogic* logic) {
                 chipstatus() = CHIP_SQUISHED_DEATH; /* Squish patch */
             if (cr->hidden || (cr->state & CS_CLONING) || cr->id == Chip)
                 continue;
+#ifdef TRACE_DESYNC
+            /* MOD (Jeremy): per-creature decision trace. Shows WHY a creature did
+             * or did not move -- its state flags going in, the direction chosen,
+             * and whether the move succeeded. Needed because knowing the two
+             * engines disagree is not the same as knowing which branch refused
+             * the move. Window it with TW_TRACE_TICK_LO / TW_TRACE_TICK_HI. */
+            if (tracethistick()) {
+                int _bot = cellat(cr->pos)->bot.id;
+                fprintf(stderr, "D\t%d\t%d\tn=%d\tcr=%02X@%d,%d\tdir=%d\tstate=%02X%s%s%s\tbot=%02X%s\n",
+                        (int)state->game->number, (int)currenttime(), n,
+                        cr->id, (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                        (int)cr->dir, (int)cr->state,
+                        (cr->state & CS_RELEASED) ? " REL" : "",
+                        (cr->state & CS_HASMOVED) ? " MOVED" : "",
+                        (cr->state & (CS_SLIP | CS_SLIDE)) ? " SLIP" : "",
+                        _bot, _bot == Beartrap ? " INTRAP" : "");
+            }
+#endif
             choosemove(cr);
+#ifdef TRACE_DESYNC
+            if (tracethistick()) {
+                int _r;
+                fprintf(stderr, "D\t%d\t%d\tn=%d\t  chose tdir=%d",
+                        (int)state->game->number, (int)currenttime(), n, (int)cr->tdir);
+                if (cr->tdir != NIL) {
+                    _r = advancecreature(cr, cr->tdir);
+                    fprintf(stderr, "\t-> advance=%d newpos=%d,%d\n", _r,
+                            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID));
+                } else {
+                    fprintf(stderr, "\t-> (no move attempted)\n");
+                }
+                continue;
+            }
+#endif
             if (cr->tdir != NIL)
                 advancecreature(cr, cr->tdir);
         }
