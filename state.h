@@ -140,6 +140,17 @@ enum
  * Substructures of the game state
  */
 
+/* MOD (Jeremy): MSCC addresses one row past the bottom of the map -- a cloner
+ * wired to (x, 32) reads its creature template out of the game's variable
+ * block. Tile World models that as a virtual 33rd map row, ROW32POS(x). See
+ * activaterow32cloner() in mslogic.c. POS_INVALID is the value readpos() hands
+ * back for a coordinate pair that cannot name a cell at all; it sits past the
+ * virtual row so that a genuine (x, 32) wiring stays distinguishable from
+ * garbage, while every existing "pos >= CXGRID * CYGRID" test still rejects it.
+ */
+#define	ROW32POS(x)	(CXGRID * CYGRID + (x))
+#define	POS_INVALID	(CXGRID * (CYGRID + 1))
+
 /* Two x,y-coordinates give the locations of a button and what it is
  * connected to.
  */
@@ -257,7 +268,12 @@ typedef struct gamestate {
     xyconn		cloners[256];		/* list of cloner wirings */
     short		crlist[256];		/* list of creatures */
     char		hinttext[256];		/* text of the hint */
-    mapcell		map[CXGRID * CYGRID];	/* the game's map */
+    mapcell		map[CXGRID * (CYGRID + 1)];	/* the game's map, plus the
+						   MOD (Jeremy) virtual row 32
+						   used by the MSCC row-32
+						   cloner glitch. Nothing reads
+						   the extra row unless that
+						   glitch fires. */
 
     /* Ruleset specific state. A union could be used to reduce memory, but
        these are not large enough to make it worth it. */

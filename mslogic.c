@@ -11,6 +11,7 @@
 #include    "state.h"
 #include    "random.h"
 #include    "logic.h"
+#include    "encoding.h"	/* MOD (Jeremy): fileidtotileid(), for the row-32 cloner glitch */
 
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
@@ -1442,6 +1443,240 @@ static void choosemove(creature* cr) {
     }
 }
 
+#ifdef FIX_ROW32_CLONER
+
+/* MOD (Jeremy) -- the MSCC "row 32" cloner glitch. ---------------------------
+ *
+ * A cloner wired to (x, 32) addresses one cell past the bottom of the map. In
+ * the original CHIPS.EXE that lands in the game's own variable block, so the
+ * cloner takes its creature template from the bottom layer of row 0 and, on
+ * firing, spills MSCC's internal variables back out into that row. Levels were
+ * built on it deliberately -- TLFC3's "BLOCKED" / "REENTRY" / "THROUGH THE
+ * GATES" are a whole trilogy about it, and each uses the side effect (cancelling
+ * Chip's slide, moving him, blanking a cell) as the actual puzzle mechanic.
+ *
+ * Tile World has always thrown these wirings away, so SuperCC solutions for
+ * such levels cannot replay. This reproduces SuperCC's emulation of the glitch
+ * (game/MS/MSCreatureList.addClone + MSLevel.resetData). It only ever runs for
+ * a cloner address in row 32; nothing else in the engine is touched.
+ */
+
+/* The level's chip requirement as of level start, which is the value MSCC has
+ * sitting in its variable block. chipsneeded() decreases during play, so the
+ * initial figure has to be captured separately.
+ */
+static int initialchipsneeded = 0;
+
+/* Write one of MSCC's internal variables into the bottom layer of row 0 at the
+ * given column, and apply the side effect that comes with it. Mirrors
+ * SuperCC's MSLevel.resetData(). Columns hold a little-endian pair of bytes,
+ * so even columns carry the low byte and odd columns the high byte.
+ *
+ * MSCC skips the write when the byte would be 49 -- that is the data-file code
+ * for a clone machine, and writing one there would wreck the map it is reading
+ * its own template from.
+ */
+static void resetdata(int x) {
+    mapcell* cell;
+    creature* chip;
+    int shift, value, byte;
+
+    if (x < 0 || x >= CXGRID)
+        return;
+    cell = cellat(x); /* row 0 */
+    chip = getchip();
+    shift = (x & 1) ? 8 : 0;
+
+#define    writevar(v)    do {                                   \
+        byte = ((v) >> shift) & 0xFF;                            \
+        if (byte != 49)                                          \
+            cell->bot.id = fileidtotileid(byte);                 \
+    } while (0)
+#define    writevar_always(v)    \
+        (cell->bot.id = fileidtotileid((((v) >> shift) & 0xFF)))
+
+    switch (x) {
+        case 0:
+        case 1:
+            writevar(state->game->number);
+            break;
+        case 2:
+        case 3:
+            /* The number of levels in the set. A gamestate has no way back to
+             * the series it came from, so this one variable is not reachable
+             * here. No level in the corpus wires a cloner to column 2 or 3. */
+            warn("row-32 cloner: column %d (levelset length) is not emulated", x);
+            break;
+        case 4:
+        case 5:
+            writevar(state->game->time);
+            break;
+        case 6:
+        case 7:
+            writevar(initialchipsneeded);
+            break;
+        case 8:
+        case 9:
+            writevar_always(chippos() % CXGRID);
+            /* MSCC clears the variable it just read out. Chip's tile stays
+             * where it was on the map -- that desynchronisation is the glitch,
+             * not an oversight. */
+            chip->pos = (chippos() / CXGRID) * CXGRID;
+            break;
+        case 10:
+        case 11:
+            writevar_always(chippos() / CXGRID);
+            chip->pos = chippos() % CXGRID;
+            break;
+        case 12:
+        case 13:
+            writevar_always((chip->state & (CS_SLIP | CS_SLIDE)) ? 1 : 0);
+            endfloormovement(chip);
+            break;
+        case 14:
+        case 15:
+        case 16:
+        case 17:
+        case 18:
+        case 19:
+        case 20:
+        case 21:
+            /* Buffered input, title visibility and held keystrokes: SuperCC
+             * does not model any of them and simply blanks the cell. */
+            cell->bot.id = Empty;
+            break;
+        case 22:
+        case 23: {
+            int cause = 0;
+            int id = cellat(chippos())->top.id;
+            if (iscreature(id) && (creatureid(id) == Chip || creatureid(id) == Swimming_Chip)) {
+                if (creatureid(id) == Chip && cellat(chippos())->bot.id == Bomb)
+                    cause = 3;
+            } else if (id == Drowned_Chip) {
+                cause = 1;
+            } else if (id == Burned_Chip || id == Bombed_Chip) {
+                cause = 2;
+            } else if (id == Block_Static || creatureid(id) == Block) {
+                cause = 4;
+            } else if (iscreature(id)) {
+                cause = 5;
+            }
+            writevar_always(cause);
+            /* Reading the death cause also clears it, which revives Chip. */
+            chipstatus() = CHIP_OKAY;
+            break;
+        }
+        case 24:
+        case 25:
+            if (!(chip->state & (CS_SLIP | CS_SLIDE))) {
+                cell->bot.id = Empty;
+                break;
+            }
+            if (chip->dir == EAST) {
+                writevar_always(1);
+                endfloormovement(chip);
+            } else if (chip->dir == WEST) {
+                writevar_always(-1);
+                endfloormovement(chip);
+            } else {
+                writevar_always(0);
+            }
+            break;
+        case 26:
+        case 27:
+            if (!(chip->state & (CS_SLIP | CS_SLIDE))) {
+                cell->bot.id = Empty;
+                break;
+            }
+            if (chip->dir == SOUTH) {
+                writevar_always(1);
+                endfloormovement(chip);
+            } else if (chip->dir == NORTH) {
+                writevar_always(-1);
+                endfloormovement(chip);
+            } else {
+                writevar_always(0);
+            }
+            break;
+        case 28:
+        case 29:
+            writevar(state->crlistcount);
+            break;
+        case 30:
+            writevar_always(state->crlistcount ? state->crlist[0] % CXGRID : 0);
+            break;
+        case 31:
+            writevar_always(state->crlistcount ? state->crlist[0] / CXGRID : 0);
+            break;
+    }
+
+#undef    writevar
+#undef    writevar_always
+}
+
+/* Fire a cloner whose wiring points into row 32.
+ */
+static void activaterow32cloner(int pos) {
+    creature dummy;
+    creature* cr;
+    mapcell* cell;
+    int x, tileid, dir;
+
+    x = pos - CXGRID * CYGRID;
+
+    /* The template is whatever sits in row 0's bottom layer in this column --
+     * that is the memory MSCC is really reading. It has to be read before
+     * resetdata() runs, because resetdata() overwrites exactly that cell. */
+    tileid = cellat(x)->bot.id;
+    if (!iscreature(tileid) || creatureid(tileid) == Chip)
+        return;
+    dir = creaturedirid(tileid);
+
+    memset(&dummy, 0, sizeof dummy);
+    dummy.id = creatureid(tileid);
+    dummy.dir = dir;
+    dummy.pos = pos;
+
+    /* The variable spill only happens for a north-facing template that could
+     * actually step onto row 31. CMM_NOLEAVECHECK keeps this a pure question
+     * about the destination, matching SuperCC's canEnter(). */
+    if (dir == NORTH && canmakemove(&dummy, NORTH, CMM_NOLEAVECHECK | CMM_NOEXPOSEWALLS))
+        resetdata(x);
+
+    /* Now the clone itself enters the map from below. Give it a real cell in
+     * the virtual row so the ordinary movement machinery -- buttons, teleports,
+     * water, traps at the destination -- all runs exactly as it would for any
+     * other clone. */
+    cell = cellat(pos);
+    cell->top.id = tileid;
+    cell->top.state = 0;
+    cell->bot.id = Empty;
+    cell->bot.state = 0;
+
+    if (creatureid(tileid) == Block) {
+        cr = lookupblock(pos);
+        if (cr->dir != NIL)
+            advancecreature(cr, cr->dir);
+        /* If it could not get out, drop it: no live creature is ever left
+         * sitting off the map. */
+        if (!cr->hidden && cr->pos == pos)
+            removecreature(cr);
+    } else {
+        /* SuperCC parks a non-block clone at (x, 32) and lets it walk in on a
+         * later tick. Nothing in the corpus does that, and giving a creature a
+         * lasting off-map home would need the rest of the engine to expect it,
+         * so this stops at the variable spill. */
+        warn("row-32 cloner: non-block template %02X is not emulated", tileid);
+    }
+
+    cell->top.id = Nothing;
+    cell->top.state = 0;
+    cell->bot.id = Nothing;
+    cell->bot.state = 0;
+}
+
+#endif	/* FIX_ROW32_CLONER */
+
 /* Initiate the cloning of a creature.
  */
 static void activatecloner(int buttonpos) {
@@ -1450,8 +1685,15 @@ static void activatecloner(int buttonpos) {
     int pos, tileid;
 
     pos = clonerfrombutton(buttonpos);
-    if (pos < 0 || pos >= CXGRID * CYGRID)
+    if (pos < 0)
         return;
+    if (pos >= CXGRID * CYGRID) {
+#ifdef FIX_ROW32_CLONER
+        if (pos < CXGRID * CYGRID + CXGRID)
+            activaterow32cloner(pos);
+#endif
+        return;
+    }
     tileid = cellat(pos)->top.id;
     if (!iscreature(tileid) || creatureid(tileid) == Chip)
         return;
@@ -2322,6 +2564,13 @@ static int initgame(gamelogic* logic) {
             springtrap(xy->from);
         }
     }
+
+#ifdef FIX_ROW32_CLONER
+    /* MOD (Jeremy): chipsneeded() falls as chips are collected, so the figure
+     * MSCC keeps in its variable block has to be noted while it is still the
+     * level's own requirement. See resetdata(). */
+    initialchipsneeded = chipsneeded();
+#endif
 
     chipwait() = 0;
     completed() = FALSE;

@@ -14,6 +14,12 @@
  */
 extern int expandleveldata(gamestate *state);
 
+/* MOD (Jeremy): translate a raw data-file tile code into the internal tile id,
+ * returning Wall for codes the data-file format does not define. Used by the
+ * MSCC row-32 cloner glitch, which writes raw MSCC bytes into the map.
+ */
+extern int fileidtotileid(int id);
+
 /* Return the setup for a small level, created at runtime, that can be
  * displayed at the completion of a series.
  */

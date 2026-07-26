@@ -20,7 +20,13 @@
 /* Read an x-y coordinate pair from the level data stream. Ensure that
  * an invalid x value always produces an invalid coordinate.
  */
-#define	readpos(x, y)	(*(x) < CXGRID ? *(x) + CYGRID * *(y) : CXGRID*CYGRID)
+/* MOD (Jeremy): the out-of-range marker used to be CXGRID*CYGRID, which is the
+ * same number a legitimate (0, 32) wiring produces -- and (x, 32) is exactly
+ * the address the MSCC row-32 cloner glitch depends on. POS_INVALID sits one
+ * row further out, so the two cases stay distinguishable. Every existing
+ * "pos >= CXGRID * CYGRID" invalidity test still rejects both.
+ */
+#define	readpos(x, y)	(*(x) < CXGRID ? *(x) + CYGRID * *(y) : POS_INVALID)
 
 /* Translation table for the codes used by the data file to define the
  * initial state of a level.
@@ -139,6 +145,19 @@ static int const fileids[] = {
 /* 6E Chip S			*/	crtile(Chip, SOUTH),
 /* 6F Chip E			*/	crtile(Chip, EAST)
 };
+
+/* MOD (Jeremy): translate one raw data-file tile code into the internal tile
+ * id. The MSCC row-32 cloner glitch writes raw MSCC bytes straight into the
+ * map, so mslogic.c needs the same translation the level loader uses. Codes
+ * with no data-file meaning become walls, matching how the loader treats
+ * anything it cannot identify.
+ */
+int fileidtotileid(int id)
+{
+    if (id < 0 || (unsigned int)id >= sizeof fileids / sizeof *fileids)
+	return Wall;
+    return fileids[id];
+}
 
 /* Initialize the gamestate by reading the level data, in MS dat-file
  * format, from the state's setup.
