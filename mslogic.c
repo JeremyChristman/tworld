@@ -1075,6 +1075,24 @@ static int canmakemove(creature const* cr, int dir, int flags) {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
             id = creatureid(floor);
+#ifdef FIX_TELEPORT_BLOCK_ONTO_CHIP
+            /* MOD (Jeremy): a block is normally allowed to shove into Chip --
+             * that is how blocks squash him. But when this call is a *teleport
+             * destination* test, MSCC judges the exit by what lies UNDER Chip,
+             * so a block will not come out of a teleport on top of him if the
+             * floor there is solid; it moves on to the next teleport instead.
+             * Tile World answered TRUE unconditionally here and so chose a
+             * different exit. Monsters already get exactly this treatment in
+             * the branch just below; blocks did not.
+             * Found on PeterM2#25 "CONFUSING". */
+            if ((flags & CMM_TELEPORTPUSH) && (id == Chip || id == Swimming_Chip)) {
+                floor = cellat(to)->bot.id;
+                if (iscreature(floor)) {
+                    id = creatureid(floor);
+                    return id == Chip || id == Swimming_Chip;
+                }
+            } else
+#endif
             return id == Chip || id == Swimming_Chip;
         }
         if (!(movelaws[floor].block & dir))
@@ -2186,7 +2204,24 @@ static void floormovements_of_chip(void) /* split into two */
         if (ac) {
             cr->state &= ~CS_HASMOVED;
         } else {
+            int brokentele = 0; /* MOD (Jeremy), see below */
             floor = cellat(cr->pos)->bot.id;
+#ifdef FIX_BROKEN_TELEPORT_SLIDE
+            /* MOD (Jeremy): a teleport lying under a floor tile is flagged
+             * FS_BROKEN when the level loads, and every place that *acts* on a
+             * teleport already honours that -- endmovement() and
+             * teleportcreature() both skip it. The slide code did not: it kept
+             * treating a broken teleport as a working one, so after bouncing
+             * Chip off a blocked slide it re-armed his slip state. A slipping
+             * Chip has his input discarded by choosechipmove(), so the player's
+             * next move was swallowed and Chip slid on until he hit something.
+             *
+             * SuperCC ends the slide at that point, which is what lets the next
+             * keypress land. Noticed on TCCLP#283 "Cool", where the whole level
+             * is floor laid over a field of teleports. */
+            brokentele = (floor == Teleport)
+                      && (cellat(cr->pos)->bot.state & FS_BROKEN);
+#endif
             if (isslide(floor)) {
                 cr->state &= ~CS_HASMOVED;
             } else if (isice(floor)) {
@@ -2200,7 +2235,9 @@ static void floormovements_of_chip(void) /* split into two */
                 if (advancecreature(cr, slipdir))
                     cr->state &= ~CS_HASMOVED;
             }
-            if (cr->state & (CS_SLIP | CS_SLIDE)) {
+            if (brokentele) {
+                endfloormovement(cr);
+            } else if (cr->state & (CS_SLIP | CS_SLIDE)) {
                 endfloormovement(cr);
                 startfloormovement(cr, cellat(cr->pos)->bot.id, NIL); /* 3rd argument with tank reversal patch */
             }
@@ -2662,22 +2699,78 @@ static int advancegame(gamelogic* logic) {
     finalhousekeeping();
     preparedisplay();
 #ifdef TRACE_DESYNC
-    /* MOD (Jeremy): per-tick desync trace. No-op unless built with
-     * -DTRACE_DESYNC. Dumps shared-RNG value + blob/walker positions each
-     * engine tick to stderr, for diffing vs SuperCC's trace to pin the
-     * first-divergence tick. See tileWorldDevelopment ..\MSCC Desync RE\. */
+    /* MOD (Jeremy): per-tick desync trace. No-op unless built with -DTRACE_DESYNC.
+     *
+     * Emits one canonical line per engine tick, in the same format SuperCC's
+     * TraceLevel.java produces, so the two can be diffed directly to pin the
+     * first tick where the engines disagree. Everything on the line is stated in
+     * engine-independent terms (grid positions), because the two engines number
+     * their tiles and directions differently -- see ..\MSCC Desync RE\.
+     *
+     * The line carries the LEVEL NUMBER so a single whole-set batch run can be
+     * split per level; the earlier trace had to be located by a hand-picked
+     * creature signature, which only worked for one level.
+     *
+     * Blocks are scanned off the map rather than read from blocks[], because
+     * that array only holds blocks that have been touched -- an untouched block
+     * sitting on the map is absent from it. SuperCC likewise keeps MS blocks out
+     * of its monster list, so both sides scan.
+     */
     {
+        static char const _crletter[] = {
+            /* index = (id - Chip) / 4 */
+            '@',  /* Chip        0x40 */
+            '#',  /* Block       0x44 */
+            'K',  /* Tank        0x48 */
+            'b',  /* Ball        0x4C */
+            'G',  /* Glider      0x50 */
+            'F',  /* Fireball    0x54 */
+            'W',  /* Walker      0x58 */
+            'B',  /* Blob        0x5C */
+            'T',  /* Teeth       0x60 */
+            'U',  /* Bug         0x64 */
+            'P'   /* Paramecium  0x68 */
+        };
         int _i;
-        fprintf(stderr, "TWTICK\t%d\t%lu\t",
-                (int)currenttime(), (unsigned long)(mainprng()->value));
+        creature* _chip = getchip();
+
+        /* Batch mode replays every level in the set, which is megabytes of trace
+         * for one level's worth of interest. Set TW_TRACE_LEVEL=<n> to emit only
+         * that level. Unset traces everything. */
+        {
+            static int _only = -2;
+            if (_only == -2) {
+                char const* _e = getenv("TW_TRACE_LEVEL");
+                _only = _e ? atoi(_e) : -1;
+            }
+            if (_only >= 0 && (int)state->game->number != _only)
+                goto _tracedone;
+        }
+
+        fprintf(stderr, "T\t%d\t%d\t%lu\tchip=%d,%d,%d\tC:",
+                (int)state->game->number, (int)currenttime(),
+                (unsigned long)(mainprng()->value),
+                (int)(_chip->pos % CXGRID), (int)(_chip->pos / CXGRID),
+                (_chip->state & (CS_SLIP | CS_SLIDE)) ? 1 : 0);
         for (_i = 0; _i < creaturecount; ++_i) {
             creature* _c = creatures[_i];
-            if ((_c->id == Blob || _c->id == Walker) && !_c->hidden)
-                fprintf(stderr, "%c@%d,%d/%d ",
-                        _c->id == Blob ? 'B' : 'W',
-                        (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID), (int)_c->dir);
+            int _k;
+            if (_c->hidden || _c->id == Chip)
+                continue;
+            _k = ((int)_c->id - Chip) / 4;
+            if (_k < 0 || _k >= (int)(sizeof _crletter))
+                continue;
+            fprintf(stderr, "%c,%d,%d ", _crletter[_k],
+                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID));
+        }
+        fprintf(stderr, "\tB:");
+        for (_i = 0; _i < CXGRID * CYGRID; ++_i) {
+            int _id = state->map[_i].top.id;
+            if (_id == Block_Static || creatureid(_id) == Block)
+                fprintf(stderr, "%d,%d ", _i % CXGRID, _i / CXGRID);
         }
         fprintf(stderr, "\n");
+    _tracedone: ;
     }
 #endif
     return r;
