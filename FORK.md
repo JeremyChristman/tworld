@@ -14,7 +14,17 @@ exactly what's mine:
    level name — matching the same mod in SuperCC. Also adds the guarded static-Qt build plumbing so
    the deployed exe is self-contained (no bundled Qt DLLs). Dynamic builds are unaffected.
 
-2. **Per-tick desync trace** (`mslogic.c`, `#ifdef TRACE_DESYNC`).
+2. **MSCC row-32 cloner glitch** (`mslogic.c`, `encoding.c`, `state.h`, `#ifdef FIX_ROW32_CLONER`).
+   A **no-op in normal builds.** A cloner wired to `(x, 32)` addresses one cell past the bottom of
+   the map; in `CHIPS.EXE` that lands in the game's variable block, so the cloner reads its creature
+   template out of row 0's bottom layer and spills MSCC's internal variables back into that row when
+   it fires. Levels were built on it deliberately (TLFC3's *BLOCKED* / *REENTRY* / *THROUGH THE
+   GATES*). Tile World discarded these wirings, so SuperCC solutions for such levels could not
+   replay. Build with `-DCMAKE_C_FLAGS=-DFIX_ROW32_CLONER` to enable.
+   Measured over 269 sets / 20,332 valid solutions: **flag on = 4 fixes, 0 regressions**; flag off
+   reproduces the old behaviour exactly.
+
+3. **Per-tick desync trace** (`mslogic.c`, `#ifdef TRACE_DESYNC`).
    A **no-op in normal builds.** When compiled with `-DTRACE_DESYNC`, `advancegame()` dumps the
    shared-RNG value + blob/walker positions each engine tick to stderr, for diffing against
    SuperCC's trace to pin SuperCC→Tile World solution-replay desyncs. See the RE writeup below.
