@@ -51,6 +51,22 @@
 #define	FIX_CONTROLLERDIR_STALLED	1
 #endif
 
+/* MOD (Jeremy): slide re-facing, ON by default. Fixes 6 desyncs, 0 regressions.
+ * A creature that steps onto ice or a force floor is faced the way that tile is
+ * about to send it, at the moment it arrives -- SuperCC does this in
+ * MSCreature.setSliding's !wasSliding branch. It was the measured #1 cause of
+ * the remaining desyncs: 40 of 108 navy levels first diverged on a facing, and
+ * 41 of the 51 diverging creatures were standing on a slide tile facing the way
+ * that tile points in SuperCC and the way they arrived in Tile World.
+ * The creature's MAP TILE is deliberately left alone -- see the long note in
+ * startfloormovement() -- and canmakemove()'s turning-tank patch judges a
+ * slipping creature by its tile rather than its live direction to match.
+ * Build with -DNO_FIX_SLIDE_FACING to restore the old behaviour.
+ */
+#if !defined(NO_FIX_SLIDE_FACING) && !defined(FIX_SLIDE_FACING)
+#define	FIX_SLIDE_FACING	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
