@@ -838,7 +838,14 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
         if (enteringtile && !wasslipping && cr->id != Block && dir != NIL) {
             cr->dir = dir;
             updatecreature(cr);
+#ifndef NO_FIX_SLIDE_FACING_CONTROLLER
+            /* SuperCC also feeds the controller direction from here
+             * (setSliding: `level.getMonsterList().direction =
+             * this.getDirection()`). Tile World already sets controllerdir in
+             * choosecreaturemove and, since jc-4, for stalled creatures too, so
+             * a third setter may over-reach -- split out to be A/B tested. */
             controllerdir() = dir;
+#endif
         }
 #endif
         appendtosliplist(cr, dir);
