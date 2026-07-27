@@ -764,8 +764,20 @@ static void turntanks(creature const* inmidmove) {
 /* Add the given creature to the slip list if it is not already on it
  * (assuming that the given floor is a kind that causes slipping).
  */
+/* MOD (Jeremy): TRUE while endmovement() is running, i.e. the creature has just
+ * STEPPED ONTO this tile rather than having an existing slide re-armed. SuperCC
+ * re-faces only on that first transition (setSliding's !wasSliding branch), so
+ * the two cases have to be told apart. */
+static int enteringtile = FALSE;
+
 static void startfloormovement(creature* cr, int floor, int fdir) {
     int dir = fdir; /* fdir used with tank reversal when stuck on teleporter */
+#ifdef FIX_SLIDE_FACING
+    /* Was this creature already sliding? A creature skating from one ice tile
+     * onto the next keeps its facing; only the transition INTO a slide re-faces.
+     * Must be read before the clear below. */
+    int wasslipping = cr->state & (CS_SLIP | CS_SLIDE);
+#endif
 
     cr->state &= ~(CS_SLIP | CS_SLIDE);
 
@@ -794,6 +806,32 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
     } else {
         cr->state |= CS_SLIP;
         cr->frame = 0; /* safety with Tank Top Glitch */
+#ifdef FIX_SLIDE_FACING
+        /* MOD (Jeremy): face the creature the way it is about to slide, at the
+         * moment it steps onto the tile. Tile World kept the turned direction
+         * only in the slip-list entry and left cr->dir pointing the way the
+         * creature came in until the slide actually executed, a tick later.
+         * SuperCC re-faces on entry: MSCreature.setSliding, the !wasSliding
+         * branch, for every creature that is not a block.
+         *
+         * ⚠ DELIBERATELY NO updatecreature() HERE. That is the whole difference
+         * from the earlier attempt on wip/slide-facing-failed, which re-faced and
+         * then wrote the new facing into the creature's map tile -- 6 fixed, 33
+         * regressions. SuperCC does not write it: MSCreature.tryMove calls
+         * insertTile(toTile()) BEFORE it calls setSliding, so for one step the
+         * creature object faces the slide direction while its map tile still
+         * records the direction it arrived from. Cloning compares MAP TILES
+         * (MSCreatureList: `newTile == clone.toTile()`), so SuperCC's clone
+         * decisions never see the re-facing. Tile World's clone test reads the
+         * same map tile (`floor == crtile(cr->id, cr->dir)`), so leaving the tile
+         * alone keeps every clone decision exactly as it is today, which is what
+         * the 33 regressions were.
+         *
+         * dir is reused as already computed above, so no extra RNG is drawn for
+         * random force floors -- that draw has happened either way. */
+        if (enteringtile && !wasslipping && cr->id != Block && dir != NIL)
+            cr->dir = dir;
+#endif
         appendtosliplist(cr, dir);
     }
 }
@@ -1155,6 +1193,24 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             /* must check "floor", so same-dir non-creature tank will clone */
             if (F == NULL)
                 return FALSE;
+#ifdef FIX_SLIDE_FACING
+            /* MOD (Jeremy): this branch compares two LIVE directions, which has
+             * no counterpart in SuperCC -- there the whole clone test is
+             * tile-against-tile (MSCreatureList: `newTile == clone.toTile()`).
+             * That only stayed consistent while a creature's facing and its map
+             * tile could not disagree. Slide re-facing makes them disagree by
+             * design for one step, so a creature that has just been turned by
+             * stepping onto ice or a force floor would answer this test with a
+             * direction its tile does not show, and the cloner fires when
+             * SuperCC's would not.
+             * Measured on TomP1Fixed#70 t=139: cloner (11,1) holds a glider
+             * tile 52 (south), the destination tile reads 50 (north), and the
+             * clone still fired because the destination glider had just been
+             * re-faced south by the force floor under it.
+             * So for a slipping creature, judge it by its tile, as SuperCC does. */
+            if (F->state & (CS_SLIP | CS_SLIDE))
+                return floor == crtile(cr->id, cr->dir);
+#endif
             if (F->dir == cr->dir)
                 return TRUE;
             return FALSE;
@@ -1948,6 +2004,9 @@ static void endmovement(creature* cr, int dir) {
     static int const delta[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
     mapcell* cell;
     maptile* tile;
+#ifdef FIX_SLIDE_FACING
+    enteringtile = TRUE;   /* MOD (Jeremy): cleared at the slide re-arm sites */
+#endif
     int dead = FALSE;
     int wasslipping;
     int oldpos, newpos;
@@ -2319,6 +2378,9 @@ static void floormovements_of_chip(void) /* split into two */
                 endfloormovement(cr);
             } else if (cr->state & (CS_SLIP | CS_SLIDE)) {
                 endfloormovement(cr);
+#ifdef FIX_SLIDE_FACING
+                enteringtile = FALSE;  /* re-arming an existing slide, not entering */
+#endif
                 startfloormovement(cr, cellat(cr->pos)->bot.id, NIL); /* 3rd argument with tank reversal patch */
             }
         }
@@ -2369,6 +2431,9 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             if (cr->state & (CS_SLIP | CS_SLIDE)) {
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
+#ifdef FIX_SLIDE_FACING
+                enteringtile = FALSE;  /* re-arming an existing slide, not entering */
+#endif
                 startfloormovement(cr, cellat(cr->pos)->bot.id, ac ? NIL : origdir); /* 3rd argument with tank reversal patch */
             }
         }
