@@ -732,6 +732,18 @@ static void turntanks(creature const* inmidmove) {
         creature* cr = creatures[n]; /* convenience, Tank Top Glitch */
         if (cr->hidden || cr->id != Tank)
             continue;
+#ifdef FIX_TANK_TURN_SLIDING
+        /* MOD (Jeremy): a sliding tank is not turned by a blue button. SuperCC
+         * guards its whole turn with `isTank() && !isSliding()`
+         * (MSLevel.turnTanks); Tile World reversed every tank and then tried to
+         * patch the sliding case afterwards via the Tank Top Glitch branch.
+         * On GAP'sSub#10 a tank parked on a teleport -- and therefore slipping --
+         * is reversed here but not in SuperCC, which is what leaves it facing the
+         * same way as a cloner's tank and produces a clone that should not
+         * exist. */
+        if (cr->state & (CS_SLIP | CS_SLIDE))
+            continue;
+#endif
         cr->dir = back(cr->dir);
         if (cr->state & CS_SLIP && !(cr->state & CS_SLIDE)
             && cr->frame != 0 && cr->moving == 0) /* cr->moving: SGG instead */
@@ -760,8 +772,21 @@ static void turntanks(creature const* inmidmove) {
 /* Add the given creature to the slip list if it is not already on it
  * (assuming that the given floor is a kind that causes slipping).
  */
+/* MOD (Jeremy): TRUE while endmovement() is running, i.e. the creature has just
+ * stepped onto this tile rather than having an existing slide re-armed. SuperCC
+ * re-faces a creature only on that first transition (setSliding's !wasSliding
+ * branch), so the two cases have to be told apart. */
+static int enteringtile = FALSE;
+
 static void startfloormovement(creature* cr, int floor, int fdir) {
     int dir = fdir; /* fdir used with tank reversal when stuck on teleporter */
+#ifdef FIX_SLIDE_FACING
+    /* MOD (Jeremy): was this creature ALREADY sliding? SuperCC re-faces only on
+     * the transition into a slide (setSliding's !wasSliding branch), so a
+     * creature skating from one ice tile onto the next keeps its facing. Must be
+     * read before the clear below. */
+    int wasslipping = cr->state & (CS_SLIP | CS_SLIDE);
+#endif
 
     cr->state &= ~(CS_SLIP | CS_SLIDE);
 
@@ -790,6 +815,32 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
     } else {
         cr->state |= CS_SLIP;
         cr->frame = 0; /* safety with Tank Top Glitch */
+#ifdef FIX_SLIDE_FACING
+        /* MOD (Jeremy): face the creature the way it is about to slide, at the
+         * moment it steps onto the tile. Tile World kept the turned direction
+         * only in the slip-list entry and left cr->dir pointing the way the
+         * creature came in, until the slide actually executed a tick later.
+         *
+         * SuperCC does it on entry -- MSCreature.setSliding, the !wasSliding
+         * branch -- for every creature that is not a block, and sets the
+         * controller direction from it at the same time.
+         *
+         * A creature's facing IS its map tile, and cloning compares the
+         * destination against crtile(id, dir), so one tick of wrong facing is
+         * enough to change whether a clone machine fires. On GAP'sSub#10 that
+         * is exactly what happens: a paramecium enters an ice corner facing the
+         * wrong way, and ~200 ticks later a tank ends up matching a cloner's
+         * tank that SuperCC leaves unmatched, so Tile World clones a tank that
+         * should never exist.
+         *
+         * dir is reused as already computed above, so no extra RNG is drawn for
+         * random force floors -- the draw has happened either way. */
+        if (enteringtile && !wasslipping && cr->id != Block && dir != NIL) {
+            cr->dir = dir;
+            updatecreature(cr);
+            controllerdir() = dir;
+        }
+#endif
         appendtosliplist(cr, dir);
     }
 }
@@ -1947,6 +1998,9 @@ static void endmovement(creature* cr, int dir) {
     int dead = FALSE;
     int wasslipping;
     int oldpos, newpos;
+#ifdef FIX_SLIDE_FACING
+    enteringtile = TRUE;   /* MOD (Jeremy): cleared at the slide re-arm sites */
+#endif
     int id, floor, i;
     int crid; /* Non-existence patch */
     int blockcloning = FALSE; /* Squish patch */
@@ -2315,6 +2369,9 @@ static void floormovements_of_chip(void) /* split into two */
                 endfloormovement(cr);
             } else if (cr->state & (CS_SLIP | CS_SLIDE)) {
                 endfloormovement(cr);
+#ifdef FIX_SLIDE_FACING
+                enteringtile = FALSE;  /* re-arming an existing slide, not entering */
+#endif
                 startfloormovement(cr, cellat(cr->pos)->bot.id, NIL); /* 3rd argument with tank reversal patch */
             }
         }
@@ -2365,6 +2422,9 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             if (cr->state & (CS_SLIP | CS_SLIDE)) {
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
+#ifdef FIX_SLIDE_FACING
+                enteringtile = FALSE;  /* re-arming an existing slide, not entering */
+#endif
                 startfloormovement(cr, cellat(cr->pos)->bot.id, ac ? NIL : origdir); /* 3rd argument with tank reversal patch */
             }
         }
