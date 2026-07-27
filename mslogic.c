@@ -73,6 +73,10 @@ static int advancecreature(creature* cr, int dir);
 #ifdef TRACE_DESYNC
 /* MOD (Jeremy): TRUE when the current level/tick is inside the traced window. */
 static int tracethistick(void);
+/* MOD (Jeremy): the per-creature decision dump is enormous -- it dominates a
+ * whole-set trace and is only wanted when debugging one level by hand. Off
+ * unless TW_TRACE_DECISIONS is set. The per-tick position dump is unaffected. */
+static int tracedecisions(void);
 #endif
 
 /* The most recently used stepping phase value.
@@ -2715,21 +2719,50 @@ static int initgame(gamelogic* logic) {
  * window. TW_TRACE_LEVEL picks the level (unset = all); TW_TRACE_TICK_LO/HI
  * bound the ticks (unset = all). Used by the per-creature decision trace. */
 static int tracethistick(void) {
-    static int only = -2, lo = -2, hi = -2;
+    static int lo = -2, hi = -2;
+    static char levels[1024];
+    static int haslevels = -1;
     char const* e;
+    char needle[16];
 
-    if (only == -2) {
-        e = getenv("TW_TRACE_LEVEL");   only = e ? atoi(e) : -1;
-        e = getenv("TW_TRACE_TICK_LO"); lo   = e ? atoi(e) : -1;
-        e = getenv("TW_TRACE_TICK_HI"); hi   = e ? atoi(e) : -1;
+    if (haslevels < 0) {
+        e = getenv("TW_TRACE_LEVEL");
+        if (e && *e) {
+            /* MOD (Jeremy): accepts a comma-separated LIST, so one batch run can
+             * trace every level of interest in a set instead of one run each. */
+            snprintf(levels, sizeof levels, ",%s,", e);
+            haslevels = 1;
+        } else {
+            haslevels = 0;
+        }
+        e = getenv("TW_TRACE_TICK_LO"); lo = e ? atoi(e) : -1;
+        e = getenv("TW_TRACE_TICK_HI"); hi = e ? atoi(e) : -1;
     }
-    if (only >= 0 && (int)state->game->number != only)
-        return FALSE;
+    if (haslevels) {
+        /* Cache the per-level answer: this runs once per creature per tick over
+         * a whole set, and doing the string search every call made a batch run
+         * several times slower than an ordinary one. */
+        static int cachedlevel = -1, cachedanswer = FALSE;
+        int num = (int)state->game->number;
+        if (num != cachedlevel) {
+            snprintf(needle, sizeof needle, ",%d,", num);
+            cachedlevel = num;
+            cachedanswer = strstr(levels, needle) != NULL;
+        }
+        if (!cachedanswer)
+            return FALSE;
+    }
     if (lo >= 0 && (int)currenttime() < lo)
         return FALSE;
     if (hi >= 0 && (int)currenttime() > hi)
         return FALSE;
     return TRUE;
+}
+
+static int tracedecisions(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_TRACE_DECISIONS"); on = (e && *e) ? 1 : 0; }
+    return on;
 }
 #endif
 
@@ -2763,7 +2796,7 @@ static int advancegame(gamelogic* logic) {
              * and whether the move succeeded. Needed because knowing the two
              * engines disagree is not the same as knowing which branch refused
              * the move. Window it with TW_TRACE_TICK_LO / TW_TRACE_TICK_HI. */
-            if (tracethistick()) {
+            if (tracedecisions() && tracethistick()) {
                 int _bot = cellat(cr->pos)->bot.id;
                 fprintf(stderr, "D\t%d\t%d\tn=%d\tcr=%02X@%d,%d\tdir=%d\tstate=%02X%s%s%s\tbot=%02X%s\n",
                         (int)state->game->number, (int)currenttime(), n,
@@ -2777,7 +2810,7 @@ static int advancegame(gamelogic* logic) {
 #endif
             choosemove(cr);
 #ifdef TRACE_DESYNC
-            if (tracethistick()) {
+            if (tracedecisions() && tracethistick()) {
                 int _r;
                 fprintf(stderr, "D\t%d\t%d\tn=%d\t  chose tdir=%d",
                         (int)state->game->number, (int)currenttime(), n, (int)cr->tdir);
@@ -2870,12 +2903,9 @@ static int advancegame(gamelogic* logic) {
          * for one level's worth of interest. Set TW_TRACE_LEVEL=<n> to emit only
          * that level. Unset traces everything. */
         {
-            static int _only = -2;
-            if (_only == -2) {
-                char const* _e = getenv("TW_TRACE_LEVEL");
-                _only = _e ? atoi(_e) : -1;
-            }
-            if (_only >= 0 && (int)state->game->number != _only)
+            /* MOD (Jeremy): share the one filter, so the per-tick dump and the
+             * per-creature decision dump always agree on what is being traced. */
+            if (!tracethistick())
                 goto _tracedone;
         }
 
