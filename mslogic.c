@@ -113,6 +113,22 @@
 #define	FIX_TELEPORT_DEFER_BUTTONS	1
 #endif
 
+/* MOD (Jeremy): blue-button timing, ON by default. Fixes 11 desyncs, 0
+ * regressions, and recovers BOTH levels earlier releases knowingly cost --
+ * GAP'sSub#10 (jc-4) and TomP3#140/TomP3Lynx#140 (jc-7).
+ * Tile World reversed tanks inside endmovement(), where cr->pos is still the OLD
+ * cell and the mover still carries the CS_SLIP of the tile it is leaving.
+ * SuperCC presses buttons after tryMove returns, once the creature has landed and
+ * setSliding() has run. Holding the press until the move completes is what makes
+ * SuperCC's `isTank() && !isSliding()` guard behave -- three attempts to port that
+ * guard on its own each scored 1 fixed / 18 regressions, because Tile World fired
+ * the button mid-slide and the guard then skipped the very tanks SuperCC reverses.
+ * Build with -DNO_FIX_BLUE_BUTTON_TIMING to restore the old behavior.
+ */
+#if !defined(NO_FIX_BLUE_BUTTON_TIMING) && !defined(FIX_BLUE_BUTTON_TIMING)
+#define	FIX_BLUE_BUTTON_TIMING	1
+#endif
+
 #if !defined(NO_FIX_TANK_ON_CLONER) && !defined(FIX_TANK_ON_CLONER)
 #define	FIX_TANK_ON_CLONER	1
 #endif
