@@ -1489,7 +1489,22 @@ static void choosecreaturemove(creature* cr) {
 
     if (cr->id == Tank) {
         if ((cr->state & CS_RELEASED) ||
+#ifdef FIX_TANK_ON_CLONER
+            /* MOD (Jeremy): the `&& floor != CloneMachine` here was commented out
+             * with the note "(c) bug: tank clones should stall". Restoring it.
+             * As it stands, a tank sitting on a clone machine that fails a move
+             * once picks up CS_HASMOVED and is then skipped by
+             * choosecreaturemove() for good, so it never steps off. SuperCC does
+             * step it off -- measured on DrewT1#32, where row 6 is a bank of six
+             * cloners and the tank on 16,6 walks north to 16,5 at t=59 in
+             * SuperCC while Tile World leaves it parked. That level has exactly
+             * one tank, so the trace pairing is certain.
+             * CREATURE-POS is 11/19 tanks and 5 of them are sitting on a cloner
+             * in Tile World while SuperCC has moved them off. */
+            (floor != Beartrap && floor != CloneMachine))
+#else
             (floor != Beartrap /*&& floor != CloneMachine*/)) /* (c) bug: tank clones should stall */
+#endif
             cr->state |= CS_HASMOVED;
         cr->tdir = NIL; /* handle stacked tanks */
     }
