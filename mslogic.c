@@ -838,6 +838,17 @@ static void removecreature(creature* cr) {
  * advancecreature() once the move is complete. See the notes at both sites. */
 static int pendingtankturn = FALSE;
 #endif
+#ifdef FIX_BUTTON_TIMING_GREENBROWN
+/* MOD (Jeremy): the same deferral for the OTHER two inline button presses.
+ * SuperCC collects every button into pressedButtons during tryMove and presses
+ * them all AFTER it returns (MSCreature.tick) -- green and brown included. Tile
+ * World fires togglewalls() and springtrap() inline inside endmovement(), where
+ * cr->pos is still the old cell and the mover's slide state is that of the tile
+ * it is leaving. That is exactly the shape jc-9 fixed for cloners and jc-10 for
+ * blue buttons; these two are the only inline presses left. */
+static int pendingtogglewalls = FALSE;
+static int pendingtrappos = -1;
+#endif
 
 static void turntanks(creature const* inmidmove) {
     int n;
@@ -2480,8 +2491,13 @@ static void endmovement(creature* cr, int dir) {
         case Button_Green:
             if (cr->state & CS_DEFERPUSH)
                 tile->state |= FS_BUTTONDOWN;
+#ifdef FIX_BUTTON_TIMING_GREENBROWN
+            else
+                pendingtogglewalls = TRUE;
+#else
             else
                 togglewalls();
+#endif
             break;
         case Button_Red:
             cr->moving = 1; /* Hack with SGG */
@@ -2495,8 +2511,13 @@ static void endmovement(creature* cr, int dir) {
         case Button_Brown:
             if (cr->state & CS_DEFERPUSH)
                 tile->state |= FS_BUTTONDOWN;
+#ifdef FIX_BUTTON_TIMING_GREENBROWN
+            else
+                pendingtrappos = newpos;
+#else
             else
                 springtrap(newpos);
+#endif
             addsoundeffect(SND_BUTTON_PUSHED);
             break;
     }
@@ -2601,6 +2622,30 @@ static int advancecreature(creature* cr, int dir) {
     if (pendingtankturn) {
         pendingtankturn = FALSE;
         turntanks(NULL);
+    }
+#endif
+#ifdef FIX_BUTTON_TIMING_GREENBROWN
+    /* Same point in the move as the blue-button deferral above: the position is
+     * committed and the new tile's slide state has been applied. */
+    if (pendingtogglewalls) {
+        pendingtogglewalls = FALSE;
+#ifdef TRACE_DESYNC
+        if (traceschedule() && tracethistick())
+            fprintf(stderr, "S\t%d\t%d\t%d\tphase=%s\tDEFERRED-GREEN\n",
+                    (int)state->game->number, (int)currenttime(), schedseq++, schedphase);
+#endif
+        togglewalls();
+    }
+    if (pendingtrappos >= 0) {
+        int _p = pendingtrappos;
+        pendingtrappos = -1;
+#ifdef TRACE_DESYNC
+        if (traceschedule() && tracethistick())
+            fprintf(stderr, "S\t%d\t%d\t%d\tphase=%s\tDEFERRED-BROWN@%d,%d\n",
+                    (int)state->game->number, (int)currenttime(), schedseq++, schedphase,
+                    _p % CXGRID, _p / CXGRID);
+#endif
+        springtrap(_p);
     }
 #endif
     if (cr->id == Chip)
