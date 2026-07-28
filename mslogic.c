@@ -824,10 +824,30 @@ static void turntanks(creature const* inmidmove) {
         creature* cr = creatures[n]; /* convenience, Tank Top Glitch */
         if (cr->hidden || cr->id != Tank)
             continue;
+#ifdef FIX_TANK_TURN_SLIDING_B
+        /* MOD (Jeremy): variant B of SuperCC's `isTank() && !isSliding()` guard.
+         * Variant A -- a bare `continue`, which is what SuperCC's loop body
+         * literally does -- scored 1 fixed / 18 regressions on jc-9
+         * (wip/tank-turn-sliding-failed-jc9). But measuring the 12 tank levels
+         * showed 9 of 12 diverge LATER under it and only 3 earlier, so the RULE
+         * is directionally right and the PORT is what costs the 18.
+         * The difference: Tile World's loop body also does bookkeeping SuperCC has
+         * no analog for -- CS_TURNING | CS_HASMOVED, and the updatecreature() /
+         * Spontaneous Generation branches below. A bare `continue` silently drops
+         * all of it for every sliding tank.
+         * So skip ONLY the direction reversal, and let the rest of the body run. */
+        if (!(cr->state & (CS_SLIP | CS_SLIDE))) {
+            cr->dir = back(cr->dir);
+            if (cr->state & CS_SLIP && !(cr->state & CS_SLIDE)
+                && cr->frame != 0 && cr->moving == 0)
+                cr->dir = back(cr->frame); /* Tank Top Glitch */
+        }
+#else
         cr->dir = back(cr->dir);
         if (cr->state & CS_SLIP && !(cr->state & CS_SLIDE)
             && cr->frame != 0 && cr->moving == 0) /* cr->moving: SGG instead */
             cr->dir = back(cr->frame); /* Tank Top Glitch */
+#endif
         if (!(cr->state & CS_TURNING))
             cr->state |= CS_TURNING | CS_HASMOVED;
         if (cr == inmidmove)
