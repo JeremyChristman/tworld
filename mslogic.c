@@ -67,6 +67,22 @@
 #define	FIX_SLIDE_FACING	1
 #endif
 
+/* MOD (Jeremy): Chip may walk onto a clone machine, ON by default. Fixes 19
+ * desyncs, 0 regressions -- the largest single win in this fork.
+ * canmakemove() refused a clone-machine cell to every creature; SuperCC refuses
+ * it to everyone except Chip, and only when the cloner's top tile is not a
+ * creature. Measured: 19 of the 34 CHIP-POS desyncs were Tile World stalling
+ * Chip, and 9 of those had SuperCC's Chip standing on a cloner. The other ten
+ * stalls turned out to be downstream of the same refusal.
+ * Deliberately NOT applied while picking a teleport exit -- SuperCC forces the
+ * exit tile to CLONE_MACHINE there and refuses it even to Chip, and allowing it
+ * cost 7 teleport levels. See the long note in canmakemove().
+ * Build with -DNO_FIX_CHIP_ONTO_CLONER to restore the old behaviour.
+ */
+#if !defined(NO_FIX_CHIP_ONTO_CLONER) && !defined(FIX_CHIP_ONTO_CLONER)
+#define	FIX_CHIP_ONTO_CLONER	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
