@@ -1713,7 +1713,31 @@ static int teleportcreature(creature* cr, int start) {
             continue;
         cr->pos = dest;
         f = canmakemove(cr, cr->dir, CMM_NOLEAVECHECK | CMM_NOEXPOSEWALLS
+#ifdef FIX_TELEPORT_DEFER_BUTTONS
+        /* MOD (Jeremy): choosing a teleport exit is nominally a TEST, but
+         * canmakemove() has side effects -- it can push a block -- and
+         * CMM_NODEFERBUTTONS made any button that block landed on fire
+         * IMMEDIATELY, in the middle of the teleporting creature's own move.
+         *
+         * The schedule trace (TW_TRACE_SCHEDULE=1) caught it on Jacques#706 at
+         * ct=4, all inside phase 4-chip: Chip's move begins while he is still
+         * recorded at 30,30, he teleports and shoves a block onto the red button
+         * at 25,30, the cloner fires INLINE, and the cloned block then picks its
+         * own teleport exit -- taking 27,30, because Chip has not been recorded
+         * there yet. SuperCC collects buttons during tryMove and presses them
+         * AFTER it returns, so its Chip has landed and its block skips 27,30.
+         *
+         * Dropping the flag lets pushblock() set CS_DEFERPUSH as it does
+         * everywhere else, so the press becomes FS_BUTTONDOWN and is serviced by
+         * handlebuttons() once the move is finished.
+         *
+         * ⚠ ONLY FOR CHIP. handlebuttons() is called from advancecreature() under
+         * `if (cr->id == Chip)`, so a button deferred by a MONSTER's teleport push
+         * would have nobody to service it and the press would be swallowed. */
+                                     | (cr->id == Chip ? 0 : CMM_NODEFERBUTTONS)
+#else
                                      | CMM_NODEFERBUTTONS
+#endif
                                      | CMM_NOFIRECHECK
                                      | CMM_TELEPORTPUSH);
 #ifdef TRACE_DESYNC
