@@ -129,6 +129,28 @@ static int tracethistick(void);
  * whole-set trace and is only wanted when debugging one level by hand. Off
  * unless TW_TRACE_DECISIONS is set. The per-tick position dump is unaffected. */
 static int tracedecisions(void);
+/* MOD (Jeremy): the SCHEDULE trace. Every other trace compares END-OF-TICK
+ * state, which is why ordering bugs keep surfacing as unexplained downstream
+ * differences -- the block-teleport finding, the DIVERGED CHIP-POS cases on
+ * random force floors, and the long-open BlakeE1#118 all turn on WHEN each
+ * engine resolves a move rather than WHAT it decides.
+ * schedphase is set at each phase boundary in advancegame(); advancecreature()
+ * is the single choke point every real move passes through, so labelling it
+ * yields the exact within-tick sequence with no other edits.
+ * Enable with TW_TRACE_SCHEDULE=1, within the usual TW_TRACE_LEVEL window. */
+static char const* schedphase = "-";
+static int schedseq = 0;
+static int traceschedule(void) {
+    static int on = -1;
+    if (on < 0) {
+        char const* e = getenv("TW_TRACE_SCHEDULE");
+        on = e && *e ? 1 : 0;
+    }
+    return on;
+}
+#define SCHEDPHASE(p) do { if (traceschedule()) schedphase = (p); } while (0)
+#else
+#define SCHEDPHASE(p) ((void)0)
 #endif
 
 /* The most recently used stepping phase value.
@@ -1974,8 +1996,20 @@ static void activatecloner(int buttonpos) {
     creature dummy;
     creature* cr;
     int pos, tileid;
-
     pos = clonerfrombutton(buttonpos);
+#ifdef TRACE_DESYNC
+    /* MOD (Jeremy): Tile World clones INLINE, the moment a button is pressed --
+     * i.e. in the middle of whichever move pressed it. SuperCC's MSCreatureList
+     * defers monster clones to newClones and merges them in finalise() at the end
+     * of the tick (blocks it ticks immediately). Emitted as its own sequence entry
+     * rather than by swapping schedphase, because this function has five early
+     * returns and a saved-and-restored label would leak on most of them. */
+    if (traceschedule() && tracethistick())
+        fprintf(stderr, "S\t%d\t%d\t%d\tphase=%s\tCLONER-FIRED@%d,%d\tbutton=%d,%d\n",
+                (int)state->game->number, (int)currenttime(), schedseq++, schedphase,
+                pos >= 0 ? (int)(pos % CXGRID) : -1, pos >= 0 ? (int)(pos / CXGRID) : -1,
+                (int)(buttonpos % CXGRID), (int)(buttonpos / CXGRID));
+#endif
     if (pos < 0)
         return;
     if (pos >= CXGRID * CYGRID) {
@@ -2423,6 +2457,14 @@ static int advancecreature(creature* cr, int dir) {
     if (dir == NIL)
         return TRUE;
 
+#ifdef TRACE_DESYNC
+    if (traceschedule() && tracethistick())
+        fprintf(stderr, "S\t%d\t%d\t%d\tphase=%s\tcr=%02X@%d,%d\tdir=%d\n",
+                (int)state->game->number, (int)currenttime(), schedseq++,
+                schedphase, cr->id,
+                (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), dir);
+#endif
+
     if (cr->id == Chip)
         chipwait() = 0;
 
@@ -2591,11 +2633,14 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
 
 static void floormovements(void) /* split version with patch */
 {
+    SCHEDPHASE("2-slip-chip");
     floormovements_of_chip();
     updatesliplist(); /* remove deadwood */
     /* TSG stuff, not yet included */
-    if (!checkforending()) /* Squish patch (maybe was oversight?) */
+    if (!checkforending()) { /* Squish patch (maybe was oversight?) */
+        SCHEDPHASE("3-slip-others");
         floormovements_of_blocks_and_monsters();
+    }
     if (!completed() && chipstatus() == CHIP_SQUISHED)
         chipstatus() = CHIP_SQUISHED_DEATH;
 }
@@ -2991,6 +3036,7 @@ static int advancegame(gamelogic* logic) {
 
     if (currenttime() && !(currenttime() & 1)) {
         controllerdir() = NIL;
+        SCHEDPHASE("1-monsters");
         for (n = 0; n < creaturecount; ++n) {
             cr = creatures[n];
             if (!cr->hidden && cr->id != Chip && !(currenttime() & 3) && chipstatus() == CHIP_SQUISHED && !completed())
@@ -3057,6 +3103,7 @@ static int advancegame(gamelogic* logic) {
     }
 
     cr = getchip();
+    SCHEDPHASE("4-chip");
     choosemove(cr);
     if (cr->tdir != NIL) {
         advancecreature(cr, cr->tdir); /* Squish patch, TW checked this?! */
