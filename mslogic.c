@@ -2813,7 +2813,33 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
 #ifdef FIX_BOUNCE_REFACE
             bounceretry = FALSE;
 #endif
-            if (cr->state & (CS_SLIP | CS_SLIDE)) {
+            if (
+#ifdef FIX_BOUNCE_NOREORDER
+                /* MOD (Jeremy): only re-append on a bounce that actually ENDED the
+                 * slide. Tile World re-appends unconditionally, which moves the
+                 * creature to the END of the slip list; because the pass walks by
+                 * index, that reorder makes the bounced creature get visited a
+                 * SECOND time in the same pass -- the slide-delay double-move.
+                 *
+                 * SuperCC does not do that when the bounce retry succeeds. Measured
+                 * on Jacques#626 t=17 (== JacquesS1#109), the tank at 27,22:
+                 *   X@17 idx=25 size=43 TANK@27,22 pri0=LEFT pri1=RIGHT
+                 *   Z@17 TANK@27,22 was=true is=true    <- failed LEFT, slide NOT cleared
+                 *   Z@17 TANK@28,22 was=true is=true    <- retry RIGHT succeeded
+                 *   Y@17 TANK@28,22                     <- ONE cell, list still size 43
+                 * SuperCC's {TURN_FORWARD, TURN_AROUND} priority list absorbs the
+                 * bounce inside a single slip-list visit: no remove, no re-append, no
+                 * reorder, so it keeps slot 25 and is never revisited. Tile World
+                 * reordered and moved the tank 27,22 -> 29,22 in one move period.
+                 *
+                 * Skipping the re-append does NOT lose the reversed slide direction:
+                 * the successful advancecreature() already ran endmovement() ->
+                 * startfloormovement(), and appendtosliplist() is idempotent, so the
+                 * slip entry's dir was updated in place. The ONLY thing this changes
+                 * is the list ORDER. */
+                !ac &&
+#endif
+                    (cr->state & (CS_SLIP | CS_SLIDE))) {
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
 #ifdef FIX_SLIDE_FACING
