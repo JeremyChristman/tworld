@@ -1238,8 +1238,43 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 return FALSE;
     }
 
-    if (cellat(to)->bot.id == CloneMachine)
+    if (cellat(to)->bot.id == CloneMachine) {
+#ifdef FIX_CHIP_ONTO_CLONER
+        /* MOD (Jeremy): Tile World refuses a clone-machine cell to EVERYONE, and
+         * its own comment two branches up already calls that "totally backwards".
+         * SuperCC refuses it to everyone EXCEPT Chip: MSCreature.tryMove ends its
+         * entry test with `|| newTileBG == CLONE_MACHINE`, and then does
+         *     if (newTileBG == CLONE_MACHINE && (!isChip || newTileFG.isCreature()))
+         *         newTileFG = newTileBG;
+         * so a monster (or Chip walking into an occupied cloner) is judged against
+         * CLONE_MACHINE and stopped, while Chip walking onto a cloner whose top
+         * tile is not a creature is judged against that top tile and goes in.
+         *
+         * Everything the top tile could object to has already been checked above
+         * in the `cr->id == Chip` branch -- movelaws, sockets, doors, hidden
+         * walls, blocks -- so by the time control reaches here the tile has said
+         * yes and only this blanket rule is refusing.
+         *
+         * Measured: 9 of the 19 "Tile World stalled Chip" desyncs are exactly
+         * this -- SuperCC has Chip standing on a cloner and Tile World has him
+         * still one cell back. Jacques#900 / JacquesOld#13 (17,27), TCCLP#147,
+         * #291, #297, #325, PB_Gourami#97, #153, JohnL2#4.
+         *
+         * ⚠ NOT during teleport-exit selection. SuperCC is deliberately
+         * inconsistent here: choosing which teleporter to come out of, it forces
+         * the exit tile to CLONE_MACHINE and so refuses a cloner exit even to
+         * Chip (MSCreature.teleport: `if (bg == CLONE_MACHINE && fg != BLOCK)
+         * exitTile = bg;`). Allowing it in this context made Tile World pick a
+         * different teleporter and cost 7 previously-valid replays, ALL of them
+         * teleports: BHLS1#74, DanM1#114, EricS1#120, Jacques_Medium#183,
+         * TomP2#103, TomP3#108, TomP3#144. Same shape as the jc-3
+         * FIX_TELEPORT_BLOCK_ONTO_CHIP scoping. */
+        if (cr->id == Chip && !iscreature(cellat(to)->top.id)
+                           && !(flags & CMM_TELEPORTPUSH))
+            return TRUE;
+#endif
         return FALSE;
+    }
 
     return TRUE;
 }
