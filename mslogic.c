@@ -18,7 +18,7 @@
  * that run is done (269 MS sets / 20,332 solutions plus 909 Lynx solutions:
  * 4 fixed, 0 regressions), so the default build is now the emulating one -- a
  * default nobody actually ships is just a second, untested engine.
- * Build with -DNO_FIX_ROW32_CLONER to get the old discard-the-wiring behaviour.
+ * Build with -DNO_FIX_ROW32_CLONER to get the old discard-the-wiring behavior.
  */
 #if !defined(NO_FIX_ROW32_CLONER) && !defined(FIX_ROW32_CLONER)
 #define	FIX_ROW32_CLONER	1
@@ -29,7 +29,7 @@
  * 909 Lynx solutions: 2 fixed, 0 regressions). Each makes the MS engine agree with
  * a rule it already applies elsewhere -- see the comments at each site.
  * Build with -DNO_FIX_BROKEN_TELEPORT_SLIDE / -DNO_FIX_TELEPORT_BLOCK_ONTO_CHIP
- * to restore the old behaviour individually.
+ * to restore the old behavior individually.
  */
 #if !defined(NO_FIX_BROKEN_TELEPORT_SLIDE) && !defined(FIX_BROKEN_TELEPORT_SLIDE)
 #define	FIX_BROKEN_TELEPORT_SLIDE	1
@@ -45,7 +45,7 @@
  * this one at tick 353, and where they differ at 119 SuperCC agrees with THIS
  * engine. GAP'sSub#10 was completing by luck on a run that was already wrong;
  * it now reaches a separate, unrelated bug (a spurious tank clone at (12,1)).
- * Build with -DNO_FIX_CONTROLLERDIR_STALLED to restore the old behaviour.
+ * Build with -DNO_FIX_CONTROLLERDIR_STALLED to restore the old behavior.
  */
 #if !defined(NO_FIX_CONTROLLERDIR_STALLED) && !defined(FIX_CONTROLLERDIR_STALLED)
 #define	FIX_CONTROLLERDIR_STALLED	1
@@ -61,7 +61,7 @@
  * The creature's MAP TILE is deliberately left alone -- see the long note in
  * startfloormovement() -- and canmakemove()'s turning-tank patch judges a
  * slipping creature by its tile rather than its live direction to match.
- * Build with -DNO_FIX_SLIDE_FACING to restore the old behaviour.
+ * Build with -DNO_FIX_SLIDE_FACING to restore the old behavior.
  */
 #if !defined(NO_FIX_SLIDE_FACING) && !defined(FIX_SLIDE_FACING)
 #define	FIX_SLIDE_FACING	1
@@ -77,7 +77,7 @@
  * Deliberately NOT applied while picking a teleport exit -- SuperCC forces the
  * exit tile to CLONE_MACHINE there and refuses it even to Chip, and allowing it
  * cost 7 teleport levels. See the long note in canmakemove().
- * Build with -DNO_FIX_CHIP_ONTO_CLONER to restore the old behaviour.
+ * Build with -DNO_FIX_CHIP_ONTO_CLONER to restore the old behavior.
  */
 #if !defined(NO_FIX_CHIP_ONTO_CLONER) && !defined(FIX_CHIP_ONTO_CLONER)
 #define	FIX_CHIP_ONTO_CLONER	1
@@ -97,7 +97,7 @@
  * SuperCC on 66 of 149 shared ticks, and both last agree at t=107. jc-6 simply
  * happens to reach the exit anyway. The level is now painted navy, which is what
  * it has been all along. Jeremy made the call, 2026-07-28.
- * Build with -DNO_FIX_TANK_ON_CLONER to restore the old behaviour.
+ * Build with -DNO_FIX_TANK_ON_CLONER to restore the old behavior.
  */
 #if !defined(NO_FIX_TANK_ON_CLONER) && !defined(FIX_TANK_ON_CLONER)
 #define	FIX_TANK_ON_CLONER	1
@@ -2468,7 +2468,7 @@ static void floormovements_of_chip(void) /* split into two */
 #ifdef FIX_BROKEN_TELEPORT_SLIDE
             /* MOD (Jeremy): a teleport lying under a floor tile is flagged
              * FS_BROKEN when the level loads, and every place that *acts* on a
-             * teleport already honours that -- endmovement() and
+             * teleport already honors that -- endmovement() and
              * teleportcreature() both skip it. The slide code did not: it kept
              * treating a broken teleport as a working one, so after bouncing
              * Chip off a blocked slide it re-armed his slip state. A slipping
