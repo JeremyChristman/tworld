@@ -3378,6 +3378,28 @@ static int advancegame(gamelogic* logic) {
                     (_c->state & CS_HASMOVED) ? "stat" : "move");
         }
         fprintf(stderr, "\n");
+
+        /* MOD (Jeremy): the SLIP LIST, in order, matching TraceLevel.java's Q line.
+         * The remaining ordering item (BlakeE1#118, handoff §24) is that Tile World
+         * moves Chip inside the slip phase and then lets a block onto the cell he
+         * just left -- so what matters is who is on the slip list and in what
+         * ORDER, which no existing trace shows. Emitted as its own line type so
+         * the T tokens the censuses parse stay untouched. */
+        fprintf(stderr, "Q\t%d\t%d\tQ:",
+                (int)state->game->number, (int)currenttime());
+        for (_i = 0; _i < slipcount; ++_i) {
+            creature* _c = slips[_i].cr;
+            int _k;
+            if (!_c)
+                continue;
+            _k = ((int)_c->id - Chip) / 4;
+            fprintf(stderr, "%c,%d,%d,%c ",
+                    (_k >= 0 && _k < (int)(sizeof _crletter)) ? _crletter[_k] : '?',
+                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID),
+                    slips[_i].dir == NORTH ? 'N' : slips[_i].dir == WEST ? 'W' :
+                    slips[_i].dir == SOUTH ? 'S' : slips[_i].dir == EAST ? 'E' : '-');
+        }
+        fprintf(stderr, "\n");
     _tracedone: ;
     }
 #endif
