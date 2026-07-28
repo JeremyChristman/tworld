@@ -125,6 +125,17 @@
  * the button mid-slide and the guard then skipped the very tanks SuperCC reverses.
  * Build with -DNO_FIX_BLUE_BUTTON_TIMING to restore the old behavior.
  */
+/* MOD (Jeremy): ignore Chip tiles in the monster list, ON by default. Fixes 1
+ * desync -- Jacques#1 "Welcome", the oldest unexplained one -- with 0 regressions.
+ * iscreature() is true for Chip/Swimming_Chip/Pushing_Chip, so a junk monster-list
+ * entry pointing at a Chip tile became a phantom creature. SuperCC filters the
+ * same list with isMonster() (io/LevelFactory.getMSMonsterList) and skips them.
+ * Build with -DNO_FIX_MONSTERLIST_CHIP_TILES to restore the old behavior.
+ */
+#if !defined(NO_FIX_MONSTERLIST_CHIP_TILES) && !defined(FIX_MONSTERLIST_CHIP_TILES)
+#define	FIX_MONSTERLIST_CHIP_TILES	1
+#endif
+
 #if !defined(NO_FIX_BLUE_BUTTON_TIMING) && !defined(FIX_BLUE_BUTTON_TIMING)
 #define	FIX_BLUE_BUTTON_TIMING	1
 #endif
