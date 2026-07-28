@@ -925,6 +925,19 @@ static void turntanks(creature const* inmidmove) {
  * the two cases have to be told apart. */
 static int enteringtile = FALSE;
 
+#ifdef FIX_BOUNCE_REFACE
+/* MOD (Jeremy): TRUE only across the bounce retry in the slip pass -- the second
+ * advancecreature() a blocked slider makes after icewallturn(). SuperCC treats
+ * that landing as ENTERING a slide (its failed first attempt cleared `sliding`),
+ * which is the one branch that deflects a monster's facing; Tile World keeps
+ * CS_SLIP set, so FIX_SLIDE_FACING's !wasslipping guard suppressed it. This flag
+ * re-enables ONLY the re-facing, without disturbing slip state, the slip-list
+ * accounting, or controllerdir() -- clearing CS_SLIP instead was measured at
+ * 0 fixed / 24 regressions because it also tripped endmovement()'s
+ * `!wasslipping -> controllerdir() = getslipdir(cr)` at the foot of that function. */
+static int bounceretry = FALSE;
+#endif
+
 static void startfloormovement(creature* cr, int floor, int fdir) {
     int dir = fdir; /* fdir used with tank reversal when stuck on teleporter */
 #ifdef FIX_SLIDE_FACING
@@ -984,7 +997,12 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
          *
          * dir is reused as already computed above, so no extra RNG is drawn for
          * random force floors -- that draw has happened either way. */
-        if (enteringtile && !wasslipping && cr->id != Block && dir != NIL)
+        if (enteringtile && cr->id != Block && dir != NIL
+#ifdef FIX_BOUNCE_REFACE
+                && (!wasslipping || bounceretry))
+#else
+                && !wasslipping)
+#endif
             cr->dir = dir;
 #endif
         appendtosliplist(cr, dir);
@@ -2744,10 +2762,42 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
             floor = cellat(cr->pos)->bot.id;
+#ifdef FIX_BOUNCE_REFACE
+            /* MOD (Jeremy): a FAILED slide attempt ends the slide, so the bounce
+             * retry lands as a NEW entry onto its tile -- and therefore re-faces.
+             *
+             * Measured inside SuperCC (shadow probe on DavidK3#40, tick 62, the
+             * pink ball at 11,3 -> 11,2):
+             *     Z@62@PINK_BALL@11,3@was=true @is=false   <- pri0=DOWN failed: slide CLEARED
+             *     Z@62@PINK_BALL@11,2@was=false@is=true    <- pri1=UP landed as a NEW slide
+             *     D@62@PINK_BALL@11,2@DEFLECTED-TO=RIGHT   <- so MSCreature:161 re-faced it
+             * MSCreature.tryMove's failure path calls setSliding(wasSliding,false),
+             * dropping the creature off the slip list; the retry then takes
+             * setSliding's !wasSliding branch, which is the ONLY branch that
+             * deflects a monster's facing. This is the documented MS rule: "when a
+             * sliding object cannot move in the direction it is facing, it will
+             * always be removed from the sliplist, then ... added back onto the end".
+             *
+             * Tile World suppressed exactly this. FIX_SLIDE_FACING (jc-5) re-faces
+             * only when `enteringtile && !wasslipping`, and the bounce path sets
+             * enteringtile = FALSE and leaves CS_SLIP set -- so the retry's
+             * endmovement() -> startfloormovement() saw wasslipping and skipped the
+             * re-face. Result: SuperCC faces the creature the way the new tile
+             * deflects it, Tile World leaves it facing the way it arrived. That is
+             * all 7 of the remaining FACING desyncs, every one of them on ice.
+             *
+             * Clear the slide across the retry so endmovement() treats the landing
+             * as an entry; restore it if the retry ALSO fails, so the re-arm block
+             * below (and the slide-delay accounting) behaves exactly as before. */
+            bounceretry = TRUE;
+#endif
             if (isice(floor)) {
                 slipdir = icewallturn(floor, back(slipdir));
                 ac = advancecreature(cr, slipdir); /* again useful with ac */
             }
+#ifdef FIX_BOUNCE_REFACE
+            bounceretry = FALSE;
+#endif
             if (cr->state & (CS_SLIP | CS_SLIDE)) {
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
