@@ -817,13 +817,53 @@ static void removecreature(creature* cr) {
 /* Turn around any and all tanks. (A tank that is halfway through the
  * process of moving at the time is given special treatment.)
  */
+#ifdef FIX_BLUE_BUTTON_TIMING
+/* MOD (Jeremy): set when a mover presses a blue button, cleared by
+ * advancecreature() once the move is complete. See the notes at both sites. */
+static int pendingtankturn = FALSE;
+#endif
+
 static void turntanks(creature const* inmidmove) {
     int n;
+
+#ifdef TRACE_DESYNC
+    /* MOD (Jeremy): slip state AT THE MOMENT OF THE REVERSAL DECISION.
+     * The end-of-tick L line is the wrong probe for this question: turntanks()
+     * runs mid-tick (inmidmove), so a tank can be CS_SLIP here and clear by the
+     * time the tick's trace line is written. Sampling at end of tick made
+     * DavidK3#13 look like it had no sliding tanks at all, when what it actually
+     * had was none LEFT by the end of each tick. */
+    if (traceschedule() && tracethistick()) {
+        fprintf(stderr, "S\t%d\t%d\t%d\tphase=%s\tTANKS-TURNED\tinmidmove=%s\tK:",
+                (int)state->game->number, (int)currenttime(), schedseq++,
+                schedphase, inmidmove ? "yes" : "no");
+        for (n = 0; n < creaturecount; ++n) {
+            creature* c = creatures[n];
+            if (c->hidden || c->id != Tank)
+                continue;
+            fprintf(stderr, "%d,%d,%c,%d ",
+                    (int)(c->pos % CXGRID), (int)(c->pos / CXGRID),
+                    c->dir == NORTH ? 'N' : c->dir == WEST ? 'W' :
+                    c->dir == SOUTH ? 'S' : c->dir == EAST ? 'E' : '-',
+                    (c->state & (CS_SLIP | CS_SLIDE)) ? 1 : 0);
+        }
+        fprintf(stderr, "\n");
+    }
+#endif
 
     for (n = 0; n < creaturecount; ++n) {
         creature* cr = creatures[n]; /* convenience, Tank Top Glitch */
         if (cr->hidden || cr->id != Tank)
             continue;
+#ifdef FIX_BLUE_BUTTON_TIMING
+        /* MOD (Jeremy): SuperCC's guard, `isTank() && !isSliding()`
+         * (MSLevel.turnTanks). It only makes sense TOGETHER with the deferred
+         * press below -- on its own it scored 1 fixed / 18 regressions, because
+         * Tile World fired the button while the mover was still mid-slide and the
+         * guard then skipped the very tank SuperCC reverses. */
+        if (cr->state & (CS_SLIP | CS_SLIDE))
+            continue;
+#endif
         cr->dir = back(cr->dir);
         if (cr->state & CS_SLIP && !(cr->state & CS_SLIDE)
             && cr->frame != 0 && cr->moving == 0) /* cr->moving: SGG instead */
@@ -2397,8 +2437,28 @@ static void endmovement(creature* cr, int dir) {
         case Button_Blue:
             if (cr->state & CS_DEFERPUSH)
                 tile->state |= FS_BUTTONDOWN;
+#ifdef FIX_BLUE_BUTTON_TIMING
+            /* MOD (Jeremy): hold the press until the move has finished.
+             * Tile World reverses the tanks HERE, inside endmovement(), where
+             * cr->pos has been rolled back to the OLD cell and the mover still
+             * carries the CS_SLIP of the tile it is leaving. SuperCC collects
+             * buttons during tryMove and presses them AFTER it returns, by which
+             * point the creature has landed and setSliding() has run for the new
+             * tile.
+             * That timing is what makes SuperCC's `!isSliding()` guard behave: a
+             * tank that has just slid ONTO the button is no longer sliding when
+             * the button fires, so SuperCC reverses it after all. Porting the
+             * guard without the timing skipped exactly those tanks, which is why
+             * it cost 18 levels wherever it was placed (handoff §18, §19).
+             * Measured on DavidK3#13: 46 reversals, 11 with a tank still sliding
+             * -- its tank slides east over the force floor at 6,10 onto the blue
+             * button at 7,10, pressing the button that reverses itself. */
+            else
+                pendingtankturn = TRUE;
+#else
             else
                 turntanks(cr);
+#endif
             addsoundeffect(SND_BUTTON_PUSHED);
             break;
         case Button_Green:
@@ -2516,6 +2576,17 @@ static int advancecreature(creature* cr, int dir) {
     }
 
     endmovement(cr, dir);
+#ifdef FIX_BLUE_BUTTON_TIMING
+    /* MOD (Jeremy): now that the move is complete -- position committed and the
+     * new tile's slide state applied -- fire the blue button the mover pressed.
+     * Done here rather than in handlebuttons() because handlebuttons() runs only
+     * for Chip, and the creature that presses a blue button by sliding onto it is
+     * almost always a monster; deferring to Chip would swallow the press. */
+    if (pendingtankturn) {
+        pendingtankturn = FALSE;
+        turntanks(NULL);
+    }
+#endif
     if (cr->id == Chip)
         handlebuttons();
 
@@ -3229,6 +3300,31 @@ static int advancegame(gamelogic* logic) {
             int _id = state->map[_i].top.id;
             if (_id == Block_Static || creatureid(_id) == Block)
                 fprintf(stderr, "%d,%d ", _i % CXGRID, _i / CXGRID);
+        }
+        fprintf(stderr, "\n");
+
+        /* MOD (Jeremy): the SLIP-STATE line, matching TraceLevel.java's L line.
+         * A separate line type on purpose -- classify.mjs and all four censuses
+         * parse the T tokens, so widening those would break every one of them.
+         *
+         * Why it exists: SuperCC's turnTanks skips a tank when !isSliding(), and
+         * porting that guard scores 1 fixed / 18 regressions wherever the guard is
+         * placed (handoff §18). The remaining suspicion is that the engines
+         * disagree about WHICH tanks are sliding -- SuperCC's `sliding` field
+         * versus this CS_SLIP. Note CS_SLIDE is never set on a tank:
+         * startfloormovement() gives it to Chip alone. */
+        fprintf(stderr, "L\t%d\t%d\tK:",
+                (int)state->game->number, (int)currenttime());
+        for (_i = 0; _i < creaturecount; ++_i) {
+            creature* _c = creatures[_i];
+            if (_c->hidden || _c->id != Tank)
+                continue;
+            fprintf(stderr, "%d,%d,%c,%d,%s ",
+                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID),
+                    _c->dir == NORTH ? 'N' : _c->dir == WEST ? 'W' :
+                    _c->dir == SOUTH ? 'S' : _c->dir == EAST ? 'E' : '-',
+                    (_c->state & (CS_SLIP | CS_SLIDE)) ? 1 : 0,
+                    (_c->state & CS_HASMOVED) ? "stat" : "move");
         }
         fprintf(stderr, "\n");
     _tracedone: ;
