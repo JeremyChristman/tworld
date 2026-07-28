@@ -824,6 +824,20 @@ static void turntanks(creature const* inmidmove) {
         creature* cr = creatures[n]; /* convenience, Tank Top Glitch */
         if (cr->hidden || cr->id != Tank)
             continue;
+#ifdef FIX_TANK_TURN_SLIDING
+        /* MOD (Jeremy): a SLIDING tank is not turned by a blue button. SuperCC
+         * guards the whole turn with `isTank() && !isSliding()` (MSLevel.turnTanks);
+         * Tile World reverses every tank and patches the sliding case afterwards
+         * in the Tank Top Glitch branch below.
+         * RETESTED ON jc-9. Both earlier negatives are stale: the first was
+         * measured on the BROKEN slide-facing patch (the one that wrote the facing
+         * into the map tile), the second as a companion to FIX_TANK_ON_CLONER on
+         * jc-6. Retested because the FACING census on the jc-9 traces shows 12 of
+         * the 20 remaining FACING levels are tanks, and EVERY one is an exact 180
+         * degree reversal, on ice, teleports, blue buttons and force floors. */
+        if (cr->state & (CS_SLIP | CS_SLIDE))
+            continue;
+#endif
         cr->dir = back(cr->dir);
         if (cr->state & CS_SLIP && !(cr->state & CS_SLIDE)
             && cr->frame != 0 && cr->moving == 0) /* cr->moving: SGG instead */
