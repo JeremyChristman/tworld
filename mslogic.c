@@ -1202,6 +1202,35 @@ static int pushblock(int pos, int dir, int flags) {
     slipping = (cr->state & (CS_SLIP | CS_SLIDE)); /* accounting */
     if (cr->state & (CS_SLIP | CS_SLIDE)) {
         slipdir = getslipdir(cr);
+#ifdef FIX_HEADBANGER_FACING
+        /* MOD (Jeremy): the Headbanger Rule is judged against the block's
+         * FACING, not its slip-list direction.
+         *
+         * SuperCC (MSCreature.tryEnter, the BLOCK case):
+         *     if (m.direction == direction
+         *      || m.direction.turn(TURN_AROUND) == direction) return false;
+         * -- m.direction, the block creature's own facing.
+         *
+         * Those two values are the same on straight ice, but they are NOT the
+         * same on an ice corner or a force floor. slips[].dir is the DEFLECTED
+         * direction, computed on landing by startfloormovement(); a block's
+         * cr->dir is the direction it ARRIVED in, because startmovement() sets
+         * it and FIX_SLIDE_FACING deliberately does not re-face blocks (it
+         * excludes cr->id == Block, mirroring SuperCC's !creatureType.isBlock()
+         * guard in setSliding).
+         *
+         * That one-tick gap -- the block committed to turning but not yet
+         * physically turned -- is the documented MS behavior called
+         * CROSS-CHECKING: the Headbanger Rule is skipped for a block on an ice
+         * corner, so Chip pushes it over the corner "as if there was nothing
+         * under it". Judging by slipdir gets this exactly backwards: Tile World
+         * refuses the push SuperCC allows, and allows the push SuperCC refuses.
+         *
+         * cr->dir == NIL only for a block that has never moved, which cannot be
+         * slipping; fall back to slipdir there rather than compare against NIL. */
+        if (cr->dir != NIL)
+            slipdir = cr->dir;
+#endif
         if (dir == slipdir || dir == back(slipdir)) {
             if (!(flags & CMM_TELEPORTPUSH)) {
                 return FALSE;
