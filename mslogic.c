@@ -83,6 +83,26 @@
 #define	FIX_CHIP_ONTO_CLONER	1
 #endif
 
+/* MOD (Jeremy): a tank may step off a clone machine, ON by default. Fixes 10
+ * desyncs and costs one level, TomP3#140 (dual-listed as TomP3Lynx#140).
+ * choosecreaturemove() gave CS_HASMOVED to a tank that failed a move on a
+ * cloner, and choosecreaturemove() then skips a CS_HASMOVED creature, so the
+ * tank was parked for good. The guard that would have prevented it was present
+ * but commented out, with the note "(c) bug: tank clones should stall".
+ * ⚠ THIS IS THE SECOND OVERRIDE OF THE ZERO-REGRESSION GATE, and a weaker case
+ * than jc-4's: the two engines are EQUALLY faithful on the cost level, not more.
+ * What justifies it is that TomP3#140 is ALREADY desynced without this change --
+ * jc-6 and this build both diverge from SuperCC at t=47 with the identical
+ * difference (a tank at 27,15 on ice, W in SuperCC and E here), both match
+ * SuperCC on 66 of 149 shared ticks, and both last agree at t=107. jc-6 simply
+ * happens to reach the exit anyway. The level is now painted navy, which is what
+ * it has been all along. Jeremy made the call, 2026-07-28.
+ * Build with -DNO_FIX_TANK_ON_CLONER to restore the old behaviour.
+ */
+#if !defined(NO_FIX_TANK_ON_CLONER) && !defined(FIX_TANK_ON_CLONER)
+#define	FIX_TANK_ON_CLONER	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
