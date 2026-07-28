@@ -1169,6 +1169,28 @@ static int canmakemove(creature const* cr, int dir, int flags) {
 
     if (cr->id == Chip) {
         floor = floorat(to);
+#ifdef FIX_CHIP_ONTO_CLONER
+        /* MOD (Jeremy): a key or a pair of boots sitting ON a clone machine.
+         * floorat() deliberately looks *underneath* a pickup, so it returns
+         * CloneMachine here -- and movelaws[CloneMachine].chip is 0, so Chip is
+         * refused right now, before the blanket clone-machine rule at the foot of
+         * this function that FIX_CHIP_ONTO_CLONER already relaxes. jc-6 therefore
+         * only freed the cloners with nothing on them.
+         * SuperCC collects it. MSCreature.tryMove passes its entry test on the
+         * final `|| newTileBG == CLONE_MACHINE`, and then
+         *     if (newTileBG == CLONE_MACHINE && (!isChip || newTileFG.isCreature()))
+         *         newTileFG = newTileBG;
+         * leaves newTileFG alone, because a pickup is not a creature -- so
+         * tryEnter() runs on the key/boot and Chip picks it up.
+         * Judge the move by the pickup, as SuperCC does; the clone-machine
+         * question is then settled by the relaxed rule at the end.
+         * Measured on the jc-6 traces: 5 of the 18 remaining CHIP-POS desyncs are
+         * this -- PB_Gourami#153 (suction boots), PB_Gourami#97 and JohnL2#4 (red
+         * key), Jacques_Medium#126 and JacquesS1#50 (flippers). */
+        if (floor == CloneMachine
+                && (iskey(cellat(to)->top.id) || isboots(cellat(to)->top.id)))
+            floor = cellat(to)->top.id;
+#endif
         if (!(movelaws[floor].chip & dir))
             return FALSE;
         if (floor == Socket && chipsneeded() > 0)
