@@ -99,6 +99,20 @@
  * it has been all along. Jeremy made the call, 2026-07-28.
  * Build with -DNO_FIX_TANK_ON_CLONER to restore the old behavior.
  */
+/* MOD (Jeremy): defer buttons pressed while choosing Chip's teleport exit, ON by
+ * default. Fixes 9 desyncs, 0 regressions, and closes the block-teleport family.
+ * teleportcreature() passed CMM_NODEFERBUTTONS, so a block pushed during what is
+ * nominally an exit TEST fired its button immediately -- mid-move, before the
+ * teleporting Chip had been recorded at his destination -- and a cloner firing
+ * there let the cloned block claim the very cell Chip was about to occupy.
+ * Scoped to Chip: handlebuttons() only runs for Chip, so deferring a monster's
+ * teleport-push button would swallow it. See the note in teleportcreature().
+ * Build with -DNO_FIX_TELEPORT_DEFER_BUTTONS to restore the old behavior.
+ */
+#if !defined(NO_FIX_TELEPORT_DEFER_BUTTONS) && !defined(FIX_TELEPORT_DEFER_BUTTONS)
+#define	FIX_TELEPORT_DEFER_BUTTONS	1
+#endif
+
 #if !defined(NO_FIX_TANK_ON_CLONER) && !defined(FIX_TANK_ON_CLONER)
 #define	FIX_TANK_ON_CLONER	1
 #endif
