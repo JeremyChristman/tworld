@@ -820,6 +820,31 @@ static void removecreature(creature* cr) {
 static void turntanks(creature const* inmidmove) {
     int n;
 
+#ifdef TRACE_DESYNC
+    /* MOD (Jeremy): slip state AT THE MOMENT OF THE REVERSAL DECISION.
+     * The end-of-tick L line is the wrong probe for this question: turntanks()
+     * runs mid-tick (inmidmove), so a tank can be CS_SLIP here and clear by the
+     * time the tick's trace line is written. Sampling at end of tick made
+     * DavidK3#13 look like it had no sliding tanks at all, when what it actually
+     * had was none LEFT by the end of each tick. */
+    if (traceschedule() && tracethistick()) {
+        fprintf(stderr, "S\t%d\t%d\t%d\tphase=%s\tTANKS-TURNED\tinmidmove=%s\tK:",
+                (int)state->game->number, (int)currenttime(), schedseq++,
+                schedphase, inmidmove ? "yes" : "no");
+        for (n = 0; n < creaturecount; ++n) {
+            creature* c = creatures[n];
+            if (c->hidden || c->id != Tank)
+                continue;
+            fprintf(stderr, "%d,%d,%c,%d ",
+                    (int)(c->pos % CXGRID), (int)(c->pos / CXGRID),
+                    c->dir == NORTH ? 'N' : c->dir == WEST ? 'W' :
+                    c->dir == SOUTH ? 'S' : c->dir == EAST ? 'E' : '-',
+                    (c->state & (CS_SLIP | CS_SLIDE)) ? 1 : 0);
+        }
+        fprintf(stderr, "\n");
+    }
+#endif
+
     for (n = 0; n < creaturecount; ++n) {
         creature* cr = creatures[n]; /* convenience, Tank Top Glitch */
         if (cr->hidden || cr->id != Tank)
@@ -3229,6 +3254,31 @@ static int advancegame(gamelogic* logic) {
             int _id = state->map[_i].top.id;
             if (_id == Block_Static || creatureid(_id) == Block)
                 fprintf(stderr, "%d,%d ", _i % CXGRID, _i / CXGRID);
+        }
+        fprintf(stderr, "\n");
+
+        /* MOD (Jeremy): the SLIP-STATE line, matching TraceLevel.java's L line.
+         * A separate line type on purpose -- classify.mjs and all four censuses
+         * parse the T tokens, so widening those would break every one of them.
+         *
+         * Why it exists: SuperCC's turnTanks skips a tank when !isSliding(), and
+         * porting that guard scores 1 fixed / 18 regressions wherever the guard is
+         * placed (handoff §18). The remaining suspicion is that the engines
+         * disagree about WHICH tanks are sliding -- SuperCC's `sliding` field
+         * versus this CS_SLIP. Note CS_SLIDE is never set on a tank:
+         * startfloormovement() gives it to Chip alone. */
+        fprintf(stderr, "L\t%d\t%d\tK:",
+                (int)state->game->number, (int)currenttime());
+        for (_i = 0; _i < creaturecount; ++_i) {
+            creature* _c = creatures[_i];
+            if (_c->hidden || _c->id != Tank)
+                continue;
+            fprintf(stderr, "%d,%d,%c,%d,%s ",
+                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID),
+                    _c->dir == NORTH ? 'N' : _c->dir == WEST ? 'W' :
+                    _c->dir == SOUTH ? 'S' : _c->dir == EAST ? 'E' : '-',
+                    (_c->state & (CS_SLIP | CS_SLIDE)) ? 1 : 0,
+                    (_c->state & CS_HASMOVED) ? "stat" : "move");
         }
         fprintf(stderr, "\n");
     _tracedone: ;
