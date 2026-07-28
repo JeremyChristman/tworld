@@ -144,6 +144,21 @@
 #define	FIX_TANK_ON_CLONER	1
 #endif
 
+/* MOD (Jeremy): re-face a BOUNCED slider by the tile it lands on, ON by default.
+ * Fixes 0 desyncs with 0 regressions -- groundwork, not a win: it eliminates the
+ * FACING cause outright, so all 7 remaining FACING desyncs now diverge much later
+ * and for different reasons (e.g. DavidK3#40 tick 62 -> 391, EricS1#145 13 -> 470).
+ * In SuperCC a FAILED slide attempt ends the slide (MSCreature.tryMove's failure
+ * path calls setSliding(wasSliding, false)), so the bounce retry lands as a NEW
+ * slide entry and takes setSliding's !wasSliding branch -- the only branch that
+ * deflects a monster's facing. FIX_SLIDE_FACING's !wasslipping guard suppressed
+ * exactly that, because Tile World keeps CS_SLIP set across the bounce.
+ * Build with -DNO_FIX_BOUNCE_REFACE to restore the old behavior.
+ */
+#if !defined(NO_FIX_BOUNCE_REFACE) && !defined(FIX_BOUNCE_REFACE)
+#define	FIX_BOUNCE_REFACE	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
