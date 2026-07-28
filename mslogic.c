@@ -3035,6 +3035,30 @@ static int initgame(gamelogic* logic) {
                  num, pos % CXGRID, pos / CXGRID);
             continue;
         }
+#ifdef FIX_MONSTERLIST_CHIP_TILES
+        /* MOD (Jeremy): a monster list entry pointing at a CHIP tile is junk, and
+         * must not become a creature. iscreature() is true for Chip,
+         * Swimming_Chip and Pushing_Chip, so the check above lets them through and
+         * Tile World then builds a phantom "monster" out of one -- which
+         * choosecreaturemove() immediately complains about
+         * ("Non-creature 6C trying to move") before behaving unpredictably.
+         * SuperCC's loader filters the same list with isMonster() rather than
+         * isCreature (io/LevelFactory.getMSMonsterList), so it simply skips them.
+         * Found on Jacques#1 "Welcome" -- the oldest unexplained desync in the
+         * catalogue. Its monster list is four entries, 31,0 / 20,2 / 31,0 / 20,2:
+         * 20,2 is plain water (already skipped above, with the warning), and 31,0
+         * holds a SWIMMING CHIP tile. SuperCC ignores all four; Tile World wakes a
+         * Swimming_Chip creature and the replay falls apart three ticks in.
+         * Only this one level in the current catalogue has such a list, but the
+         * check costs nothing and matches the reference engine. */
+        if (creatureid(cell->top.id) == Chip
+                || creatureid(cell->top.id) == Swimming_Chip
+                || creatureid(cell->top.id) == Pushing_Chip) {
+            warn("level %d: Chip tile in the monster list at (%d %d) -- ignored",
+                 num, pos % CXGRID, pos / CXGRID);
+            continue;
+        }
+#endif
         if (creatureid(cell->top.id) != Block && cell->bot.id != CloneMachine) {
             cr = allocatecreature();
             cr->pos = pos;
