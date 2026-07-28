@@ -1730,12 +1730,51 @@ static void choosechipmove(creature* cr, int discard) {
 
     if (!(currenttime() & 3))
         cr->state &= ~CS_HASMOVED;
+#ifdef TRACE_DESYNC
+    /* MOD (Jeremy): why Chip did or did not get a voluntary move this tick.
+     * Probing the gate itself, because relaxing CS_HASMOVED alone changed
+     * nothing on BlakeE1#118 and the schedule trace cannot say which of the
+     * three conditions is the blocker. */
+    if (traceschedule() && tracethistick())
+        fprintf(stderr, "S\t%d\t%d\t%d\tCHIPGATE\thasmoved=%d\tslide=%d\tslip=%d"
+                        "\tinput=%d\tdir=%d\n",
+                (int)state->game->number, (int)currenttime(), schedseq++,
+                (cr->state & CS_HASMOVED) ? 1 : 0,
+                (cr->state & CS_SLIDE) ? 1 : 0,
+                (cr->state & CS_SLIP) ? 1 : 0,
+                (int)currentinput(), (int)cr->dir);
+#endif
     if (cr->state & CS_HASMOVED) {
+#ifdef FIX_FORCE_FLOOR_OVERRIDE
+        /* MOD (Jeremy): the force-floor OVERRIDE. Chip sliding on a force floor
+         * may steer out of it with a move in some other direction -- Tile World
+         * implements that on the very next line down (`(cr->state & CS_SLIDE) &&
+         * dir == cr->dir` discards only SAME-direction input), but control never
+         * reaches it on a tick when Chip has already slid, because the slide sets
+         * CS_HASMOVED and CS_HASMOVED is only cleared every fourth tick.
+         * SuperCC runs moveChipSliding() and then moveChip() in the same tick, so
+         * its Chip gets both.
+         * Measured on BlakeE1#118 "Technical Difficulties" at SCC t=79: the
+         * schedule shows Chip sliding to 30,14 and NO 4-chip entry at all, while
+         * SuperCC slides him to 30,14 and then steers him EAST to 31,14, from
+         * where he drops into the exit at 31,15. Tile World's Chip stays put and
+         * a block sliding north into 30,14 crushes him.
+         * Narrow on purpose: only while actually CS_SLIDE, and only for input
+         * that differs from the slide direction -- same-direction input is still
+         * discarded below, exactly as before. */
+        if ((cr->state & CS_SLIDE)
+                && currentinput() != NIL
+                && currentinput() != cr->dir) {
+            /* fall through and let the override happen */
+        } else
+#endif
+        {
         if (currentinput() != NIL && hasgoal()) {
             cancelgoal();
             lastmove() = CmdMoveNop;
         }
         return;
+        }
     }
 
     dir = currentinput();
