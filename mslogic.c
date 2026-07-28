@@ -1637,6 +1637,24 @@ static int teleportcreature(creature* cr, int start) {
                                      | CMM_NODEFERBUTTONS
                                      | CMM_NOFIRECHECK
                                      | CMM_TELEPORTPUSH);
+#ifdef TRACE_DESYNC
+        /* MOD (Jeremy): which teleport exits were offered and which was taken.
+         * The two engines pick different exits for the same block and neither
+         * trace showed why -- SuperCC's loop skips a candidate whose foreground
+         * is not still a TELEPORT tile (MSCreature.teleport line ~219), and Tile
+         * World has no equivalent, so the rejected candidates are the evidence. */
+        if (tracethistick())
+            fprintf(stderr, "P\t%d\t%d\tcr=%02X@%d,%d\tdir=%d\tcand=%d,%d"
+                            "\ttop=%02X\texit=%02X\taccept=%d\n",
+                    (int)state->game->number, (int)currenttime(), cr->id,
+                    (int)(origpos % CXGRID), (int)(origpos / CXGRID), (int)cr->dir,
+                    (int)(dest % CXGRID), (int)(dest / CXGRID),
+                    (int)cellat(dest)->top.id,
+                    (int)floorat(dest + (cr->dir == NORTH ? -CXGRID :
+                                         cr->dir == SOUTH ? +CXGRID :
+                                         cr->dir == WEST ? -1 : +1)),
+                    f);
+#endif
         cr->dir = origdir; /* tank push IB onto blue button via teleporter */
         cr->pos = origpos;
         if (f)
