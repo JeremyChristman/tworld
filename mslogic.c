@@ -188,6 +188,18 @@
 #define	FIX_RFF_CHIP_REARM	1
 #endif
 
+/* MOD (Jeremy): Chip's starting square comes from the FOREGROUND layer only, ON by
+ * default. Tile World also took it from a Chip tile BURIED under a monster-list
+ * creature; SuperCC never looks at the bottom layer for this (io/LevelFactory
+ * .findMSPlayer scans the foreground backwards, falling back to (0,0)). Fixes 1
+ * desync -- DaveB2#3 "Where am I?", which has no foreground Chip at all and whose
+ * only Chip tile is buried under a Teeth -- with 0 regressions.
+ * Build with -DNO_FIX_CHIP_START_FOREGROUND to restore the old behavior.
+ */
+#if !defined(NO_FIX_CHIP_START_FOREGROUND) && !defined(FIX_CHIP_START_FOREGROUND)
+#define	FIX_CHIP_START_FOREGROUND	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
