@@ -3266,10 +3266,31 @@ static int initgame(gamelogic* logic) {
             cr->id = creatureid(cell->top.id);
             cr->dir = creaturedirid(cell->top.id);
             addtocreaturelist(cr);
+#ifndef FIX_CHIP_START_FOREGROUND
             if (iscreature(cell->bot.id) && creatureid(cell->bot.id) == Chip) {
                 chip->pos = pos;
                 chip->dir = creaturedirid(cell->bot.id);
             }
+#else
+            /* MOD (Jeremy): do NOT take Chip's start from a Chip tile BURIED under a
+             * monster-list creature. SuperCC never looks at the bottom layer for
+             * this -- io/LevelFactory.findMSPlayer scans the FOREGROUND backwards
+             * and falls back to position 0 (0,0) if it finds no Chip tile:
+             *     for (int i = 32*32-1; i >= 0; i--)
+             *         if (Tile.CHIP_UP.ordinal() <= layerFG.get(i).ordinal()) return ...;
+             *     return new MSCreature(new Position(0), Tile.CHIP_DOWN);
+             *
+             * DaveB2#3 "Where am I?" has NO foreground Chip at all; its only Chip
+             * tile is 0x6E buried at (22,14) under a Teeth, and (22,14) is in the
+             * monster list. SuperCC starts Chip at (0,0) and the solution plays for
+             * 204 ticks; Tile World started him inside a Teeth and the game ended on
+             * tick 1.
+             *
+             * Scope measured before changing anything: of 21,838 levels, 10 have a
+             * buried Chip and NO foreground Chip (behaviour definitely changes), 89
+             * have both (changes only if the buried one was winning), and 215 have no
+             * Chip tile at all (both engines already fall back to 0,0). */
+#endif
         }
         cell->top.state |= FS_MARKER;
     }
