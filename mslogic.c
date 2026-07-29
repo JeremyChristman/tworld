@@ -953,9 +953,16 @@ static int enteringtile = FALSE;
 static int bounceretry = FALSE;
 #endif
 
+#ifdef FIX_RFF_DRAW_ONCE
+/* Set (to the post-move slip direction) only across the SUCCESSFUL-bounce re-arm,
+ * where Tile World would otherwise draw a second random direction for a single
+ * move. NIL everywhere else, so every other path keeps drawing exactly as before. */
+static int rff_keepdir = NIL;
+#endif
+
 static void startfloormovement(creature* cr, int floor, int fdir) {
     int dir = fdir; /* fdir used with tank reversal when stuck on teleporter */
-#ifdef FIX_SLIDE_FACING
+#if defined(FIX_SLIDE_FACING) || defined(FIX_RFF_DRAW_ONCE)
     /* Was this creature already sliding? A creature skating from one ice tile
      * onto the next keeps its facing; only the transition INTO a slide re-faces.
      * Must be read before the clear below. */
@@ -968,8 +975,43 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
         if (fdir == NIL) { /* tank reversal patch */
             dir = icewallturn(floor, cr->dir);
         }
-    } else if (isslide(floor))
+    } else if (isslide(floor)) {
+#ifdef FIX_RFF_DRAW_ONCE
+        /* MOD (Jeremy): a MONSTER already sliding across random force floors must
+         * NOT redraw the RNG on each cell.
+         *
+         * SuperCC draws for a random force floor in exactly two places, both with
+         * advanceRFF=true: MSCreature.setSliding (the !wasSliding branch, i.e. only
+         * on ENTERING a slide) and MSCreature.tryMove lines 783/799 -- and those two
+         * are gated `!isMonster`, so they fire for CHIP and BLOCKS only. The slip
+         * pass itself calls getSlideDirectionPriority(tile, rng, changeOnRFF=FALSE),
+         * which short-circuits on FF_RANDOM:
+         *     else if (tile == FF_RANDOM && !changeOnRFF) return new Direction[]{direction};
+         * -- no draw. So a monster crossing a field of random force floors draws
+         * ONCE, on entry, and then keeps its direction.
+         *
+         * Tile World called getslidedir() from every startfloormovement(), i.e. once
+         * per cell entered, so its RNG ran ahead of SuperCC's. Measured over the
+         * aligned prefix, Tile World is AHEAD BY EXACTLY ONE DRAW at the first RNG
+         * divergence on Jacques#82 (t=21), TomP2#106 (t=177), EricS1#145 (t=469) and
+         * JacquesS1#203 (t=1261).
+         *
+         * Chip and blocks are deliberately excluded -- they DO redraw every move in
+         * SuperCC (tryMove 783/799), so Tile World's existing behavior is correct
+         * for them. */
+        /* Only the bounce re-arm suppresses the draw, and it says so through
+         * rff_keepdir. fdir must NOT be used for this: the STUCK path passes
+         * origdir (never NIL) and genuinely must redraw -- SuperCC redraws there
+         * too, via MSCreature.tryMove line 799 on the failed-move path. Probing
+         * TCCLP#258 showed every suppressed draw on that level was ac=0, i.e.
+         * a block nailed on a random force floor, which is exactly the case that
+         * must keep drawing. */
+        if (floor == Slide_Random && rff_keepdir != NIL)
+            dir = rff_keepdir;
+        else
+#endif
         dir = getslidedir(floor);
+    }
     else if (floor == Teleport) {
         if (fdir == NIL)
             dir = cr->dir; /* tank reversal patch */
@@ -2814,12 +2856,40 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             bounceretry = FALSE;
 #endif
             if (cr->state & (CS_SLIP | CS_SLIDE)) {
+#ifdef FIX_RFF_DRAW_ONCE
+                /* MOD (Jeremy): on a bounce Tile World re-arms the slide by calling
+                 * startfloormovement() a SECOND time, and on a random force floor
+                 * that means a SECOND getslidedir() -- a second RNG draw for one
+                 * move. SuperCC draws once per successful move (MSCreature.tryMove
+                 * line 783, advanceRFF=true) and its slip pass never redraws for
+                 * FF_RANDOM (getSlideDirectionPriority passes changeOnRFF=false).
+                 * Carry the existing slip direction across the re-arm so the second
+                 * call reuses it instead of drawing. Measured: Tile World is ahead
+                 * by exactly one draw at the first RNG divergence on Jacques#82,
+                 * TomP2#106, EricS1#145 and JacquesS1#203. */
+                int keepdir = (cellat(cr->pos)->bot.id == Slide_Random)
+                                  ? getslipdir(cr) : NIL;
+#endif
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
 #ifdef FIX_SLIDE_FACING
                 enteringtile = FALSE;  /* re-arming an existing slide, not entering */
 #endif
-                startfloormovement(cr, cellat(cr->pos)->bot.id, ac ? NIL : origdir); /* 3rd argument with tank reversal patch */
+#if defined(FIX_RFF_DRAW_ONCE) && defined(TRACE_DESYNC)
+                /* PROBE: every RNG draw this fix SUPPRESSES. */
+                if (ac && keepdir != NIL && tracethistick())
+                    fprintf(stderr, "RFFSKIP\t%d\t%d\tcr=%02X@%d,%d\tkeep=%d\n",
+                            (int)state->game->number, (int)currenttime(), cr->id,
+                            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), keepdir);
+#endif
+#ifdef FIX_RFF_DRAW_ONCE
+                rff_keepdir = ac ? keepdir : NIL;
+#endif
+                startfloormovement(cr, cellat(cr->pos)->bot.id,
+                                   ac ? NIL : origdir); /* 3rd argument with tank reversal patch */
+#ifdef FIX_RFF_DRAW_ONCE
+                rff_keepdir = NIL;
+#endif
             }
         }
         if (cr->state & CS_SLIP && ac)
