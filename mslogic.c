@@ -953,6 +953,13 @@ static int enteringtile = FALSE;
 static int bounceretry = FALSE;
 #endif
 
+#ifdef FIX_RFF_DRAW_ONCE
+/* Set (to the post-move slip direction) only across the SUCCESSFUL-bounce re-arm,
+ * where Tile World would otherwise draw a second random direction for a single
+ * move. NIL everywhere else, so every other path keeps drawing exactly as before. */
+static int rff_keepdir = NIL;
+#endif
+
 static void startfloormovement(creature* cr, int floor, int fdir) {
     int dir = fdir; /* fdir used with tank reversal when stuck on teleporter */
 #if defined(FIX_SLIDE_FACING) || defined(FIX_RFF_DRAW_ONCE)
@@ -992,8 +999,15 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
          * Chip and blocks are deliberately excluded -- they DO redraw every move in
          * SuperCC (tryMove 783/799), so Tile World's existing behavior is correct
          * for them. */
-        if (floor == Slide_Random && fdir != NIL)
-            dir = fdir;     /* caller already knows the direction: do NOT redraw */
+        /* Only the bounce re-arm suppresses the draw, and it says so through
+         * rff_keepdir. fdir must NOT be used for this: the STUCK path passes
+         * origdir (never NIL) and genuinely must redraw -- SuperCC redraws there
+         * too, via MSCreature.tryMove line 799 on the failed-move path. Probing
+         * TCCLP#258 showed every suppressed draw on that level was ac=0, i.e.
+         * a block nailed on a random force floor, which is exactly the case that
+         * must keep drawing. */
+        if (floor == Slide_Random && rff_keepdir != NIL)
+            dir = rff_keepdir;
         else
 #endif
         dir = getslidedir(floor);
@@ -2861,11 +2875,20 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
 #ifdef FIX_SLIDE_FACING
                 enteringtile = FALSE;  /* re-arming an existing slide, not entering */
 #endif
-                startfloormovement(cr, cellat(cr->pos)->bot.id,
+#if defined(FIX_RFF_DRAW_ONCE) && defined(TRACE_DESYNC)
+                /* PROBE: every RNG draw this fix SUPPRESSES. */
+                if (ac && keepdir != NIL && tracethistick())
+                    fprintf(stderr, "RFFSKIP\t%d\t%d\tcr=%02X@%d,%d\tkeep=%d\n",
+                            (int)state->game->number, (int)currenttime(), cr->id,
+                            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), keepdir);
+#endif
 #ifdef FIX_RFF_DRAW_ONCE
-                                   ac ? keepdir : (origdir != NIL ? origdir : keepdir));
-#else
+                rff_keepdir = ac ? keepdir : NIL;
+#endif
+                startfloormovement(cr, cellat(cr->pos)->bot.id,
                                    ac ? NIL : origdir); /* 3rd argument with tank reversal patch */
+#ifdef FIX_RFF_DRAW_ONCE
+                rff_keepdir = NIL;
 #endif
             }
         }
