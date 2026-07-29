@@ -176,6 +176,18 @@
 #define	FIX_RFF_DRAW_ONCE	1
 #endif
 
+/* MOD (Jeremy): the CHIP half of the slip pass had the same random-force-floor
+ * double draw, ON by default. jc-13 guarded only
+ * floormovements_of_blocks_and_monsters(); floormovements_of_chip() has the
+ * identical bounce re-arm and was left alone, so Tile World's RNG still ran one
+ * draw ahead of SuperCC's. Fixes 5 desyncs with 0 regressions: EricS1#24,
+ * EricS1#145, Jacques#82, JacquesS1#203, PB_Gourami_Levelsets#83.
+ * Build with -DNO_FIX_RFF_CHIP_REARM to restore the old behavior.
+ */
+#if !defined(NO_FIX_RFF_CHIP_REARM) && !defined(FIX_RFF_CHIP_REARM)
+#define	FIX_RFF_CHIP_REARM	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
