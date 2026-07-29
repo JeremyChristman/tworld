@@ -965,7 +965,7 @@ static int enteringtile = FALSE;
  * a leave-check (thin wall) rejection stays terrain-like even when the destination
  * happens to hold a creature -- matching SuperCC, where canLeave() returns before
  * tryEnter() can clear the flag. */
-static int cmm_sawoccupant = FALSE;
+static int cmm_terrainrefused = FALSE;
 #endif
 
 #ifdef FIX_BOUNCE_REFACE
@@ -1299,6 +1299,18 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     _assert(cr);
     _assert(dir != NIL);
 
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+    /* Default FALSE = "reorder", matching SuperCC: anything that lets tryEnter()
+     * run clears `sliding` and therefore re-adds at the end. Set TRUE only where
+     * the DESTINATION TERRAIN itself refuses, which is SuperCC's canEnter() ==
+     * false path -- there tryEnter never runs and the creature keeps its slot.
+     * MUST be cleared before the bounds check: an off-map move is NOT a terrain
+     * refusal (SuperCC substitutes the Position(-1) sentinel, whose tile passes
+     * canEnter, so tryEnter runs and the creature DOES reorder -- measured on
+     * AnneO1#40 t=3, the ball at 14,0 moving UP off the top edge). */
+    cmm_terrainrefused = FALSE;
+#endif
+
     y = cr->pos / CXGRID;
     x = cr->pos % CXGRID;
     y += dir == NORTH ? -1 : dir == SOUTH ? +1 : 0;
@@ -1307,30 +1319,33 @@ static int canmakemove(creature const* cr, int dir, int flags) {
         return FALSE;
     to = y * CXGRID + x;
 
-#ifdef FIX_BOUNCE_OCCUPANT_REORDER
-    cmm_sawoccupant = FALSE;
-#endif
-
     if (!(flags & CMM_NOLEAVECHECK)) {
+        /* SuperCC's canLeave() returns before tryEnter() can clear `sliding`, so
+         * every rejection here is terrain-like: no reorder. */
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+#define TERRAIN_REFUSE()  do { cmm_terrainrefused = TRUE; return FALSE; } while (0)
+#else
+#define TERRAIN_REFUSE()  return FALSE
+#endif
         switch (cellat(cr->pos)->bot.id) {
             case Wall_North:
-                if (dir == NORTH) return FALSE;
+                if (dir == NORTH) TERRAIN_REFUSE();
                 break;
             case Wall_West:
-                if (dir == WEST) return FALSE;
+                if (dir == WEST) TERRAIN_REFUSE();
                 break;
             case Wall_South:
-                if (dir == SOUTH) return FALSE;
+                if (dir == SOUTH) TERRAIN_REFUSE();
                 break;
             case Wall_East:
-                if (dir == EAST) return FALSE;
+                if (dir == EAST) TERRAIN_REFUSE();
                 break;
             case Wall_Southeast:
-                if (dir & (SOUTH | EAST)) return FALSE;
+                if (dir & (SOUTH | EAST)) TERRAIN_REFUSE();
                 break;
             case Beartrap:
                 if (!(cr->state & CS_RELEASED))
-                    return FALSE;
+                    TERRAIN_REFUSE();
                 break;
         }
     }
@@ -1390,9 +1405,6 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     } else if (cr->id == Block) {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
-#ifdef FIX_BOUNCE_OCCUPANT_REORDER
-            cmm_sawoccupant = TRUE;
-#endif
             id = creatureid(floor);
 #ifdef FIX_TELEPORT_BLOCK_ONTO_CHIP
             /* MOD (Jeremy): a block is normally allowed to shove into Chip --
@@ -1415,13 +1427,10 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             return id == Chip || id == Swimming_Chip;
         }
         if (!(movelaws[floor].block & dir))
-            return FALSE;
+            TERRAIN_REFUSE();
     } else {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
-#ifdef FIX_BOUNCE_OCCUPANT_REORDER
-            cmm_sawoccupant = TRUE;
-#endif
             id = creatureid(floor);
             if (id == Chip || id == Swimming_Chip) {
                 floor = cellat(to)->bot.id;
@@ -1464,10 +1473,10 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             return FALSE;
         }
         if (!(movelaws[floor].creature & dir))
-            return FALSE;
+            TERRAIN_REFUSE();
         if (floor == Fire && (cr->id == Bug || cr->id == Walker))
             if (!(flags & CMM_NOFIRECHECK))
-                return FALSE;
+                TERRAIN_REFUSE();   /* SuperCC: canEnter(FIRE) false for bug/walker */
     }
 
     if (cellat(to)->bot.id == CloneMachine) {
@@ -2815,10 +2824,12 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
 #ifdef FIX_BOUNCE_OCCUPANT_REORDER
-            /* Capture BEFORE the retry overwrites it: was the first attempt refused
-             * by an occupant (SuperCC clears `sliding` -> reorder) or by terrain
-             * (SuperCC keeps the slot -> no reorder)? */
-            int occ = cmm_sawoccupant;
+            /* Capture BEFORE the retry overwrites it: did the DESTINATION TERRAIN
+             * refuse (SuperCC's canEnter() false -> tryEnter never runs -> `sliding`
+             * survives -> the creature keeps its slip-list slot), or did anything
+             * else refuse (occupant, off-map, clone machine -> tryEnter runs and
+             * clears `sliding` -> re-added at the end -> reorder)? */
+            int terrain = cmm_terrainrefused;
 #endif
             floor = cellat(cr->pos)->bot.id;
 #ifdef FIX_BOUNCE_REFACE
@@ -2857,14 +2868,23 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
 #ifdef FIX_BOUNCE_REFACE
             bounceretry = FALSE;
 #endif
+#if defined(FIX_BOUNCE_OCCUPANT_REORDER) && defined(TRACE_DESYNC)
+            /* PROBE: every reorder this gate SKIPS. Each of these is a place where
+             * jc-12 would have re-appended and this build does not -- so the first
+             * one on a regressed level is exactly where the two diverge. */
+            if (terrain && ac && (cr->state & (CS_SLIP | CS_SLIDE)) && tracethistick())
+                fprintf(stderr, "SKIPREORDER\t%d\t%d\tcr=%02X@%d,%d\tslipdir=%d\n",
+                        (int)state->game->number, (int)currenttime(), cr->id,
+                        (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), slipdir);
+#endif
             if (
 #ifdef FIX_BOUNCE_OCCUPANT_REORDER
                 /* Reorder only when SuperCC would have: an OCCUPANT refusal, or the
                  * creature is genuinely stuck (retry failed too, so it must re-arm
                  * -- leaving that path alone keeps stuck-on-force-floor behavior and
-                 * the slip direction update intact). A terrain refusal that then
+                 * the slip direction update intact). Only a TERRAIN refusal that then
                  * bounced successfully keeps its slot, as SuperCC does. */
-                (occ || !ac) &&
+                (!terrain || !ac) &&
 #endif
                     (cr->state & (CS_SLIP | CS_SLIDE))) {
                 endfloormovement(cr);
