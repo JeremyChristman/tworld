@@ -2789,11 +2789,37 @@ static void floormovements_of_chip(void) /* split into two */
             if (brokentele) {
                 endfloormovement(cr);
             } else if (cr->state & (CS_SLIP | CS_SLIDE)) {
+#ifdef FIX_RFF_CHIP_REARM
+                /* MOD (Jeremy): the Chip half of the slip pass has the SAME
+                 * double-draw jc-13 fixed for blocks and monsters. This re-arm calls
+                 * startfloormovement() a second time for one move, and on a random
+                 * force floor that is a second getslidedir() -- so Tile World's RNG
+                 * runs one draw ahead of SuperCC's.
+                 *
+                 * jc-13 (FIX_RFF_DRAW_ONCE) only guarded
+                 * floormovements_of_blocks_and_monsters(); this path was left alone.
+                 * Measured after jc-13: Tile World is still AHEAD BY EXACTLY ONE DRAW
+                 * at the first RNG divergence on Jacques#82 (t=21), EricS1#145
+                 * (t=469) and JacquesS1#203 (t=1261).
+                 *
+                 * Same shape as jc-13: carry the post-move slip direction across the
+                 * re-arm so the second call reuses it instead of drawing. Only the
+                 * successful-bounce case is touched (ac true); a Chip nailed on a
+                 * random force floor keeps redrawing, which SuperCC also does. */
+                int keepdir = (ac && cellat(cr->pos)->bot.id == Slide_Random)
+                                  ? getslipdir(cr) : NIL;
+#endif
                 endfloormovement(cr);
 #ifdef FIX_SLIDE_FACING
                 enteringtile = FALSE;  /* re-arming an existing slide, not entering */
 #endif
+#ifdef FIX_RFF_CHIP_REARM
+                rff_keepdir = keepdir;
+#endif
                 startfloormovement(cr, cellat(cr->pos)->bot.id, NIL); /* 3rd argument with tank reversal patch */
+#ifdef FIX_RFF_CHIP_REARM
+                rff_keepdir = NIL;
+#endif
             }
         }
         if (checkforending())
