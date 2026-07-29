@@ -159,6 +159,23 @@
 #define	FIX_BOUNCE_REFACE	1
 #endif
 
+/* MOD (Jeremy): a bounce over a RANDOM FORCE FLOOR must not draw the RNG twice,
+ * ON by default. Fixes 6 desyncs (DavidP1#14, EEWallsfor5subs#67,
+ * tensorpudding-1#38, TomP2#106, TyreA1#25, ZK4#40) at the cost of 1 regression
+ * (ZK-Adventure#304), shipped knowingly as jc-13.
+ * Tile World re-arms a bounced slide by calling startfloormovement() a SECOND
+ * time, and on a random force floor that means a second getslidedir() -- two RNG
+ * draws for one move, so its stream ran ahead of SuperCC's. SuperCC draws once
+ * per successful move (MSCreature.tryMove line 783) and its slip pass never
+ * redraws for FF_RANDOM (getSlideDirectionPriority passes changeOnRFF=false).
+ * Only the SUCCESSFUL-bounce re-arm is affected: a block NAILED on a random force
+ * floor still redraws every tick, which SuperCC also does (tryMove line 799).
+ * Build with -DNO_FIX_RFF_DRAW_ONCE to restore the old behavior.
+ */
+#if !defined(NO_FIX_RFF_DRAW_ONCE) && !defined(FIX_RFF_DRAW_ONCE)
+#define	FIX_RFF_DRAW_ONCE	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
