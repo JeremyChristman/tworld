@@ -940,6 +940,34 @@ static void turntanks(creature const* inmidmove) {
  * the two cases have to be told apart. */
 static int enteringtile = FALSE;
 
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+/* MOD (Jeremy): set by canmakemove() when the DESTINATION was occupied by a
+ * creature, i.e. the move was refused by an occupant rather than by terrain.
+ *
+ * Why the distinction matters. SuperCC's tryMove is
+ *     if (canEnter(dir, newTileBG) || ...) { if (tryEnter(dir, newPos, newTileFG)) {...} }
+ *     setSliding(wasSliding, sliding);
+ * and tryEnter opens with `sliding = false;` (MSCreature.java:366), re-setting it
+ * only for slide tiles. So on a FAILED move:
+ *   - refused by TERRAIN  -> canEnter false, tryEnter never runs, `sliding` stays
+ *     true -> setSliding(true,true) is a no-op -> the creature KEEPS its slip-list
+ *     slot -> no reorder.
+ *   - refused by an OCCUPANT -> canEnter passed, tryEnter ran (clearing `sliding`)
+ *     and then refused -> setSliding(true,false) -> the creature LEAVES the slip
+ *     list and is re-added at the end -> reorder.
+ * Tile World re-appends on every bounce, so it reorders in the terrain case too --
+ * and because the slip pass walks by index, that reorder makes the creature get
+ * visited a second time in the same pass (the slide-delay double-move). Measured on
+ * Jacques#626 t=17: SuperCC's tank moved 27,22 -> 28,22, Tile World's went
+ * 27,22 -> 29,22 in the same move period.
+ *
+ * Set FALSE at canmakemove() entry and TRUE only inside the iscreature() blocks, so
+ * a leave-check (thin wall) rejection stays terrain-like even when the destination
+ * happens to hold a creature -- matching SuperCC, where canLeave() returns before
+ * tryEnter() can clear the flag. */
+static int cmm_sawoccupant = FALSE;
+#endif
+
 #ifdef FIX_BOUNCE_REFACE
 /* MOD (Jeremy): TRUE only across the bounce retry in the slip pass -- the second
  * advancecreature() a blocked slider makes after icewallturn(). SuperCC treats
@@ -1279,6 +1307,10 @@ static int canmakemove(creature const* cr, int dir, int flags) {
         return FALSE;
     to = y * CXGRID + x;
 
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+    cmm_sawoccupant = FALSE;
+#endif
+
     if (!(flags & CMM_NOLEAVECHECK)) {
         switch (cellat(cr->pos)->bot.id) {
             case Wall_North:
@@ -1358,6 +1390,9 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     } else if (cr->id == Block) {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+            cmm_sawoccupant = TRUE;
+#endif
             id = creatureid(floor);
 #ifdef FIX_TELEPORT_BLOCK_ONTO_CHIP
             /* MOD (Jeremy): a block is normally allowed to shove into Chip --
@@ -1384,6 +1419,9 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     } else {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+            cmm_sawoccupant = TRUE;
+#endif
             id = creatureid(floor);
             if (id == Chip || id == Swimming_Chip) {
                 floor = cellat(to)->bot.id;
@@ -2776,6 +2814,12 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         cr->frame = cr->dir; /* Tank Top Glitch */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+            /* Capture BEFORE the retry overwrites it: was the first attempt refused
+             * by an occupant (SuperCC clears `sliding` -> reorder) or by terrain
+             * (SuperCC keeps the slot -> no reorder)? */
+            int occ = cmm_sawoccupant;
+#endif
             floor = cellat(cr->pos)->bot.id;
 #ifdef FIX_BOUNCE_REFACE
             /* MOD (Jeremy): a FAILED slide attempt ends the slide, so the bounce
@@ -2813,7 +2857,16 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
 #ifdef FIX_BOUNCE_REFACE
             bounceretry = FALSE;
 #endif
-            if (cr->state & (CS_SLIP | CS_SLIDE)) {
+            if (
+#ifdef FIX_BOUNCE_OCCUPANT_REORDER
+                /* Reorder only when SuperCC would have: an OCCUPANT refusal, or the
+                 * creature is genuinely stuck (retry failed too, so it must re-arm
+                 * -- leaving that path alone keeps stuck-on-force-floor behavior and
+                 * the slip direction update intact). A terrain refusal that then
+                 * bounced successfully keeps its slot, as SuperCC does. */
+                (occ || !ac) &&
+#endif
+                    (cr->state & (CS_SLIP | CS_SLIDE))) {
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
 #ifdef FIX_SLIDE_FACING
