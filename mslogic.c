@@ -1593,8 +1593,29 @@ static void choosecreaturemove(creature* cr) {
         int id = creatureid(floor);
         if (iscreature(floor) && (id == Chip || id == Swimming_Chip))
             floor = cellat(cr->pos)->bot.id;
+#ifdef FIX_STACKED_CREATURE_CULL
+        /* MOD (Jeremy): do NOT cull a stalled creature just because the map tile
+         * under it is no longer a creature tile.
+         *
+         * SuperCC's monster list is AUTHORITATIVE -- a creature exists because it is
+         * in the list, not because a tile says so. Tile World ties creatures to map
+         * tiles, so when two monster-list entries name the SAME cell (both engines
+         * duly create two creatures) and the first one moves off, the tile leaves
+         * with it and the second creature is left tile-less. This hides it.
+         *
+         * Measured on A_Strange_Journey#60 "DeathSwap": the monster list names
+         * (27,13) twice and (27,11) twice, giving four tanks in two stacked pairs.
+         * At t=5 SuperCC still has all four; Tile World has three -- the tile-less
+         * duplicate at (27,13) was culled here.
+         *
+         * Scope: 13 of 22,051 levels have duplicate monster-list entries, TWO of
+         * them currently navy (A_Strange_Journey#60 and TLFC3#18, the latter with 3
+         * duplicated cells / 39 extra creatures). */
+        (void)0;
+#else
         if (!iscreature(floor) && movelaws[floor].creature)
             cr->hidden = TRUE; /* hack with (0,0) movement success */
+#endif
         /* maybe should check if (0,0) move goes on sliplist, but that's UB */
         if (FALSE && cr->hidden && (id == Chip || id == Swimming_Chip) && (floor != Fire && floor != Water && floor != Bomb)) {
             chipstatus() = CHIP_COLLIDED;
