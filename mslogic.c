@@ -200,6 +200,19 @@
 #define	FIX_CHIP_START_FOREGROUND	1
 #endif
 
+/* MOD (Jeremy): a stalled creature is NOT culled just because the map tile under
+ * it stopped being a creature tile, ON by default. SuperCC's monster list is
+ * authoritative; Tile World tied creatures to tiles, so when two monster-list
+ * entries name the same cell (both engines create two creatures) and the first
+ * moves off, the tile went with it and Tile World hid the second. Fixes 1 desync
+ * -- A_Strange_Journey#60 "DeathSwap", whose list names (27,13) and (27,11) twice
+ * each -- with 0 regressions.
+ * Build with -DNO_FIX_STACKED_CREATURE_CULL to restore the old behavior.
+ */
+#if !defined(NO_FIX_STACKED_CREATURE_CULL) && !defined(FIX_STACKED_CREATURE_CULL)
+#define	FIX_STACKED_CREATURE_CULL	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
