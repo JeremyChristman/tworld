@@ -2893,6 +2893,13 @@ static void floormovements_of_chip(void) /* split into two */
 static long slipvisit_double = 0;
 static long slipvisit_passes = 0;
 static int  slipvisit_leveldouble = 0;
+/* Failed slide attempts, split by what the creature was standing on. A "stuck on a
+ * force floor" event is the case TomP2#56 turns on: SuperCC refreshes the direction
+ * but keeps the slip-list slot, Tile World also RE-APPENDS (reorder). */
+static long slipstuck_ff = 0;      /* failed slide, standing on a force floor */
+static long slipstuck_ice = 0;     /* failed slide, standing on ice */
+static long slipstuck_other = 0;   /* failed slide, anything else */
+static long slipstuck_ffreorder = 0; /* of slipstuck_ff, how many actually reordered */
 #endif
 
 static void floormovements_of_blocks_and_monsters(void) /* split into two */
@@ -2954,6 +2961,11 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
             floor = cellat(cr->pos)->bot.id;
+#ifdef TRACE_SLIP_VISITS
+            if (isslide(floor))     ++slipstuck_ff;
+            else if (isice(floor))  ++slipstuck_ice;
+            else                    ++slipstuck_other;
+#endif
 #ifdef FIX_BOUNCE_REFACE
             /* MOD (Jeremy): a FAILED slide attempt ends the slide, so the bounce
              * retry lands as a NEW entry onto its tile -- and therefore re-faces.
@@ -2991,6 +3003,13 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             bounceretry = FALSE;
 #endif
             if (cr->state & (CS_SLIP | CS_SLIDE)) {
+#ifdef TRACE_SLIP_VISITS
+                /* This is where the re-append (reorder) actually happens. Count the
+                 * force-floor-stuck ones, since that is the only case still in play
+                 * for TomP2#56. */
+                if (isslide(cellat(cr->pos)->bot.id))
+                    ++slipstuck_ffreorder;
+#endif
 #ifdef FIX_RFF_DRAW_ONCE
                 /* MOD (Jeremy): on a bounce Tile World re-arms the slide by calling
                  * startfloormovement() a SECOND time, and on a random force floor
@@ -3703,11 +3722,13 @@ static int endgame(gamelogic* logic) {
 #ifdef TRACE_SLIP_VISITS
     /* One line per level: how many slip passes ran, and how many times a creature
      * was moved TWICE within a single pass. */
-    fprintf(stderr, "V\t%d\tpasses=%ld\tdouble=%ld\n",
-            (int)state->game->number, slipvisit_passes, slipvisit_double);
+    fprintf(stderr, "V\t%d\tpasses=%ld\tdouble=%ld\tffstuck=%ld\ticestuck=%ld\totherstuck=%ld\tffreorder=%ld\n",
+            (int)state->game->number, slipvisit_passes, slipvisit_double,
+            slipstuck_ff, slipstuck_ice, slipstuck_other, slipstuck_ffreorder);
     slipvisit_passes = 0;
     slipvisit_double = 0;
     slipvisit_leveldouble = 0;
+    slipstuck_ff = slipstuck_ice = slipstuck_other = slipstuck_ffreorder = 0;
 #endif
     resetcreaturepool();
     resetcreaturelist();
