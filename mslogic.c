@@ -2885,6 +2885,16 @@ static void floormovements_of_chip(void) /* split into two */
     }
 }
 
+#ifdef TRACE_SLIP_VISITS
+/* Counters for the slip-pass double-move measurement (see handoff section 40).
+ * slipvisit_double     - total creatures moved twice in one pass, this level
+ * slipvisit_passes     - total slip passes run, this level
+ * slipvisit_leveldouble- set once if this level ever double-moved anything */
+static long slipvisit_double = 0;
+static long slipvisit_passes = 0;
+static int  slipvisit_leveldouble = 0;
+#endif
+
 static void floormovements_of_blocks_and_monsters(void) /* split into two */
 {
     creature* cr;
@@ -2893,6 +2903,16 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
     int n;
     int oldmsccslippers;
     int advance = 0;
+#ifdef TRACE_SLIP_VISITS
+    /* MOD (Jeremy): count how often ONE creature is processed more than once in a
+     * SINGLE slip pass -- the slide-delay "double move". Measurement only, no
+     * behaviour change: it decides whether the double visit is rare (safe to
+     * target) or load-bearing (leave alone). See handoff section 40.
+     * O(n^2) over the slip list, which is tiny; this build is never shipped. */
+    creature* _seen[512];
+    int _seencount = 0;
+    ++slipvisit_passes;
+#endif
 
     for (n = 0; n < slipcount;) {
         oldmsccslippers = msccslippers;
@@ -2916,6 +2936,20 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             n++;
             continue;
         }
+#ifdef TRACE_SLIP_VISITS
+        /* This creature is about to be MOVED. Has it already moved this pass? */
+        {
+            int _j, _dup = 0;
+            for (_j = 0; _j < _seencount; ++_j)
+                if (_seen[_j] == cr) { _dup = 1; break; }
+            if (_dup) {
+                ++slipvisit_double;
+                slipvisit_leveldouble = 1;
+            } else if (_seencount < (int)(sizeof _seen / sizeof *_seen)) {
+                _seen[_seencount++] = cr;
+            }
+        }
+#endif
         cr->frame = cr->dir; /* Tank Top Glitch */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
@@ -3666,6 +3700,15 @@ static int advancegame(gamelogic* logic) {
  */
 static int endgame(gamelogic* logic) {
     (void) logic;
+#ifdef TRACE_SLIP_VISITS
+    /* One line per level: how many slip passes ran, and how many times a creature
+     * was moved TWICE within a single pass. */
+    fprintf(stderr, "V\t%d\tpasses=%ld\tdouble=%ld\n",
+            (int)state->game->number, slipvisit_passes, slipvisit_double);
+    slipvisit_passes = 0;
+    slipvisit_double = 0;
+    slipvisit_leveldouble = 0;
+#endif
     resetcreaturepool();
     resetcreaturelist();
     resetblocklist();
