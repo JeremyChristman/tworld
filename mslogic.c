@@ -3611,6 +3611,27 @@ static int advancegame(gamelogic* logic) {
         }
         fprintf(stderr, "\n");
 
+        /* MOD (Jeremy): the SLIP LIST, IN ORDER, matching TraceLevel.java's Q line.
+         * Ported onto main from wip/trace-sliplist, where it had been stranded.
+         * Needed because block-vs-block divergences on random force floors turn on
+         * WHICH block the slip pass reaches first -- the T line shows only positions
+         * and cannot distinguish "different direction" from "different order". */
+        fprintf(stderr, "Q\t%d\t%d\tQ:",
+                (int)state->game->number, (int)currenttime());
+        for (_i = 0; _i < slipcount; ++_i) {
+            creature* _c = slips[_i].cr;
+            int _k;
+            if (!_c)
+                continue;
+            _k = ((int)_c->id - Chip) / 4;
+            fprintf(stderr, "%c,%d,%d,%c ",
+                    (_k >= 0 && _k < (int)(sizeof _crletter)) ? _crletter[_k] : '?',
+                    (int)(_c->pos % CXGRID), (int)(_c->pos / CXGRID),
+                    slips[_i].dir == NORTH ? 'N' : slips[_i].dir == WEST ? 'W' :
+                    slips[_i].dir == SOUTH ? 'S' : slips[_i].dir == EAST ? 'E' : '-');
+        }
+        fprintf(stderr, "\n");
+
         /* MOD (Jeremy): the SLIP-STATE line, matching TraceLevel.java's L line.
          * A separate line type on purpose -- classify.mjs and all four censuses
          * parse the T tokens, so widening those would break every one of them.
