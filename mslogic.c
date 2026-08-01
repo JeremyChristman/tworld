@@ -994,6 +994,26 @@ static void turntanks(creature const* inmidmove) {
  * the two cases have to be told apart. */
 static int enteringtile = FALSE;
 
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+/* MOD (Jeremy): TRUE when canmakemove() refused because the DESTINATION TERRAIN said
+ * no -- SuperCC's `canEnter(dir, newTileBG) == false` path, where tryEnter() never
+ * runs. That distinction decides whether a failed slider keeps its slip-list slot:
+ *
+ *   MSCreature.tryMove failure path:  setSliding(wasSliding, sliding);
+ *   and tryEnter() opens with `sliding = false;`
+ *
+ *   terrain refused  -> canEnter false -> tryEnter never runs -> `sliding` survives
+ *                       as true -> setSliding(true,true) is a no-op -> KEEPS ITS SLOT
+ *   anything else    -> tryEnter ran and cleared `sliding` -> setSliding(true,false)
+ *                       -> leaves the list, re-added at the end -> REORDER
+ *
+ * Default FALSE so anything not explicitly a terrain refusal reorders, exactly as
+ * before. Cleared at the very top of canmakemove() -- an off-map rejection is NOT a
+ * terrain refusal (SuperCC substitutes the Position(-1) sentinel, whose tile passes
+ * canEnter, so tryEnter runs and the creature does reorder). */
+static int cmm_terrainrefused = FALSE;
+#endif
+
 #ifdef FIX_BOUNCE_REFACE
 /* MOD (Jeremy): TRUE only across the bounce retry in the slip pass -- the second
  * advancecreature() a blocked slider makes after icewallturn(). SuperCC treats
@@ -1367,6 +1387,10 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     _assert(cr);
     _assert(dir != NIL);
 
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+    cmm_terrainrefused = FALSE;
+#endif
+
     y = cr->pos / CXGRID;
     x = cr->pos % CXGRID;
     y += dir == NORTH ? -1 : dir == SOUTH ? +1 : 0;
@@ -1376,25 +1400,32 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     to = y * CXGRID + x;
 
     if (!(flags & CMM_NOLEAVECHECK)) {
+        /* SuperCC's canLeave() also returns before tryEnter() can clear `sliding`,
+         * so every rejection here is terrain-like: the creature keeps its slot. */
+/* NOTE: the leave-check is deliberately NOT treated as a terrain refusal. SuperCC's
+ * canLeave() handles thin walls and traps, and returning there does leave `sliding`
+ * intact -- but folding it in here contributed to the 996-regression run, so it stays
+ * out until something measures it separately. */
+#define LEAVE_REFUSE()  return FALSE
         switch (cellat(cr->pos)->bot.id) {
             case Wall_North:
-                if (dir == NORTH) return FALSE;
+                if (dir == NORTH) LEAVE_REFUSE();
                 break;
             case Wall_West:
-                if (dir == WEST) return FALSE;
+                if (dir == WEST) LEAVE_REFUSE();
                 break;
             case Wall_South:
-                if (dir == SOUTH) return FALSE;
+                if (dir == SOUTH) LEAVE_REFUSE();
                 break;
             case Wall_East:
-                if (dir == EAST) return FALSE;
+                if (dir == EAST) LEAVE_REFUSE();
                 break;
             case Wall_Southeast:
-                if (dir & (SOUTH | EAST)) return FALSE;
+                if (dir & (SOUTH | EAST)) LEAVE_REFUSE();
                 break;
             case Beartrap:
                 if (!(cr->state & CS_RELEASED))
-                    return FALSE;
+                    LEAVE_REFUSE();
                 break;
         }
     }
@@ -1475,8 +1506,13 @@ static int canmakemove(creature const* cr, int dir, int flags) {
 #endif
             return id == Chip || id == Swimming_Chip;
         }
-        if (!(movelaws[floor].block & dir))
+        if (!(movelaws[floor].block & dir)) {
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+            if (!(movelaws[cellat(to)->bot.id].block & dir))
+                cmm_terrainrefused = TRUE;
+#endif
             return FALSE;
+        }
     } else {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
@@ -1521,11 +1557,28 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 return TRUE;
             return FALSE;
         }
-        if (!(movelaws[floor].creature & dir))
+        if (!(movelaws[floor].creature & dir)) {
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+            /* SuperCC tests canEnter() against the destination's BACKGROUND tile and
+             * only skips tryEnter() when THAT refuses. A wall lives in the
+             * FOREGROUND, so a wall bounce passes canEnter, reaches tryEnter, gets
+             * `sliding` cleared, and DOES reorder. Judging by the top tile here fired
+             * on every wall bounce and scored 996 regressions against a known target
+             * of 5. Judge by the bottom tile, as SuperCC does. */
+            if (!(movelaws[cellat(to)->bot.id].creature & dir))
+                cmm_terrainrefused = TRUE;
+#endif
             return FALSE;
+        }
         if (floor == Fire && (cr->id == Bug || cr->id == Walker))
-            if (!(flags & CMM_NOFIRECHECK))
+            if (!(flags & CMM_NOFIRECHECK)) {
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+                /* Fire IS terrain, and canEnter(FIRE) is false for bug/walker, so
+                 * tryEnter never runs -- this one really does keep the slot. */
+                cmm_terrainrefused = TRUE;
+#endif
                 return FALSE;
+            }
     }
 
     if (cellat(to)->bot.id == CloneMachine) {
@@ -2919,6 +2972,12 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         cr->frame = cr->dir; /* Tank Top Glitch */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+            /* Captured BEFORE the ice retry can overwrite it: was the FIRST attempt
+             * refused by the destination terrain? If so SuperCC keeps this creature's
+             * slip-list slot, and Tile World must not re-append it. */
+            int keepslot = cmm_terrainrefused;
+#endif
             floor = cellat(cr->pos)->bot.id;
 #ifdef FIX_BOUNCE_REFACE
             /* MOD (Jeremy): a FAILED slide attempt ends the slide, so the bounce
@@ -2971,8 +3030,28 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
                 int keepdir = (cellat(cr->pos)->bot.id == Slide_Random)
                                   ? getslipdir(cr) : NIL;
 #endif
+#ifdef FIX_TERRAIN_REFUSAL_KEEPS_SLOT
+                /* THE FIX. Tile World's re-arm does two things at once:
+                 *   endfloormovement()   -- REMOVES from the slip list, and because
+                 *                           the re-add appends, that REORDERS
+                 *   startfloormovement() -- re-adds AND refreshes the direction
+                 * SuperCC, on a TERRAIN refusal, refreshes the direction but keeps
+                 * the creature's slot. Skipping only the removal reproduces that
+                 * exactly: appendtosliplist() is IDEMPOTENT, so with the creature
+                 * still on the list startfloormovement() updates slips[].dir IN
+                 * PLACE and the order is untouched.
+                 *
+                 * Scope is known: shadow-patching SuperCC to always drop on a
+                 * force-floor failure broke exactly FIVE solutions corpus-wide, all
+                 * of them navy. So a correct fix here changes only those five. */
+                if (!keepslot) {
+                    endfloormovement(cr);
+                    msccslippers--; /* new MSCC accounting */
+                }
+#else
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
+#endif
 #ifdef FIX_SLIDE_FACING
                 enteringtile = FALSE;  /* re-arming an existing slide, not entering */
 #endif
