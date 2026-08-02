@@ -213,6 +213,27 @@
 #define	FIX_STACKED_CREATURE_CULL	1
 #endif
 
+/* MOD (Jeremy): a slider blocked by an OCCUPIED, impassable cell keeps its place
+ * in the slip list instead of being moved to the back, ON by default.
+ * Tile World re-arms an interrupted slide with endfloormovement() +
+ * startfloormovement(); the removal makes the re-add APPEND, so every blocked
+ * slider reorders. SuperCC reorders only when its entry guard actually RAN and
+ * refused -- when the guard fails outright, `sliding` is never cleared and the
+ * creature keeps its slot. A probe on SuperCC's tryMove failure path (208,959
+ * decisions) shows KEEP happens iff the destination's BACKGROUND refuses the move
+ * AND its FOREGROUND holds a creature; a clone machine underneath is excluded
+ * because SuperCC's guard ends with `|| newTileBG == CLONE_MACHINE`.
+ * SuperCC judges this on EVERY attempt, so the slot survives only if the slide AND
+ * the ice bounce both kept it. Fixes 14 desyncs with 0 regressions: A_Strange_
+ * Journey#90, DavidK3#40, EEfor5subs#67, geodave4fixes#6, Jacques#213/626/953,
+ * JacquesS1#109, KyleW1#7, PB_Gourami_Levelsets#143/175, TCCLP#110, TomP3#76,
+ * ZK1_ancient#144.
+ * Build with -DNO_FIX_KEEPSLOT_OCCUPANT to restore the old behavior.
+ */
+#if !defined(NO_FIX_KEEPSLOT_OCCUPANT) && !defined(FIX_KEEPSLOT_OCCUPANT)
+#define	FIX_KEEPSLOT_OCCUPANT	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
