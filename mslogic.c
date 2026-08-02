@@ -1954,6 +1954,25 @@ static void choosechipmove(creature* cr, int discard) {
 
     dir = currentinput();
     currentinput() = NIL;
+#ifdef TRACE_DESYNC
+    /* PROBE: the voluntary-move discard, with everything the test reads.
+     * SuperCC's counterpart is MSLevel.moveChip:
+     *     if (chip.isSliding()) {
+     *         if (!layerBG.get(pos).isFF())      continue;   (A)
+     *         if (direction == chip.getDirection()) continue; (B)
+     *     }
+     * so the two decisions can be diffed term by term. */
+    if (tracethistick())
+        fprintf(stderr, "M@%d@%d,%d@in=%d@crdir=%d@slip=%d@slide=%d@bot=%02X"
+                        "@discardarg=%d@decision=%s\n",
+                (int)currenttime(),
+                (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                dir, (int)cr->dir,
+                !!(cr->state & CS_SLIP), !!(cr->state & CS_SLIDE),
+                cellat(cr->pos)->bot.id, !!discard,
+                (discard || ((cr->state & CS_SLIDE) && dir == cr->dir))
+                    ? "DISCARD" : "TAKE");
+#endif
     if (discard || ((cr->state & CS_SLIDE) && dir == cr->dir)) {
         if (currenttime() && !(currenttime() & 1))
             cancelgoal();
@@ -2343,8 +2362,39 @@ static void activatecloner(int buttonpos) {
         return;
     if (creatureid(tileid) == Block) {
         cr = lookupblock(pos);
+#ifdef FIX_CLONER_TEMPLATE_ON_DEATH
+        /* MOD (Jeremy): a cloned block that DIES on its way out leaves the cloner's
+         * template behind; only a clone that survives clears it.
+         *
+         * SuperCC does the clearing in MSCreatureList.tickClonedMonster:
+         *     if (monster.tick(...)) level.insertTile(clonerPosition, tile);
+         *     if (monster.getCreatureType() == CreatureID.BLOCK
+         *             && level.getLayerBG().get(clonerPosition) != CLONE_MACHINE)
+         *         level.popTile(clonerPosition);
+         * A clone that died is CreatureID.DEAD by then, so the `== BLOCK` test fails
+         * and the template stays. Tile World has no equivalent: advancecreature()
+         * pops the source cell before it even looks at `dead`, so the template goes
+         * with it.
+         *
+         * Only reachable where a red button is wired to a cell that is NOT a clone
+         * machine (measured: 171 such wirings, 46 levels, 21 sets) -- on a real
+         * cloner advancecreature() skips the pop, the template is still in place,
+         * and the guard below is false, so nothing changes.
+         *
+         * Measured on ZK-Ideas#50 "Annoying Blocks", SuperCC t=15: the cloner at
+         * 12,13 is a Block-Left template over a Teeth tile, its clone steps west
+         * onto the bomb at 11,13 and dies, and SuperCC's cell still reads
+         * afterFG=Block - Left / afterBG=Teeth - Left. Tile World's read Teeth. */
+        if (cr->dir != NIL) {
+            maptile tmpl = cellat(pos)->top;
+            advancecreature(cr, cr->dir);
+            if (cr->hidden && cellat(pos)->top.id != tmpl.id)
+                pushtile(pos, tmpl);
+        }
+#else
         if (cr->dir != NIL)
             advancecreature(cr, cr->dir);
+#endif
     } else {
         if (cellat(pos)->bot.state & FS_CLONING)
             return;
@@ -2905,7 +2955,26 @@ static void floormovements_of_chip(void) /* split into two */
                     cr->state &= ~CS_HASMOVED;
             } else if (floor == Teleport || floor == Block_Static) {
                 lastslipdir() = slipdir = back(slipdir);
+#ifdef FIX_RFF_TELEPORT_BOUNCE
+                /* MOD (Jeremy): RECORD the bounce's success. The ice branch just
+                 * above assigns `ac`; this one discarded it, so `ac` still held the
+                 * FALSE from the failed slide at the top of the loop -- and jc-14's
+                 * re-arm guard below reads exactly that:
+                 *     keepdir = (ac && bot.id == Slide_Random) ? getslipdir(cr) : NIL
+                 * With ac stuck FALSE the carry never happens, startfloormovement()
+                 * draws a SECOND random direction for one move, and Tile World's RNG
+                 * runs one value ahead of SuperCC's for the rest of the level.
+                 * jc-14 fixed this for the slide and ice paths; the teleport/block
+                 * bounce was left behind purely because of the missing assignment.
+                 *
+                 * Measured on Jacques#264 "Brinks": the streams are identical through
+                 * SuperCC t=678 (rng=222435604), then SuperCC reads draw 3
+                 * (1341035267) and Tile World draw 4 (816951936). */
+                ac = advancecreature(cr, slipdir);
+                if (ac)
+#else
                 if (advancecreature(cr, slipdir))
+#endif
                     cr->state &= ~CS_HASMOVED;
             }
             if (brokentele) {
