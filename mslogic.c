@@ -1443,8 +1443,36 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 if (dir & (SOUTH | EAST)) return FALSE;
                 break;
             case Beartrap:
+#ifdef FIX_TRAP_REEVALUATE
+                /* MOD (Jeremy): ask whether the trap is open NOW, not whether it
+                 * was open when the creature fell in.
+                 *
+                 * Tile World LATCHES the answer: springtrap()/advancecreature()
+                 * set CS_RELEASED on entry and it is cleared only once the
+                 * creature has successfully left (the `cr->state &= ~CS_RELEASED`
+                 * at the foot of advancecreature). So if the button is released
+                 * while the creature is still sitting in the trap, the flag goes
+                 * stale and the creature walks out of a shut trap.
+                 *
+                 * SuperCC re-evaluates every time: MSCreature.canLeave is
+                 *     case TRAP -> level.isTrapOpen(position);
+                 * and isTrapOpen() reads a BitSet that finaliseTraps() refreshes
+                 * each tick from whether the BUTTON tile is currently covered.
+                 *
+                 * Measured on PB_Gourami_Levelsets#254 "Guinea Pig": the pink ball
+                 * in the trap at 2,3 (whose four buttons are 2,2 / 3,3 / 2,4 / 1,3)
+                 * gets trapOpen=false at SuperCC t=20 and stays put, while Tile
+                 * World still had CS_RELEASED and walked it out.
+                 *
+                 * NOTE: the handoff records porting SuperCC's trap model as a dead
+                 * end (+9 additive / +25 replacing), but that was measured 16
+                 * releases ago on a far less faithful engine. Re-measured here. */
+                if (!istrapopen(cr->pos, -1))
+                    return FALSE;
+#else
                 if (!(cr->state & CS_RELEASED))
                     return FALSE;
+#endif
                 break;
         }
     }
@@ -2556,7 +2584,12 @@ static int startmovement(creature* cr, int dir) {
     }
 
     if (floor == Beartrap) {
+#ifndef FIX_TRAP_REEVALUATE
+        /* MOD (Jeremy): with FIX_TRAP_REEVALUATE the leave-check consults
+         * istrapopen() instead of the latched flag, so a creature can legitimately
+         * step out of a trap without CS_RELEASED ever having been set. */
         _assert(cr->state & CS_RELEASED);
+#endif
         if (cr->state & CS_MUTANT)
             cellat(cr->pos)->bot.state &= ~FS_HASMUTANT;
     }
