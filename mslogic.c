@@ -234,6 +234,53 @@
 #define	FIX_KEEPSLOT_OCCUPANT	1
 #endif
 
+/* MOD (Jeremy): the teleport/block bounce in the Chip slip pass RECORDS whether it
+ * succeeded, ON by default. The ice branch beside it assigns `ac`; this one threw
+ * the result away, so `ac` still held the FALSE from the failed slide at the top of
+ * the loop -- and jc-14's re-arm guard reads exactly that:
+ *     keepdir = (ac && bot.id == Slide_Random) ? getslipdir(cr) : NIL
+ * With ac stuck FALSE the carry never happened, startfloormovement() drew a SECOND
+ * random direction for one move, and Tile World's RNG ran one value ahead of
+ * SuperCC's for the rest of the level. jc-14 fixed the slide and ice paths; this one
+ * was left behind purely by the missing assignment. Fixes 1 desync (Jacques#264
+ * "Brinks") with 0 regressions.
+ * Build with -DNO_FIX_RFF_TELEPORT_BOUNCE to restore the old behavior.
+ */
+#if !defined(NO_FIX_RFF_TELEPORT_BOUNCE) && !defined(FIX_RFF_TELEPORT_BOUNCE)
+#define	FIX_RFF_TELEPORT_BOUNCE	1
+#endif
+
+/* MOD (Jeremy): a cloned block that DIES on its way out leaves the cloner's template
+ * behind, ON by default. SuperCC clears it in MSCreatureList.tickClonedMonster only
+ * when the clone is still a live BLOCK:
+ *     if (monster.getCreatureType() == CreatureID.BLOCK && bg != CLONE_MACHINE)
+ *         level.popTile(clonerPosition);
+ * A clone that died is CreatureID.DEAD by then, so the test fails and the template
+ * stays. Tile World's advancecreature() pops the source cell before it even looks at
+ * `dead`. Only reachable where a red button is wired to a cell that is NOT a clone
+ * machine (measured: 171 wirings, 46 levels, 21 sets). Fixes 1 desync (ZK-Ideas#50
+ * "Annoying Blocks") with 0 regressions.
+ * Build with -DNO_FIX_CLONER_TEMPLATE_ON_DEATH to restore the old behavior.
+ */
+#if !defined(NO_FIX_CLONER_TEMPLATE_ON_DEATH) && !defined(FIX_CLONER_TEMPLATE_ON_DEATH)
+#define	FIX_CLONER_TEMPLATE_ON_DEATH	1
+#endif
+
+/* MOD (Jeremy): a block BURIED UNDER a creature cannot be pushed, ON by default.
+ * floorat() deliberately looks past a creature, so a monster standing on a block
+ * reported floor == Block_Static and Chip fell into canmakemove()'s push branch --
+ * Tile World shoved a block it could not even see. SuperCC judges the move on the
+ * BACKGROUND, and creatures are transparent, so with FG = a monster and BG = BLOCK
+ * every term of its entry guard fails and tryEnter (where pushing lives) never runs.
+ * A monster on plain FLOOR still admits Chip and he dies on the collision as before.
+ * Measured: 135 such cells, 25 levels, 14 sets. Fixes 1 desync (Jacques#513 "Error")
+ * with 0 regressions.
+ * Build with -DNO_FIX_CHIP_ONTO_BURIED_BLOCK to restore the old behavior.
+ */
+#if !defined(NO_FIX_CHIP_ONTO_BURIED_BLOCK) && !defined(FIX_CHIP_ONTO_BURIED_BLOCK)
+#define	FIX_CHIP_ONTO_BURIED_BLOCK	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
