@@ -994,6 +994,31 @@ static void turntanks(creature const* inmidmove) {
  * the two cases have to be told apart. */
 static int enteringtile = FALSE;
 
+#ifdef FIX_KEEPSLOT_OCCUPANT
+/* MOD (Jeremy): TRUE when canmakemove() refused a move that SuperCC would refuse
+ * WITHOUT running tryEnter() -- which is what decides whether a failed slider keeps
+ * its slip-list slot.
+ *
+ * DERIVED FROM MEASUREMENT, not guessed. A probe on SuperCC's tryMove failure path
+ * (A_Strange_Journey, 208,959 decisions) cross-tabs as:
+ *     canEnter(BG)=true  -> DROP  206,246
+ *     canEnter(BG)=false -> DROP    2,426   destFG = Wall / Clone Machine / Gravel
+ *     canEnter(BG)=false -> KEEP      288   destFG = Fireball / Teeth  (CREATURES)
+ * KEEP never happens anywhere else. The split inside canEnter(BG)=false is SuperCC's
+ * entry guard, whose second term is `!newTileFG.isTransparent() && ...`: creatures
+ * ARE transparent, so a creature in the destination makes the whole guard fail and
+ * tryEnter never runs; a wall or cloner is opaque, the guard passes, tryEnter runs
+ * and clears `sliding`.
+ *
+ *     KEEP  <=>  the destination's BACKGROUND refuses the move
+ *                AND its FOREGROUND holds a creature
+ *
+ * Two earlier attempts guessed this predicate and were far too broad: judging by the
+ * destination's TOP tile scored 996 regressions, by its BOTTOM tile alone 60, against
+ * a known target of FIVE solutions (handoff section 44). */
+static int cmm_keepslot = FALSE;
+#endif
+
 #ifdef FIX_BOUNCE_REFACE
 /* MOD (Jeremy): TRUE only across the bounce retry in the slip pass -- the second
  * advancecreature() a blocked slider makes after icewallturn(). SuperCC treats
@@ -1367,6 +1392,10 @@ static int canmakemove(creature const* cr, int dir, int flags) {
     _assert(cr);
     _assert(dir != NIL);
 
+#ifdef FIX_KEEPSLOT_OCCUPANT
+    cmm_keepslot = FALSE;
+#endif
+
     y = cr->pos / CXGRID;
     x = cr->pos % CXGRID;
     y += dir == NORTH ? -1 : dir == SOUTH ? +1 : 0;
@@ -1491,6 +1520,20 @@ static int canmakemove(creature const* cr, int dir, int flags) {
         }
         if (iscreature(floor)) { /* turning tank cloning patch */
             creature* F = lookupcreature(to, FALSE);
+#ifdef FIX_KEEPSLOT_OCCUPANT
+            /* A creature occupies the destination. If the TERRAIN underneath would
+             * also have refused, SuperCC's entry guard fails outright (creatures are
+             * transparent), tryEnter never runs, and the slider keeps its slot.
+             *
+             * EXCEPT a clone machine: SuperCC's guard ends with
+             *     || newTileBG == CLONE_MACHINE
+             * so a cloner underneath makes the guard PASS regardless, tryEnter runs,
+             * `sliding` is cleared and the creature DOES drop. movelaws[CloneMachine]
+             * refuses, so without this exclusion the predicate keeps the slot there. */
+            if (!(movelaws[cellat(to)->bot.id].creature & dir)
+                    && cellat(to)->bot.id != CloneMachine)
+                cmm_keepslot = TRUE;
+#endif
             if (!(flags & CMM_CLONECANTBLOCK)) /* not cloning */
                 return FALSE;
             if ((F == NULL || !(F->state & CS_TURNING))
@@ -2919,6 +2962,26 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         cr->frame = cr->dir; /* Tank Top Glitch */
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
+#ifdef FIX_KEEPSLOT_OCCUPANT
+            /* The slide attempt's decision; the ice retry ANDs into it below. */
+            int keepslot = cmm_keepslot;
+#ifdef TRACE_DESYNC
+            /* PROBE: the same KEEP-or-DROP line the SuperCC shadow emits, so the two
+             * decision streams can be diffed directly.  Position is the creature's
+             * OWN cell (SuperCC prints the same) and dest is where it tried to go. */
+            if (tracethistick()) {
+                static int const kdelta[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
+                int dp = cr->pos + kdelta[slipdir];
+                fprintf(stderr, "K@%d@%02X@%d,%d@dir=%d@destTop=%02X@destBot=%02X"
+                                "@law=%d@decision=%s\n",
+                        (int)currenttime(), cr->id,
+                        (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), slipdir,
+                        cellat(dp)->top.id, cellat(dp)->bot.id,
+                        !!(movelaws[cellat(dp)->bot.id].creature & slipdir),
+                        keepslot ? "KEEP" : "DROP");
+            }
+#endif
+#endif
             floor = cellat(cr->pos)->bot.id;
 #ifdef FIX_BOUNCE_REFACE
             /* MOD (Jeremy): a FAILED slide attempt ends the slide, so the bounce
@@ -2952,6 +3015,23 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             if (isice(floor)) {
                 slipdir = icewallturn(floor, back(slipdir));
                 ac = advancecreature(cr, slipdir); /* again useful with ac */
+#ifdef FIX_KEEPSLOT_OCCUPANT
+                /* SuperCC judges KEEP-or-DROP on EVERY attempt -- MSCreature.tick
+                 * runs tryMove once per priority direction, and each failure ends
+                 * with its own setSliding().  A single dropping attempt removes the
+                 * creature and the re-add appends, so the slot survives only if
+                 * BOTH the slide and the bounce kept it.
+                 *
+                 * Measured on New_Clubhouse#20, SuperCC t=104, the teeth at 19,26:
+                 *     dir=DOWN destBG=Closed Toggle Door canEnterBG=false -> KEEP
+                 *     dir=UP   destBG=Ice Turn Down/Right canEnterBG=true -> DROP
+                 * and SuperCC's slip list moves T,19,26,S to the END that tick.
+                 *
+                 * Only when the retry FAILS: a retry that succeeds moved the
+                 * creature, and attempt 1's decision has already been applied. */
+                if (!ac)
+                    keepslot = keepslot && cmm_keepslot;
+#endif
             }
 #ifdef FIX_BOUNCE_REFACE
             bounceretry = FALSE;
@@ -2971,8 +3051,22 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
                 int keepdir = (cellat(cr->pos)->bot.id == Slide_Random)
                                   ? getslipdir(cr) : NIL;
 #endif
+#ifdef FIX_KEEPSLOT_OCCUPANT
+                /* Tile World's re-arm does two things at once:
+                 *   endfloormovement()   -- REMOVES, so the re-add appends -> REORDER
+                 *   startfloormovement() -- re-adds AND refreshes the direction
+                 * SuperCC, in the keep case, refreshes the direction but keeps the
+                 * slot. Skipping ONLY the removal reproduces that exactly:
+                 * appendtosliplist() is IDEMPOTENT, so with the creature still listed
+                 * it updates slips[].dir in place and the order is untouched. */
+                if (!keepslot) {
+                    endfloormovement(cr);
+                    msccslippers--; /* new MSCC accounting */
+                }
+#else
                 endfloormovement(cr);
                 msccslippers--; /* new MSCC accounting */
+#endif
 #ifdef FIX_SLIDE_FACING
                 enteringtile = FALSE;  /* re-arming an existing slide, not entering */
 #endif
