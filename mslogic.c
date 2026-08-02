@@ -234,6 +234,53 @@
 #define	FIX_KEEPSLOT_OCCUPANT	1
 #endif
 
+/* MOD (Jeremy): the teleport/block bounce in the Chip slip pass RECORDS whether it
+ * succeeded, ON by default. The ice branch beside it assigns `ac`; this one threw
+ * the result away, so `ac` still held the FALSE from the failed slide at the top of
+ * the loop -- and jc-14's re-arm guard reads exactly that:
+ *     keepdir = (ac && bot.id == Slide_Random) ? getslipdir(cr) : NIL
+ * With ac stuck FALSE the carry never happened, startfloormovement() drew a SECOND
+ * random direction for one move, and Tile World's RNG ran one value ahead of
+ * SuperCC's for the rest of the level. jc-14 fixed the slide and ice paths; this one
+ * was left behind purely by the missing assignment. Fixes 1 desync (Jacques#264
+ * "Brinks") with 0 regressions.
+ * Build with -DNO_FIX_RFF_TELEPORT_BOUNCE to restore the old behavior.
+ */
+#if !defined(NO_FIX_RFF_TELEPORT_BOUNCE) && !defined(FIX_RFF_TELEPORT_BOUNCE)
+#define	FIX_RFF_TELEPORT_BOUNCE	1
+#endif
+
+/* MOD (Jeremy): a cloned block that DIES on its way out leaves the cloner's template
+ * behind, ON by default. SuperCC clears it in MSCreatureList.tickClonedMonster only
+ * when the clone is still a live BLOCK:
+ *     if (monster.getCreatureType() == CreatureID.BLOCK && bg != CLONE_MACHINE)
+ *         level.popTile(clonerPosition);
+ * A clone that died is CreatureID.DEAD by then, so the test fails and the template
+ * stays. Tile World's advancecreature() pops the source cell before it even looks at
+ * `dead`. Only reachable where a red button is wired to a cell that is NOT a clone
+ * machine (measured: 171 wirings, 46 levels, 21 sets). Fixes 1 desync (ZK-Ideas#50
+ * "Annoying Blocks") with 0 regressions.
+ * Build with -DNO_FIX_CLONER_TEMPLATE_ON_DEATH to restore the old behavior.
+ */
+#if !defined(NO_FIX_CLONER_TEMPLATE_ON_DEATH) && !defined(FIX_CLONER_TEMPLATE_ON_DEATH)
+#define	FIX_CLONER_TEMPLATE_ON_DEATH	1
+#endif
+
+/* MOD (Jeremy): a block BURIED UNDER a creature cannot be pushed, ON by default.
+ * floorat() deliberately looks past a creature, so a monster standing on a block
+ * reported floor == Block_Static and Chip fell into canmakemove()'s push branch --
+ * Tile World shoved a block it could not even see. SuperCC judges the move on the
+ * BACKGROUND, and creatures are transparent, so with FG = a monster and BG = BLOCK
+ * every term of its entry guard fails and tryEnter (where pushing lives) never runs.
+ * A monster on plain FLOOR still admits Chip and he dies on the collision as before.
+ * Measured: 135 such cells, 25 levels, 14 sets. Fixes 1 desync (Jacques#513 "Error")
+ * with 0 regressions.
+ * Build with -DNO_FIX_CHIP_ONTO_BURIED_BLOCK to restore the old behavior.
+ */
+#if !defined(NO_FIX_CHIP_ONTO_BURIED_BLOCK) && !defined(FIX_CHIP_ONTO_BURIED_BLOCK)
+#define	FIX_CHIP_ONTO_BURIED_BLOCK	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
@@ -1483,6 +1530,33 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             id = creatureid(cellat(to)->top.id);
             if (id == Chip || id == Swimming_Chip || id == Block)
                 return FALSE;
+#ifdef FIX_CHIP_ONTO_BURIED_BLOCK
+            /* MOD (Jeremy): a block BURIED UNDER a creature cannot be pushed.
+             *
+             * floorat() deliberately looks past a creature, so a monster standing
+             * on a block reports floor == Block_Static and Chip falls into the
+             * push branch below -- Tile World shoves a block it cannot even see.
+             *
+             * SuperCC judges the whole move on the BACKGROUND. Its entry guard is
+             *     canEnter(direction, newTileBG)
+             *       || (!newTileFG.isTransparent() && (isBlock || blockMachineCheck))
+             *       || ...
+             * and creatures ARE transparent, so with FG = a monster and BG = BLOCK
+             * every term fails: canEnter(dir, BLOCK) is false and the second term
+             * needs an opaque foreground. Pushing is reached only through tryEnter,
+             * which never runs. A monster on plain FLOOR still admits Chip (BG is
+             * floor, canEnter true) and he dies on the collision as before -- so
+             * this refuses ONLY the buried-block case.
+             *
+             * Measured on Jacques#513 "Error", SuperCC t=31: 7,5 is a Teeth (0x56)
+             * over a Block (0x0A) with water at 7,4. Tile World pushed the block
+             * north into the water and walked Chip in; SuperCC leaves him at 7,6.
+             *
+             * Scope measured BEFORE writing the guard: 135 such cells, 25 levels,
+             * 14 sets. */
+            if (floor == Block_Static)
+                return FALSE;
+#endif
         }
         if (floor == HiddenWall_Temp || floor == BlueWall_Real) {
             if (!(flags & CMM_NOEXPOSEWALLS))
@@ -1954,6 +2028,25 @@ static void choosechipmove(creature* cr, int discard) {
 
     dir = currentinput();
     currentinput() = NIL;
+#ifdef TRACE_DESYNC
+    /* PROBE: the voluntary-move discard, with everything the test reads.
+     * SuperCC's counterpart is MSLevel.moveChip:
+     *     if (chip.isSliding()) {
+     *         if (!layerBG.get(pos).isFF())      continue;   (A)
+     *         if (direction == chip.getDirection()) continue; (B)
+     *     }
+     * so the two decisions can be diffed term by term. */
+    if (tracethistick())
+        fprintf(stderr, "M@%d@%d,%d@in=%d@crdir=%d@slip=%d@slide=%d@bot=%02X"
+                        "@discardarg=%d@decision=%s\n",
+                (int)currenttime(),
+                (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                dir, (int)cr->dir,
+                !!(cr->state & CS_SLIP), !!(cr->state & CS_SLIDE),
+                cellat(cr->pos)->bot.id, !!discard,
+                (discard || ((cr->state & CS_SLIDE) && dir == cr->dir))
+                    ? "DISCARD" : "TAKE");
+#endif
     if (discard || ((cr->state & CS_SLIDE) && dir == cr->dir)) {
         if (currenttime() && !(currenttime() & 1))
             cancelgoal();
@@ -2343,8 +2436,39 @@ static void activatecloner(int buttonpos) {
         return;
     if (creatureid(tileid) == Block) {
         cr = lookupblock(pos);
+#ifdef FIX_CLONER_TEMPLATE_ON_DEATH
+        /* MOD (Jeremy): a cloned block that DIES on its way out leaves the cloner's
+         * template behind; only a clone that survives clears it.
+         *
+         * SuperCC does the clearing in MSCreatureList.tickClonedMonster:
+         *     if (monster.tick(...)) level.insertTile(clonerPosition, tile);
+         *     if (monster.getCreatureType() == CreatureID.BLOCK
+         *             && level.getLayerBG().get(clonerPosition) != CLONE_MACHINE)
+         *         level.popTile(clonerPosition);
+         * A clone that died is CreatureID.DEAD by then, so the `== BLOCK` test fails
+         * and the template stays. Tile World has no equivalent: advancecreature()
+         * pops the source cell before it even looks at `dead`, so the template goes
+         * with it.
+         *
+         * Only reachable where a red button is wired to a cell that is NOT a clone
+         * machine (measured: 171 such wirings, 46 levels, 21 sets) -- on a real
+         * cloner advancecreature() skips the pop, the template is still in place,
+         * and the guard below is false, so nothing changes.
+         *
+         * Measured on ZK-Ideas#50 "Annoying Blocks", SuperCC t=15: the cloner at
+         * 12,13 is a Block-Left template over a Teeth tile, its clone steps west
+         * onto the bomb at 11,13 and dies, and SuperCC's cell still reads
+         * afterFG=Block - Left / afterBG=Teeth - Left. Tile World's read Teeth. */
+        if (cr->dir != NIL) {
+            maptile tmpl = cellat(pos)->top;
+            advancecreature(cr, cr->dir);
+            if (cr->hidden && cellat(pos)->top.id != tmpl.id)
+                pushtile(pos, tmpl);
+        }
+#else
         if (cr->dir != NIL)
             advancecreature(cr, cr->dir);
+#endif
     } else {
         if (cellat(pos)->bot.state & FS_CLONING)
             return;
@@ -2905,7 +3029,26 @@ static void floormovements_of_chip(void) /* split into two */
                     cr->state &= ~CS_HASMOVED;
             } else if (floor == Teleport || floor == Block_Static) {
                 lastslipdir() = slipdir = back(slipdir);
+#ifdef FIX_RFF_TELEPORT_BOUNCE
+                /* MOD (Jeremy): RECORD the bounce's success. The ice branch just
+                 * above assigns `ac`; this one discarded it, so `ac` still held the
+                 * FALSE from the failed slide at the top of the loop -- and jc-14's
+                 * re-arm guard below reads exactly that:
+                 *     keepdir = (ac && bot.id == Slide_Random) ? getslipdir(cr) : NIL
+                 * With ac stuck FALSE the carry never happens, startfloormovement()
+                 * draws a SECOND random direction for one move, and Tile World's RNG
+                 * runs one value ahead of SuperCC's for the rest of the level.
+                 * jc-14 fixed this for the slide and ice paths; the teleport/block
+                 * bounce was left behind purely because of the missing assignment.
+                 *
+                 * Measured on Jacques#264 "Brinks": the streams are identical through
+                 * SuperCC t=678 (rng=222435604), then SuperCC reads draw 3
+                 * (1341035267) and Tile World draw 4 (816951936). */
+                ac = advancecreature(cr, slipdir);
+                if (ac)
+#else
                 if (advancecreature(cr, slipdir))
+#endif
                     cr->state &= ~CS_HASMOVED;
             }
             if (brokentele) {
