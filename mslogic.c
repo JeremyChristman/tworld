@@ -1483,6 +1483,33 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             id = creatureid(cellat(to)->top.id);
             if (id == Chip || id == Swimming_Chip || id == Block)
                 return FALSE;
+#ifdef FIX_CHIP_ONTO_BURIED_BLOCK
+            /* MOD (Jeremy): a block BURIED UNDER a creature cannot be pushed.
+             *
+             * floorat() deliberately looks past a creature, so a monster standing
+             * on a block reports floor == Block_Static and Chip falls into the
+             * push branch below -- Tile World shoves a block it cannot even see.
+             *
+             * SuperCC judges the whole move on the BACKGROUND. Its entry guard is
+             *     canEnter(direction, newTileBG)
+             *       || (!newTileFG.isTransparent() && (isBlock || blockMachineCheck))
+             *       || ...
+             * and creatures ARE transparent, so with FG = a monster and BG = BLOCK
+             * every term fails: canEnter(dir, BLOCK) is false and the second term
+             * needs an opaque foreground. Pushing is reached only through tryEnter,
+             * which never runs. A monster on plain FLOOR still admits Chip (BG is
+             * floor, canEnter true) and he dies on the collision as before -- so
+             * this refuses ONLY the buried-block case.
+             *
+             * Measured on Jacques#513 "Error", SuperCC t=31: 7,5 is a Teeth (0x56)
+             * over a Block (0x0A) with water at 7,4. Tile World pushed the block
+             * north into the water and walked Chip in; SuperCC leaves him at 7,6.
+             *
+             * Scope measured BEFORE writing the guard: 135 such cells, 25 levels,
+             * 14 sets. */
+            if (floor == Block_Static)
+                return FALSE;
+#endif
         }
         if (floor == HiddenWall_Temp || floor == BlueWall_Real) {
             if (!(flags & CMM_NOEXPOSEWALLS))
