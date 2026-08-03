@@ -324,6 +324,27 @@
 #define	FIX_TANK_IN_TRAP_STALL	1
 #endif
 
+/* MOD (Jeremy): a Chip tile lying on a teleport's LANDING cell is seen through, ON by
+ * default. SuperCC judges a teleport exit by the BACKGROUND whenever the foreground is
+ * transparent -- MSCreature.teleport:
+ *     if (creatureType.isChip() && exitTile.isTransparent())
+ *         exitTile = level.getLayerBG().get(exitPosition);
+ * with Tile.isTransparent() == `ordinal() >= BUG_UP.ordinal()` (>= 0x40). Tile World
+ * refused the candidate outright in canmakemove()'s Chip branch and skipped to a later
+ * teleport.
+ * ⚠ CHIP ONLY, NOT Swimming_Chip: 0x6C-0x6F (Chip) are >= 0x40 and transparent, while
+ * 0x3C-0x3F (Chip swimming) are < 0x40 and OPAQUE. Including swimming Chip cost
+ * CatatonicP1#50, a level that had matched SuperCC tick-for-tick. Block is left refusing
+ * -- BLOCK is not transparent in SuperCC and has its own push branch there.
+ * Fixes 1 desync (KeyboardWielder#133 "Identity Crisis", a level DECORATED with Chip
+ * tiles -- the jc-11 junk-Chip-tile family) with 0 regressions. Scope: 197 levels have
+ * more than one foreground Chip tile, 103 of those also have a teleport.
+ * Build with -DNO_FIX_TELEPORT_EXIT_CHIP_TILE to restore the old behavior.
+ */
+#if !defined(NO_FIX_TELEPORT_EXIT_CHIP_TILE) && !defined(FIX_TELEPORT_EXIT_CHIP_TILE)
+#define	FIX_TELEPORT_EXIT_CHIP_TILE	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
@@ -1571,6 +1592,53 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             return FALSE;
         if (iscreature(cellat(to)->top.id)) {
             id = creatureid(cellat(to)->top.id);
+#ifdef FIX_TELEPORT_EXIT_CHIP_TILE
+            /* MOD (Jeremy): when picking a TELEPORT EXIT, a Chip tile lying on the
+             * landing cell is SEEN THROUGH, not treated as an occupant.
+             *
+             * SuperCC's MSCreature.teleport judges the exit by the background
+             * whenever the foreground is transparent:
+             *     if (creatureType.isChip() && exitTile.isTransparent())
+             *         exitTile = level.getLayerBG().get(exitPosition);
+             * and Tile.isTransparent() is `ordinal() >= BUG_UP.ordinal()`, which
+             * covers the CHIP_* tiles as well as monsters. Tile World refused the
+             * exit outright, so it skipped that teleport and took a later one.
+             *
+             * Scoped to CMM_TELEPORTPUSH: this is the exit-selection test, not
+             * ordinary movement. Chip still cannot walk into himself normally, and
+             * a monster on the exit cell was already permitted (Tile World only
+             * refuses Chip/Swimming_Chip/Block here), so this closes the one gap.
+             * Block is deliberately left refusing -- BLOCK is NOT transparent in
+             * SuperCC and gets its own push branch there, which is a separate
+             * question.
+             *
+             * Measured on KeyboardWielder#133 "Identity Crisis", ct=542. Chip
+             * teleports from 12,6 heading SOUTH; the candidates are scanned
+             * downward and 5,6 comes first:
+             *     P cr=40@12,5 dir=4 cand=5,6 top=18 exit=01 accept=0   <- refused
+             *     P cr=40@12,5 dir=4 cand=7,4 top=18 exit=01 accept=1   <- taken
+             * 5,6's south exit 5,7 holds fg=0x6E, a decorative Chip tile over plain
+             * floor. SuperCC sees the floor and lands Chip at 5,6; Tile World
+             * refused and sent him to 7,4. The level is DECORATED with Chip tiles --
+             * the same junk-Chip-tile family as jc-11's Jacques#1 "Welcome".
+             *
+             * Scope measured BEFORE the guard: 197 levels have more than one
+             * foreground Chip tile, and 103 of those also contain a teleport. */
+            /* ⚠ CHIP ONLY -- NOT Swimming_Chip. Tile.isTransparent() is
+             * `ordinal() >= BUG_UP.ordinal()`, i.e. >= 0x40, and the .dat codes are
+             *     0x6C-0x6F  Chip N/W/S/E        -> >= 0x40, TRANSPARENT
+             *     0x3C-0x3F  Chip swimming N/W/S/E -> <  0x40, OPAQUE
+             * so SuperCC sees through a Chip tile and does NOT see through a
+             * swimming-Chip tile. Including Swimming_Chip here cost CatatonicP1#50
+             * "WEIRD MAZE": its exit 30,6 holds 0x3E (Chip swimming S) over floor,
+             * SuperCC refuses that candidate, and seeing through it made Tile World
+             * take 30,5 instead of 1,10 -- a level that had matched SuperCC
+             * tick-for-tick before. */
+            if ((flags & CMM_TELEPORTPUSH) && id == Chip) {
+                /* see through it; floorat() above already reported the tile
+                 * underneath, which is what SuperCC's exitTile becomes */
+            } else
+#endif
             if (id == Chip || id == Swimming_Chip || id == Block)
                 return FALSE;
 #ifdef FIX_CHIP_ONTO_BURIED_BLOCK
