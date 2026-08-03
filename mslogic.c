@@ -847,6 +847,34 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+#ifdef PROBE_ORDER
+/* Harness #3: per-move record matching SuperCC ORD lines exactly. */
+static int probeorder_pos = -1, probeorder_id = 0, probeorder_dir = 0;
+static int probeorder(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_ORDER"); on = (e && *e) ? 1 : 0; }
+    return on;
+}
+static char probeorder_letter(int id) {
+    switch (id) {
+      case Block:            return 35;   /* # */
+      case Tank:             return 75;   /* K */
+      case Ball:             return 98;   /* b */
+      case Glider:           return 71;   /* G */
+      case Fireball:         return 70;   /* F */
+      case Walker:           return 87;   /* W */
+      case Blob:             return 66;   /* B */
+      case Teeth:            return 84;   /* T */
+      case Bug:              return 85;   /* U */
+      case Paramecium:       return 80;   /* P */
+      case Chip:
+      case Swimming_Chip:
+      case Pushing_Chip:     return 64;   /* @ */
+      default:               return 63;   /* ? */
+    }
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -3103,6 +3131,17 @@ static int advancecreature(creature* cr, int dir) {
                 schedphase, cr->id,
                 (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), dir);
 #endif
+#ifdef PROBE_ORDER
+    /* ISOLATION HARNESS #3: the move ACTUALLY PERFORMED, for cross-engine sequence
+     * diffing. The `S` line above fires on every ATTEMPT, which is NOT the counterpart
+     * of SuperCC's record -- SuperCC's MSCreature.tick loops a direction priority list
+     * and only the successful direction is logged. Comparing attempt-vs-success made a
+     * stack of 22 blobs look like 22 moves against SuperCC's 1 and faked an enormous
+     * "ordering difference" that does not exist. Emitted at the successful return. */
+    probeorder_pos = cr->pos;
+    probeorder_id  = cr->id;
+    probeorder_dir = dir;
+#endif
 
     if (cr->id == Chip)
         chipwait() = 0;
@@ -3131,6 +3170,19 @@ static int advancecreature(creature* cr, int dir) {
     if (cr->id == Chip)
         handlebuttons();
 
+#ifdef PROBE_ORDER
+    /* NB: gate on tracethistick() as well, so TW_TRACE_LEVEL narrows the harvest.
+     * Without it a 1000-level set like Jacques emits for EVERY level and the run
+     * cannot finish -- that is how the Jacques#922 capture timed out. */
+    if (probeorder() && tracethistick() && probeorder_pos >= 0) {
+        static char const* dname[9] = {"?","UP","LEFT","?","DOWN","?","?","?","RIGHT"};
+        fprintf(stderr, "ORD\t%d\t%d\t%d\t%s\t%c\t%d,%d\t%s\n",
+                (int)state->game->number, (int)currenttime() / 2, schedseq++,
+                schedphase, probeorder_letter(creatureid(probeorder_id)),
+                probeorder_pos % CXGRID, probeorder_pos / CXGRID,
+                dname[probeorder_dir & 15]);
+    }
+#endif
     return TRUE;
 }
 
