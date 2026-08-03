@@ -3055,6 +3055,17 @@ static void endmovement(creature* cr, int dir) {
     cell = cellat(newpos);
     tile = &cell->top;
     floor = tile->id;
+#ifdef PROBE_TILE
+    /* Interleaved with the TILE records above, in ONE binary, so the true order of "the block
+     * leaves 18,6" versus "Chip's startmovement reads the destination" is OBSERVED rather
+     * than inferred by lining up two separate runs. §74 could not settle that from two
+     * builds; every event below shares this stream's ordering. */
+    if (probetile() && probetile_lvl == (int)state->game->number)
+        fprintf(stderr, "MOVE\t%d\t%d\t%02X\t%d,%d->%d,%d\tfloor_at_entry=%02X\tdestbot=%02X\n",
+                (int)state->game->number, (int)currenttime(), cr->id,
+                oldpos % CXGRID, oldpos / CXGRID, newpos % CXGRID, newpos / CXGRID,
+                floor, cell->bot.id);
+#endif
     crid = creatureid(cellat(oldpos)->top.id); /* Non-existence patch */
     if (cr->id == Chip) {
         switch (floor) {
