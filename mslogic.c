@@ -847,6 +847,8 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -1561,8 +1563,61 @@ static int pushblock(int pos, int dir, int flags) {
          * still absent from the press-tick slip pass, because the push path, not the slip
          * path, is what removes it.
          */
-        if (cantleavecell(cr, dir))
-            goto pushfailed;
+        if (cantleavecell(cr, dir)) {
+            int sn;
+            /* ...and it FACES the way it was shoved. SuperCC's push calls the block's
+             * tryMove directly:
+             *
+             *     setDirection(direction);
+             *     if (!canLeave(direction, position)) return false;
+             *
+             * so the new facing sticks. The restoring `setDirection(oldCreature.direction)`
+             * lives in tick(), which a pushed block never goes through -- a self-initiated
+             * failed move IS restored, a failed push is NOT. Tile World drew no such
+             * distinction, and its blocked-move path excludes this case outright:
+             *
+             *     if (cr->id == Chip || (floor != Beartrap && floor != CloneMachine && ...))
+             *
+             * so a block shoved while sitting on a beartrap kept its old facing.
+             *
+             * The SLIP SLOT has to follow. Tile World keeps the slide direction in
+             * slips[n].dir, a field SuperCC has no counterpart for -- its
+             * getSlideDirectionPriority() falls through to the creature's OWN direction for a
+             * TRAP tile, so re-facing the block re-aims the slide. Setting cr->dir alone left
+             * the slot pointing EAST, and the block then left the trap on the right tick in
+             * the wrong direction (measured, harness #7).
+             *
+             * TomR1 #100 at 11,7: the block slides EAST into the trap at ct=2342 and both
+             * engines agree -- facing E, on the slip list -- until Chip's failed shove at
+             * ct=2356, where SuperCC turns it UP and Tile World left it E. Two ticks later
+             * the trap opens and SuperCC's block slides UP out; Tile World's had neither the
+             * slot nor the facing.
+             */
+            cr->dir = dir;
+            /* ⚠ BEARTRAP ONLY, for both the slot re-aim and the kept slip state.
+             *
+             * Re-aim: SuperCC's getSlideDirectionPriority derives the slide direction from
+             * the TILE the creature stands on -- ice and force floors compute it from the
+             * floor, and only the trap (the `default` arm) falls through to the creature's
+             * own direction. So re-facing re-aims the slide on a trap and nowhere else.
+             *
+             * Kept slip state: SuperCC keeps it for EVERY canLeave refusal, thin walls
+             * included, but Tile World's slip list is not just a set -- its iteration order
+             * IS the slide delay, so an entry that Tile World would have removed shifts every
+             * later index. Keeping thin-wall cases too cost "12 Room Level" (MikeL2 #137 =
+             * MikeL3 #62, one level in two packs): a fireball on the ice at 13,14/14,14 ran
+             * a tick behind from ct=544, nowhere near the push that caused it. Restricting
+             * to the beartrap keeps the one case TomR1 #100 needs.
+             */
+            if (cellat(cr->pos)->bot.id == Beartrap) {
+                for (sn = 0 ; sn < slipcount ; ++sn)
+                    if (slips[sn].cr == cr) {
+                        slips[sn].dir = dir;
+                        break;
+                    }
+                goto pushfailed;
+            }
+        }
 #endif
         cr->state &= ~(CS_SLIP | CS_SLIDE);
         if (slipping) { /* new MSCC-like accounting */
