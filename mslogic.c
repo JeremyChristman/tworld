@@ -847,6 +847,39 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+#ifdef PROBE_ENTRY
+/* Harness #5: creature-entry rule. Observe only. */
+static int  probeentry_lvl = -1;
+static long probeentry_agree = 0, probeentry_dis = 0;
+static int probeentry(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_ENTRY"); on = (e && *e) ? 1 : 0; }
+    return on;
+}
+#endif
+
+#ifdef PROBE_STACK
+/* Harness #5 (corrected): CREATURE STACKING census. Observe only.
+ *
+ * Emitted once per level:
+ *     STK <level> <ticks> <ticksWithAStack> <stackedCellTicks> <deepestStack>
+ */
+static int  probestack_lvl = -1;
+static long probestack_ticks = 0, probestack_with = 0;
+static long probestack_cells = 0, probestack_max = 0;
+static int probestack(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_STACK"); on = (e && *e) ? 1 : 0; }
+    return on;
+}
+static void probestack_flush(void) {
+    if (probestack_lvl >= 0)
+        fprintf(stderr, "STK\t%d\t%ld\t%ld\t%ld\t%ld\n", probestack_lvl,
+                probestack_ticks, probestack_with, probestack_cells, probestack_max);
+    probestack_lvl = -1;
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -1775,6 +1808,42 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             if (!(movelaws[cellat(to)->bot.id].creature & dir)
                     && cellat(to)->bot.id != CloneMachine)
                 cmm_keepslot = TRUE;
+#endif
+#ifdef PROBE_ENTRY
+            /* ISOLATION HARNESS #5: the CREATURE-ENTRY rule. Observe, never act.
+             *
+             * Tile World refuses ANY creature-occupied destination here. SuperCC's
+             * entry guard tests the BACKGROUND -- creatures are transparent -- so it
+             * PERMITS the move whenever the terrain underneath admits the mover, and
+             * the creatures stack. That difference is what makes TLFC3#18 diverge
+             * (§58): both engines give the blob at 22,17 the priority RIGHT,UP,DOWN,
+             * LEFT; SuperCC takes UP into an occupied cell, Tile World refuses and
+             * falls through to DOWN.
+             *
+             * SuperCC permits iff  canEnter(dir, BG)  ||  BG == CLONE_MACHINE
+             * -- exactly the complement of jc-17's keepslot predicate above. */
+            if (probeentry() && !(flags & CMM_CLONECANTBLOCK)) {
+                int _bot = cellat(to)->bot.id;
+                int _sc  = (!!(movelaws[_bot].creature & dir)) || (_bot == CloneMachine);
+                if (probeentry_lvl != (int)state->game->number) {
+                    if (probeentry_lvl >= 0)
+                        fprintf(stderr, "ENTSUM\t%d\t%ld\t%ld\n",
+                                probeentry_lvl, probeentry_agree, probeentry_dis);
+                    probeentry_lvl = (int)state->game->number;
+                    probeentry_agree = probeentry_dis = 0;
+                }
+                if (!_sc) {
+                    ++probeentry_agree;     /* both refuse */
+                } else {
+                    ++probeentry_dis;       /* TW refuses, SuperCC would permit */
+                    fprintf(stderr, "ENT\t%d\t%d\t%d,%d\t%02X\t%d\t%d,%d\t%02X\t%02X\n",
+                            (int)state->game->number, (int)currenttime() / 2,
+                            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                            cr->id, dir,
+                            (int)(to % CXGRID), (int)(to / CXGRID),
+                            cellat(to)->top.id, _bot);
+                }
+            }
 #endif
             if (!(flags & CMM_CLONECANTBLOCK)) /* not cloning */
                 return FALSE;
@@ -3664,6 +3733,55 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_STACK
+    /* ISOLATION HARNESS #5: how widespread is CREATURE STACKING?
+     *
+     * TLFC3 #18 turned out NOT to be an entry-rule difference (handoff §58 is wrong).
+     * Both engines refuse to let a creature enter a monster-occupied cell -- SuperCC's
+     * tryEnter has `default: // Monsters ... return false` for non-Chip movers. What they
+     * disagree about is whether the cell IS occupied: with 16 blobs stacked on 22,16,
+     * SuperCC's foreground layer read Floor while Tile World's read a Blob tile, because
+     * SuperCC's map holds only ONE tile per cell and a departing creature pops it, leaving
+     * the rest as ghosts. So the population at risk is every cell that ever holds 2+
+     * creatures. Measure that.
+     *
+     * Non-acting: counts only, never consulted for behavior. */
+    static unsigned char occ[CXGRID * CYGRID];
+    static int registered = FALSE;
+    int n, p, stackedcells = 0;
+
+    if (probestack()) {
+        if (!registered) {
+            atexit(probestack_flush);   /* else every set loses its LAST level */
+            registered = TRUE;
+        }
+        if (probestack_lvl != (int)state->game->number) {
+            probestack_flush();
+            probestack_lvl = (int)state->game->number;
+            probestack_ticks = probestack_with = probestack_cells = probestack_max = 0;
+        }
+        memset(occ, 0, sizeof occ);
+        for (n = 0 ; n < creaturecount ; ++n) {
+            creature const* c = creatures[n];
+            if (c->hidden || c->id == Chip)
+                continue;
+            p = c->pos;
+            if (p < 0 || p >= CXGRID * CYGRID)
+                continue;
+            if (occ[p] < 255)
+                ++occ[p];
+            if (occ[p] == 2)
+                ++stackedcells;
+            if (occ[p] > probestack_max)
+                probestack_max = occ[p];
+        }
+        ++probestack_ticks;
+        if (stackedcells) {
+            ++probestack_with;
+            probestack_cells += stackedcells;
+        }
+    }
+#endif
     return;
 }
 
