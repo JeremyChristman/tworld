@@ -3219,7 +3219,15 @@ static void endmovement(creature* cr, int dir) {
          *
          * Measured with shadow_poplayer.ps1. Only reachable now that step 1 lets this branch
          * run at all -- it entered zero times on this level before (§77, §79). */
-        if (prepush_destfloor >= 0 && prepush_destfloor != Teleport)
+        /* ⚠ Narrowed to a BLOCK specifically. SuperCC pops twice only when the outer tryMove
+         * frame's newTileFG was not a Teleporter AND teleport() was reached anyway -- and the
+         * only route to that is tryEnter's BLOCK case, which pushes the block and then
+         * re-dispatches on the exposed tile (§78). Testing merely `!= Teleport` is far weaker:
+         * it is true for every teleport whose top differed before the move, however it came to
+         * differ, and step 1 had just made a great many previously dead teleports live. That
+         * version replayed #7 but took Voting-CCLP5 from 0 to 29 (§80). */
+        if (prepush_destfloor == Block_Static
+                || (prepush_destfloor >= 0 && creatureid(prepush_destfloor) == Block))
             poptile(oldpos);
 #endif
     }
