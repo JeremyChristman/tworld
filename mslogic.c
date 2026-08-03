@@ -1563,7 +1563,31 @@ static int pushblock(int pos, int dir, int flags) {
          * still absent from the press-tick slip pass, because the push path, not the slip
          * path, is what removes it.
          */
-        if (cantleavecell(cr, dir)) {
+        /* ⚠ EXCEPT on a TELEPORT push, which is the ONE place SuperCC does drop a trapped
+         * block off the slip list -- MSCreature.teleport:
+         *
+         *     if (block.tryMove(direction, false, pressedButtons) && canEnter(direction, exitTile))
+         *         break;
+         *     else if (block.isSliding()
+         *              && level.getLayerBG().get(exitPosition) == TRAP
+         *              && !level.isTrapOpen(exitPosition))
+         *         block.setSliding(true, false);
+         *
+         * That hardcoded (true, false) forces setSliding's block-on-trap branch, which removes
+         * the block and re-adds it only if it canLeave -- and on a shut trap it cannot, so it
+         * stays off. An ORDINARY push never reaches that code: MSCreature.tryMove returns on
+         * canLeave before touching `sliding` at all.
+         *
+         * This is what §62 got wrong. Measured with shadow_trapslide.ps1, which logs the
+         * CALLER of every setSliding on a block standing on a trap:
+         *
+         *   MikeL2 #137  19,11  from=teleport:294  was=true is=false  -> branch=TAKEN
+         *   TomR1  #100  11,7   from=tick:867      was=true is=true   -> branch=skipped  (x11)
+         *
+         * Both traps are shut throughout, so the trap state is NOT the discriminator (that was
+         * §64's prediction and it was wrong). The discriminator is WHICH CODE PATH ran.
+         */
+        if (cantleavecell(cr, dir) && !(flags & CMM_TELEPORTPUSH)) {
             int sn;
             /* ...and it FACES the way it was shoved. SuperCC's push calls the block's
              * tryMove directly:
