@@ -847,6 +847,14 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+#ifdef PROBE_BLOBRNG
+static int probeblob(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_BLOB"); on = (e && *e) ? 1 : 0; }
+    return on;
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -1975,6 +1983,19 @@ static void choosecreaturemove(creature* cr) {
                 choices[2] = back(dir);
                 choices[3] = right(dir);
                 randomp4(mainprng(), choices);
+#ifdef PROBE_BLOBRNG
+                /* Every blob RNG draw, with the value used and the resulting priority.
+                 * randomp4() and SuperCC randomPermutation4() are identical line for
+                 * line, so if the two engines ever disagree about a blob direction the
+                 * cause must be the VALUE each blob receives -- i.e. how many draws
+                 * happened before it in the tick -- not the shuffle. */
+                if (probeblob() && tracethistick())
+                    fprintf(stderr, "BR\t%d\t%d\t%d,%d\t%d\t%u\t%d,%d,%d,%d\n",
+                            (int)state->game->number, (int)currenttime() / 2,
+                            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), dir,
+                            (unsigned)mainprng()->value,
+                            choices[0], choices[1], choices[2], choices[3]);
+#endif
                 break;
             case Bug:
             case Paramecium:
@@ -2022,6 +2043,17 @@ static void choosecreaturemove(creature* cr) {
                 choices[2] = back(dir);
                 choices[3] = right(dir);
                 randomp4(mainprng(), choices);
+#ifdef PROBE_BLOBRNG
+                /* SECOND blob site. choosecreaturemove() has TWO `case Blob:` arms --
+                 * one per branch of the controller-bug split -- and only this one is
+                 * reached in normal play. Probing just the first yielded ZERO records. */
+                if (probeblob() && tracethistick())
+                    fprintf(stderr, "BR\t%d\t%d\t%d,%d\t%d\t%u\t%d,%d,%d,%d\n",
+                            (int)state->game->number, (int)currenttime() / 2,
+                            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), dir,
+                            (unsigned)mainprng()->value,
+                            choices[0], choices[1], choices[2], choices[3]);
+#endif
                 break;
             case Bug:
                 choices[0] = left(dir);
