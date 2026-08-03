@@ -3117,6 +3117,47 @@ static void endmovement(creature* cr, int dir) {
 
     if (cellat(oldpos)->bot.id != CloneMachine || cr->id == Chip)
         poptile(oldpos);
+#ifndef NO_FIX_TELEPORT_STALE_FG
+    /* MOD (Jeremy): SuperCC pops Chip's OLD cell a second time when it teleports him off a
+     * teleport whose foreground was something else when the move began.
+     *
+     * MSCreature.tryMove cancels its own leave-pop because teleport() has already popped
+     * Chip's cell:
+     *
+     *     if (newTileFG != TELEPORT) level.popTile(position);
+     *     else if (!isChip) level.popTile(position);
+     *
+     * but newTileFG was captured BEFORE the move, so when Chip's step pushes a block off the
+     * destination teleport, the now-exposed teleport fires teleport() (which pops his cell)
+     * while the cancellation still tests the STALE value and pops it again. The teleport Chip
+     * was standing on is destroyed.
+     *
+     * Measured on JacquesS2 #7 "Slippertele" with shadow_poplayer.ps1, which logs the actual
+     * operands at that decision:
+     *
+     *   POPD 20  from=11,4 to=10,4 CHIP_SLIDING newTileFG=Teleporter -> cancelled   (normal)
+     *   POPD 47  from=17,6 to=18,6 CHIP         newTileFG=Block      -> POPPED      (broken)
+     *   POPD 165 from=17,6 to=16,6 CHIP         newTileFG=Teleporter -> cancelled   (normal)
+     *
+     * and shadow_tiletrace.ps1 showing the consequence at 17,6:
+     *
+     *   TILE 47 pop 17,6 from=teleport:205  fg Chip-Down->Teleporter  bg Teleporter->Floor
+     *   TILE 47 pop 17,6 from=tryMove:767   fg Teleporter->Floor      bg Floor->Floor
+     *
+     * `floor` here is cellat(newpos)->top.id read at the head of startmovement -- the same
+     * pre-move destination foreground SuperCC captures -- so `floor != Teleport` reproduces
+     * the stale test rather than a corrected one. SuperCC is the oracle; the defect is the
+     * behavior to copy.
+     *
+     * Deliberately narrow: Chip only, and only when BOTH cells are teleports underneath. The
+     * unconditional version of this (§69) took Voting-CCLP5 from 0 to ~600 invalid.
+     */
+    if (cr->id == Chip
+            && cellat(oldpos)->bot.id == Teleport
+            && cellat(newpos)->bot.id == Teleport
+            && floor != Teleport)
+        poptile(oldpos);
+#endif
     if (dead) {
         removecreature(cr);
         if (cellat(oldpos)->bot.id == CloneMachine)
