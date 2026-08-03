@@ -879,6 +879,69 @@ static maptile poptile(int pos) {
     return tile;
 }
 
+#ifdef PROBE_TILE
+/* HARNESS #9: Tile World's own top/bot on a watched cell, with the CALL SITE.
+ *
+ * The counterpart of shadow_tiletrace.ps1 on the SuperCC side. §71 died on a contradiction
+ * between what Tile World's push primitive should do to a buried teleport and what the map
+ * dumps actually showed, and the rule there is: read the real values, do not reason about
+ * them. C has no stack trace, so the call site comes from __LINE__ through a macro pair
+ * defined BELOW the real functions -- every later call site is rewritten, these two
+ * definitions are not.
+ *
+ * Emits, only for the watched cell:
+ *     TILE <level> <ct> <op>@<line> <x>,<y> top <before>-><after> bot <before>-><after>
+ *
+ * TW_PROBE_TILE=<level>:<x>,<y>
+ */
+static int probetile_pos = -1;
+static int probetile_lvl = -1;
+
+static int probetile(void) {
+    static int parsed = FALSE;
+    if (!parsed) {
+        char const* e = getenv("TW_PROBE_TILE");
+        parsed = TRUE;
+        if (e && *e) {
+            int lv, x, y;
+            if (sscanf(e, "%d:%d,%d", &lv, &x, &y) == 3) {
+                probetile_lvl = lv;
+                probetile_pos = y * CXGRID + x;
+            }
+        }
+    }
+    return probetile_lvl >= 0;
+}
+
+static void probetile_report(char const* op, int line, int pos,
+                             int t0, int b0) {
+    if (!probetile() || pos != probetile_pos
+            || probetile_lvl != (int)state->game->number)
+        return;
+    fprintf(stderr, "TILE\t%d\t%d\t%s@%d\t%d,%d\ttop %02X->%02X\tbot %02X->%02X\n",
+            (int)state->game->number, (int)currenttime(), op, line,
+            pos % CXGRID, pos / CXGRID,
+            t0, cellat(pos)->top.id, b0, cellat(pos)->bot.id);
+}
+
+static void probetile_pushw(int pos, maptile tile, int line) {
+    int t0 = cellat(pos)->top.id, b0 = cellat(pos)->bot.id;
+    pushtile(pos, tile);
+    probetile_report("push", line, pos, t0, b0);
+}
+
+static maptile probetile_popw(int pos, int line) {
+    int t0 = cellat(pos)->top.id, b0 = cellat(pos)->bot.id;
+    maptile r = poptile(pos);
+    probetile_report("pop", line, pos, t0, b0);
+    return r;
+}
+
+/* Every call site AFTER this point routes through the wrappers. */
+#define pushtile(p, t) probetile_pushw((p), (t), __LINE__)
+#define poptile(p)     probetile_popw((p), __LINE__)
+#endif
+
 /* Return TRUE if a bear trap is currently passable.
  */
 static int istrapopen(int pos, int skippos) {
