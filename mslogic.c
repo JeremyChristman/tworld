@@ -847,6 +847,70 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+#ifdef PROBE_MAP
+/* HARNESS #6: cross-engine MAP-STACK differ.
+ *
+ * §59 established that both engines keep a 2-deep tile stack per cell and that their
+ * primitives agree almost exactly:
+ *
+ *     Tile World  poptile   : top = bot;  bot = Empty
+ *     SuperCC     popTile   : FG  = BG;   BG  = FLOOR
+ *     Tile World  pushtile  : bot = top;  top = tile                    (ALWAYS pushes)
+ *     SuperCC     insertTile: if (!(FG == FLOOR && !tile.isMonster()))
+ *                                 BG = FG;
+ *                             FG = tile                                 (CONDITIONAL push)
+ *
+ * So a shadow that reimplements SuperCC's model inside Tile World would be a near-copy of
+ * Tile World's own map. The real question is WHERE each engine pushes and pops -- and by
+ * TLFC3 #18 tick 236 the two stacks at cell 22,16 have already diverged (Floor vs Blob).
+ * This finds the tick where they FIRST diverge.
+ *
+ * ⚠ TILE VOCABULARY: Tile World's ids are its own (Chip = 0x40); SuperCC's Tile ordinals are
+ * the data-file codes (Chip = 0x6C). Everything here is emitted in DATA-FILE codes, via the
+ * inverse of fileidtotileid(), so the two sides are directly comparable. Unmappable ids are
+ * emitted as -1 rather than silently coerced into something plausible.
+ *
+ * ⚠ ALIGNMENT: this is END-OF-TICK STATE, so it pairs with SuperCC by the state constant
+ * TW_ct = 2*t - 2, NOT the move-phase constant t = ct/2. Mixing those up produced the
+ * phantom clock bug (§52).
+ *
+ * Emits only cells that CHANGED since the previous tick, after a full baseline:
+ *     MAP <level> <ct> <x>,<y> <topDat> <botDat>
+ *
+ * Gated to a single level (TW_PROBE_MAP=<level number>); a whole corpus of this would be
+ * enormous and nothing needs it.
+ */
+static int probemap(void) {
+    static int lvl = -2;
+    if (lvl == -2) {
+        char const* e = getenv("TW_PROBE_MAP");
+        lvl = (e && *e) ? atoi(e) : -1;
+    }
+    return lvl;
+}
+
+/* The data-file code for a Tile World tile id, or -1 if it has no data-file meaning.
+ * Built by inverting fileidtotileid(). Several data-file codes share one Tile World id (the
+ * cloning-block variants), so scanning downward makes the LOWEST code win, which keeps the
+ * mapping canonical and stable across runs. */
+static int twid_to_datcode(int id) {
+    static signed short inv[256];
+    static int built = FALSE;
+    if (!built) {
+        int i;
+        for (i = 0 ; i < 256 ; ++i)
+            inv[i] = -1;
+        for (i = 0x6F ; i >= 0 ; --i) {
+            int t = fileidtotileid(i);
+            if (t >= 0 && t < 256)
+                inv[t] = (signed short)i;
+        }
+        built = TRUE;
+    }
+    return (id >= 0 && id < 256) ? inv[id] : -1;
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -3694,6 +3758,31 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_MAP
+    /* HARNESS #6: emit the tile stack for every cell that changed this tick. */
+    static unsigned char snaptop[CXGRID * CYGRID], snapbot[CXGRID * CYGRID];
+    static int snaplvl = -1;
+    int pos;
+
+    if (probemap() >= 0 && probemap() == (int)state->game->number) {
+        int fresh = (snaplvl != (int)state->game->number);
+        if (fresh) {
+            snaplvl = (int)state->game->number;
+            fprintf(stderr, "MAPRESET\t%d\n", snaplvl);
+        }
+        for (pos = 0 ; pos < CXGRID * CYGRID ; ++pos) {
+            int t = cellat(pos)->top.id, b = cellat(pos)->bot.id;
+            if (!fresh && t == snaptop[pos] && b == snapbot[pos])
+                continue;
+            snaptop[pos] = (unsigned char)t;
+            snapbot[pos] = (unsigned char)b;
+            fprintf(stderr, "MAP\t%d\t%d\t%d,%d\t%d\t%d\n",
+                    (int)state->game->number, (int)currenttime(),
+                    pos % CXGRID, pos / CXGRID,
+                    twid_to_datcode(t), twid_to_datcode(b));
+        }
+    }
+#endif
     return;
 }
 
