@@ -830,6 +830,75 @@ static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
 
+#ifdef FIX_TRAP_LATCH
+/* MOD (Jeremy): a per-TRAP latch mirroring SuperCC's trap BitSet.
+ *
+ * ⚠ READ THIS BEFORE TOUCHING IT. Porting SuperCC's trap model has failed THREE
+ * times (+9 additive, +25 replacing, and 0 fixed / 1285 regressions when the
+ * leave-check was swapped for `istrapopen(cr->pos, -1)`). The reason the last
+ * attempt was so catastrophic is now measured: BOTH engines LATCH, they just latch
+ * different objects, and `istrapopen()` is not a latch at all --
+ *
+ *   Tile World : latches on the CREATURE (CS_RELEASED), set when the trap is open
+ *                at entry or when springtrap() fires, cleared when that creature
+ *                successfully leaves.
+ *   SuperCC    : latches on the TRAP, one bit per wired BUTTON. BrownButton.press
+ *                -> MSLevel.setTrap(target, true) sets EVERY bit of that trap;
+ *                MSLevel.finaliseTraps then runs each tick:
+ *                    if   (FG(button) != BUTTON_BROWN) bit = true;
+ *                    else if (FG(target) == TRAP)      bit = false;
+ *                and isTrapOpen ORs the bits of every button aimed at the cell.
+ *
+ * The decisive asymmetry is the CLEAR arm: a bit for an uncovered button is only
+ * cleared while the TRAP CELL IS EMPTY. So SuperCC keeps a trap open after its
+ * button is released, exactly as Tile World's CS_RELEASED does -- which is why
+ * replacing the latch with the instantaneous `istrapbuttondown()` test refused
+ * 1285 legitimate exits. (`istrapbuttondown()` and SuperCC's "button covered" are
+ * otherwise the SAME test; that was never the discrepancy.)
+ *
+ * Measured on PB_Gourami_Levelsets#254 "Guinea Pig", the pink ball in the trap at
+ * 2,3 whose buttons are 2,2 / 3,3 / 2,4 / 1,3. A shadow probe on finaliseTraps
+ * shows all four bits FALSE at t=20 -- they were cleared at t=17/18 while the ball
+ * was briefly OUT of the trap (tgtFG=Trap) and no button was covered -- so SuperCC
+ * holds it. Tile World's CS_RELEASED was still set from an earlier opening and it
+ * walked out.
+ */
+static unsigned char traplatch[256];
+
+static void inittraplatches(void) {
+    int i, id;
+    for (i = 0; i < traplistsize(); ++i) {
+        /* SuperCC's MSLevel constructor: "On level start every single trap is
+         * actually open in MSCC, this implements that so creatures and blocks
+         * starting on traps can exit them at any point in the level" -- it presses
+         * the button of any trap whose target already holds Chip or a block. */
+        id = cellat(traplist()[i].to)->top.id;
+        traplatch[i] = (unsigned char)(id == Block_Static
+                        || (iscreature(id) && (creatureid(id) == Chip
+                                            || creatureid(id) == Swimming_Chip
+                                            || creatureid(id) == Block)));
+    }
+}
+
+static void updatetraplatches(void) {
+    int i;
+    for (i = 0; i < traplistsize(); ++i) {
+        if (istrapbuttondown(traplist()[i].from))
+            traplatch[i] = TRUE;
+        else if (cellat(traplist()[i].to)->top.id == Beartrap)
+            traplatch[i] = FALSE;
+    }
+}
+
+static int istraplatchopen(int pos) {
+    int i;
+    for (i = 0; i < traplistsize(); ++i)
+        if (traplist()[i].to == pos && traplatch[i])
+            return TRUE;
+    return FALSE;
+}
+#endif
+
 /* Place a new tile at the given location, causing the current upper
  * tile to become the lower tile.
  */
@@ -1533,8 +1602,16 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 if (dir & (SOUTH | EAST)) return FALSE;
                 break;
             case Beartrap:
+#ifdef FIX_TRAP_LATCH
+                /* Consult the per-TRAP latch (SuperCC's BitSet) rather than this
+                 * creature's own CS_RELEASED. See the block above istrapbuttondown()
+                 * for why the previous three attempts at this failed. */
+                if (!istraplatchopen(cr->pos))
+                    return FALSE;
+#else
                 if (!(cr->state & CS_RELEASED))
                     return FALSE;
+#endif
                 break;
         }
     }
@@ -2711,7 +2788,11 @@ static int startmovement(creature* cr, int dir) {
     }
 
     if (floor == Beartrap) {
+#ifndef FIX_TRAP_LATCH
+        /* With the per-trap latch the leave-check no longer consults CS_RELEASED,
+         * so a creature can legitimately step out without it ever being set. */
         _assert(cr->state & CS_RELEASED);
+#endif
         if (cr->state & CS_MUTANT)
             cellat(cr->pos)->bot.state &= ~FS_HASMUTANT;
     }
@@ -3596,6 +3677,11 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef FIX_TRAP_LATCH
+    /* SuperCC calls finaliseTraps() at the end of every tick; this is the same
+     * point in Tile World-s tick. */
+    updatetraplatches();
+#endif
     return;
 }
 
@@ -3758,6 +3844,9 @@ static int initgame(gamelogic* logic) {
     xviewoffset() = 0;
     yviewoffset() = 0;
 
+#ifdef FIX_TRAP_LATCH
+    inittraplatches();
+#endif
     preparedisplay();
     return TRUE;
 }
