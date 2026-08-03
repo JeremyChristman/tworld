@@ -3179,9 +3179,26 @@ static void endmovement(creature* cr, int dir) {
          * Chip's old cell is popped a SECOND time -- consuming the teleport he was standing
          * on. Reproduce that, and only that: the guard needs the destination to have been
          * something other than a bare teleport before the push. */
-        if (prepush_destfloor >= 0 && prepush_destfloor != Teleport
-                && cellat(oldpos)->top.id == Teleport)
-            poptile(oldpos);
+        {
+            int fires = (prepush_destfloor >= 0 && prepush_destfloor != Teleport
+                         && cellat(oldpos)->top.id == Teleport);
+#ifdef PROBE_POPD
+            /* Log the decision for EVERY Chip teleport, fired or not, in SuperCC's own shape
+             * so the two streams can be diffed line for line instead of the predicate being
+             * argued about. SuperCC's counterpart (shadow_poplayer.ps1):
+             *     POPD <t> from=<x,y> to=<x,y> <creature> newTileFG=<tile> -> POPPED|cancelled
+             * Six predicates have now been written from reasoning and all six were wrong. */
+            if (getenv("TW_PROBE_POPD"))
+                fprintf(stderr, "TWPOP\t%d\t%d\tfrom=%d,%d\tto=%d,%d\tprepush=%02X"
+                                "\tfloor=%02X\toldtop=%02X\t-> %s\n",
+                        (int)state->game->number, (int)currenttime(),
+                        oldpos % CXGRID, oldpos / CXGRID, newpos % CXGRID, newpos / CXGRID,
+                        prepush_destfloor, floor, cellat(oldpos)->top.id,
+                        fires ? "EXTRAPOP" : "single");
+#endif
+            if (fires)
+                poptile(oldpos);
+        }
 #endif
     }
 
