@@ -281,6 +281,27 @@
 #define	FIX_CHIP_ONTO_BURIED_BLOCK	1
 #endif
 
+/* MOD (Jeremy): jc-17's keep-the-slip-slot rule extended to BLOCK movers, ON by
+ * default. FIX_KEEPSLOT_OCCUPANT set cmm_keepslot only in canmakemove()'s creature
+ * branch, so a blocked BLOCK still dropped off the slip list and was re-appended.
+ * SuperCC makes no such distinction: its entry guard fails every term when the
+ * destination holds an ordinary creature and the terrain underneath refuses --
+ * creatures are transparent so the `!newTileFG.isTransparent()` term dies, and the
+ * `isBlock && (isBoot || isChip || isSwimmingChip)` term only rescues Chip and boots.
+ * tryEnter never runs, `sliding` is never cleared, and the block keeps its slot.
+ * The drop does not merely reorder: measured on TomP2#56 the shift moves the NEXT
+ * block into the index the iterator's `advance` skip is about to consume, so that
+ * block silently loses its move while the re-appended one gets a second.
+ * Fixes 1 desync (TomP2#56 "Quick Race Through Chip Town!") with 0 regressions.
+ * Measured negative recorded alongside it: the same gap does NOT exist for a CHIP
+ * mover -- the predicate holds 9 times across four large sets and never once during
+ * a failed slide, and forcing it changes nothing (0 fixed / 0 regressions).
+ * Build with -DNO_FIX_KEEPSLOT_BLOCK_OCCUPANT to restore the old behavior.
+ */
+#if !defined(NO_FIX_KEEPSLOT_BLOCK_OCCUPANT) && !defined(FIX_KEEPSLOT_BLOCK_OCCUPANT)
+#define	FIX_KEEPSLOT_BLOCK_OCCUPANT	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
@@ -1579,6 +1600,42 @@ static int canmakemove(creature const* cr, int dir, int flags) {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
             id = creatureid(floor);
+#ifdef FIX_KEEPSLOT_BLOCK_OCCUPANT
+            /* MOD (Jeremy): jc-17's keep-the-slip-slot rule, for a BLOCK mover.
+             *
+             * FIX_KEEPSLOT_OCCUPANT set cmm_keepslot only in the creature branch
+             * below, so a blocked BLOCK still dropped off the slip list and was
+             * re-appended. SuperCC makes no such distinction -- its entry guard
+             *     canEnter(direction, newTileBG)
+             *       || (!newTileFG.isTransparent() && (isBlock || blockMachineCheck))
+             *       || (pickupCheck && blockMachineCheck)
+             *       || (isBlock && (newTileFG.isBoot() || isChip() || isSwimmingChip()))
+             *       || newTileBG == CLONE_MACHINE
+             * fails EVERY term when the destination holds an ordinary creature and
+             * the terrain underneath refuses: creatures are transparent so term 2
+             * dies, and term 4 only rescues Chip/swimming-Chip/boots. tryEnter never
+             * runs, `sliding` is never cleared, and the block keeps its slot.
+             *
+             * Chip and Swimming_Chip are excluded because term 4 passes for them --
+             * and Tile World returns TRUE for that case anyway (blocks squash Chip),
+             * so the failure path is never reached.
+             *
+             * Why it matters, measured on TomP2#56 "Quick Race Through Chip Town!",
+             * ct=26 -- the drop does not merely reorder, it SKIPS A CREATURE. The
+             * slip-pass iterator does not increment `n`; it relies on `advance`,
+             * which only increments when msccslippers is unchanged:
+             *     n=1 advance=0  block@1,29 dir=S  -> FAILS, dropped and re-appended
+             *                                      -> 2,29 shifts down into index 1
+             *     n=1 advance=1  block@2,29        -> SKIPPED, consuming the advance
+             *                                         meant for the reordered block
+             *     n=2 advance=0  block@1,29 dir=N  -> gets a SECOND move instead
+             * SuperCC gives 2,29 its move. Keeping the slot removes the shift, so
+             * the skip lands where it was meant to. */
+            if (id != Chip && id != Swimming_Chip
+                    && !(movelaws[cellat(to)->bot.id].block & dir)
+                    && cellat(to)->bot.id != CloneMachine)
+                cmm_keepslot = TRUE;
+#endif
 #ifdef FIX_TELEPORT_BLOCK_ONTO_CHIP
             /* MOD (Jeremy): a block is normally allowed to shove into Chip --
              * that is how blocks squash him. But when this call is a *teleport
@@ -3104,6 +3161,19 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
     for (n = 0; n < slipcount;) {
         oldmsccslippers = msccslippers;
         cr = slips[n].cr;
+#ifdef TRACE_DESYNC
+        /* PROBE: the slip-pass ITERATOR itself. `n` is not incremented after a
+         * creature is processed -- the loop relies on `advance`, which only
+         * increments when msccslippers is unchanged -- so which creature is
+         * visited, revisited or SKIPPED is invisible from the S/Q lines alone. */
+        if (tracethistick())
+            fprintf(stderr, "I@%d@n=%d@slipcount=%d@advance=%d@slippers=%d/%d"
+                            "@cr=%02X@%d,%d@dir=%d\n",
+                    (int)currenttime(), n, (int)slipcount, advance,
+                    msccslippers, oldmsccslippers, cr->id,
+                    (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                    (int)slips[n].dir);
+#endif
         if (cr->id == Chip) { /* new splitting */
             n++;
             continue;
