@@ -847,6 +847,52 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+#ifdef PROBE_FACE
+/* HARNESS #7: FACING + SLIP-MEMBERSHIP history for one watched cell.
+ *
+ * §61 left TomR1 #100 blocked on a facing difference: the block in the beartrap at 11,7
+ * attempts EAST in Tile World and UP in SuperCC. Harness #6 is blind to it -- a block's map
+ * tile is 0x0A whichever way the block faces, so two differently-facing blocks look
+ * identical to a map-stack differ. This watches the creature state instead.
+ *
+ * Emits, only when the watched cell's state CHANGES:
+ *     FACE <level> <ct> <id> facing=<D> slip=<D|-> slot=<n|->
+ *
+ * where facing is cr->dir, slip is the slip-list slot's direction, and slot is its index --
+ * so a facing change, a slip-list insertion and a removal are all visible in one stream.
+ *
+ * TW_PROBE_FACE=<level>:<x>,<y>
+ */
+static int probeface_pos = -1;
+static int probeface_lvl = -1;
+
+static int probeface(void) {
+    static int parsed = FALSE;
+    if (!parsed) {
+        char const* e = getenv("TW_PROBE_FACE");
+        parsed = TRUE;
+        if (e && *e) {
+            int lv, x, y;
+            if (sscanf(e, "%d:%d,%d", &lv, &x, &y) == 3) {
+                probeface_lvl = lv;
+                probeface_pos = y * CXGRID + x;
+            }
+        }
+    }
+    return probeface_lvl >= 0;
+}
+
+static char probeface_dirchar(int d) {
+    switch (d) {
+        case NORTH: return 'N';
+        case WEST:  return 'W';
+        case SOUTH: return 'S';
+        case EAST:  return 'E';
+    }
+    return '-';
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -3694,6 +3740,39 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_FACE
+    /* HARNESS #7: facing + slip membership for the watched cell. Observe only. */
+    if (probeface() && probeface_lvl == (int)state->game->number) {
+        static char last[128] = "";
+        char now[128];
+        creature* cr = NULL;
+        int n, slot = -1, slipdir = NIL;
+
+        for (n = 0 ; n < blockcount ; ++n)
+            if (blocks[n]->pos == probeface_pos && !blocks[n]->hidden)
+                cr = blocks[n];
+        if (!cr)
+            for (n = 0 ; n < creaturecount ; ++n)
+                if (creatures[n]->pos == probeface_pos && !creatures[n]->hidden)
+                    cr = creatures[n];
+        if (cr)
+            for (n = 0 ; n < slipcount ; ++n)
+                if (slips[n].cr == cr) { slot = n; slipdir = slips[n].dir; break; }
+
+        if (cr)
+            sprintf(now, "%02X facing=%c slip=%c slot=%d state=%02X",
+                    cr->id, probeface_dirchar(cr->dir),
+                    probeface_dirchar(slipdir), slot, cr->state);
+        else
+            sprintf(now, "(nothing here)");
+
+        if (strcmp(now, last) != 0) {
+            fprintf(stderr, "FACE\t%d\t%d\t%s\n",
+                    (int)state->game->number, (int)currenttime(), now);
+            strcpy(last, now);
+        }
+    }
+#endif
     return;
 }
 
