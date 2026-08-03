@@ -1978,7 +1978,37 @@ static void choosecreaturemove(creature* cr) {
     }
 
     if (cr->id == Tank) {
-        if ((cr->state & CS_RELEASED) ||
+        if (
+#ifdef FIX_TANK_IN_TRAP_STALL
+            /* MOD (Jeremy): a RELEASED tank sitting in a BEARTRAP must not stall.
+             *
+             * The `floor != Beartrap && floor != CloneMachine` exclusion below
+             * exists precisely so a trapped or cloner-bound tank keeps trying every
+             * tick -- but the `(cr->state & CS_RELEASED) ||` in front of it
+             * overrides that. A tank whose trap has been opened therefore takes
+             * CS_HASMOVED on its first failed move and is skipped by
+             * choosecreaturemove() FOR GOOD: the only per-tick clear
+             * (finalhousekeeping, `!(currenttime() & 3)`) touches CS_TURNING
+             * creatures only, and a stalled tank has no CS_TURNING.
+             *
+             * SuperCC never stalls a trapped monster. MSCreatureList.tick sends any
+             * creature whose BG is TRAP to tickTrappedMonster(), which promotes
+             * TANK_STATIONARY to TANK_MOVING and ticks it again every single tick.
+             *
+             * Measured on TLFC4#43 "THE FINAL BATTLE", tank at 20,10 (a beartrap
+             * whose button is 13,12): Tile World's decision line goes
+             *     ct=62  state=01 REL          -- released, still trying
+             *     ct=66  state=05 REL MOVED    -- stalled, and never moves again
+             * while SuperCC has already walked it west to 19,10 by t=35.
+             *
+             * Dropping the clause is surgical: CS_RELEASED is cleared at the foot of
+             * a successful advancecreature(), so it is only ever set for a creature
+             * still standing in a trap -- exactly where the second clause already
+             * declines to stall. */
+            (void)0,
+#else
+            (cr->state & CS_RELEASED) ||
+#endif
 #ifdef FIX_TANK_ON_CLONER
             /* MOD (Jeremy): the `&& floor != CloneMachine` here was commented out
              * with the note "(c) bug: tank clones should stall". Restoring it.
