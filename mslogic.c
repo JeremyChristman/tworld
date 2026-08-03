@@ -3151,9 +3151,19 @@ static void endmovement(creature* cr, int dir) {
      *
      * Deliberately narrow: Chip only, and only when BOTH cells are teleports underneath. The
      * unconditional version of this (§69) took Voting-CCLP5 from 0 to ~600 invalid.
+     *
+     * ⚠ The guard runs AFTER poptile(oldpos) above, which has already lifted Chip and moved
+     * the teleport from bot to TOP. Harness #9 on this very cell:
+     *
+     *   TILE 7 88 push@1079 17,6  top 18->01  bot 01->18   <- Chip arrives, teleport to bot
+     *   TILE 7 92 pop@3182  17,6  top 42->18  bot 18->01   <- Chip leaves, teleport to TOP
+     *
+     * The first version of this guard tested cellat(oldpos)->bot.id == Teleport at this point
+     * and therefore never fired once -- 0 fixed / 0 broken across the whole corpus, which is
+     * a failed measurement, not a safe change. Test ->top.
      */
     if (cr->id == Chip
-            && cellat(oldpos)->bot.id == Teleport
+            && cellat(oldpos)->top.id == Teleport
             && cellat(newpos)->bot.id == Teleport
             && floor != Teleport)
         poptile(oldpos);
