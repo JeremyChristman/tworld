@@ -849,6 +849,41 @@ static maptile* getfloorat(int pos) {
  */
 
 
+#ifdef PROBE_MAP
+/* HARNESS #6: cross-engine MAP-STACK differ. See handoff §60. TW_PROBE_MAP=<level>.
+ * Emits, in DATA-FILE tile codes, only cells whose stack CHANGED this tick:
+ *     MAP <level> <ct> <x>,<y> <topDat> <botDat>
+ * Tile World's ids are its own (Chip = 0x40); the file format's are what SuperCC reports
+ * (Chip = 0x6C), so everything is converted through the inverse of fileidtotileid(). */
+static int probemap(void) {
+    static int lvl = -2;
+    if (lvl == -2) {
+        char const* e = getenv("TW_PROBE_MAP");
+        lvl = (e && *e) ? atoi(e) : -1;
+    }
+    return lvl;
+}
+
+static int twid_to_datcode(int id) {
+    static signed short inv[256];
+    static int built = FALSE;
+    if (!built) {
+        int i;
+        for (i = 0 ; i < 256 ; ++i)
+            inv[i] = -1;
+        /* Several data-file codes share one Tile World id (the cloning-block variants);
+         * scanning downward makes the LOWEST code win, keeping the mapping stable. */
+        for (i = 0x6F ; i >= 0 ; --i) {
+            int t = fileidtotileid(i);
+            if (t >= 0 && t < 256)
+                inv[t] = (signed short)i;
+        }
+        built = TRUE;
+    }
+    return (id >= 0 && id < 256) ? inv[id] : -1;
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -3841,6 +3876,29 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_MAP
+    {
+        static unsigned char snaptop[CXGRID * CYGRID], snapbot[CXGRID * CYGRID];
+        static int snaplvl = -1;
+        int pos;
+        if (probemap() >= 0 && probemap() == (int)state->game->number) {
+            int fresh = (snaplvl != (int)state->game->number);
+            if (fresh)
+                snaplvl = (int)state->game->number;
+            for (pos = 0 ; pos < CXGRID * CYGRID ; ++pos) {
+                int t = cellat(pos)->top.id, b = cellat(pos)->bot.id;
+                if (!fresh && t == snaptop[pos] && b == snapbot[pos])
+                    continue;
+                snaptop[pos] = (unsigned char)t;
+                snapbot[pos] = (unsigned char)b;
+                fprintf(stderr, "MAP\t%d\t%d\t%d,%d\t%d\t%d\n",
+                        (int)state->game->number, (int)currenttime(),
+                        pos % CXGRID, pos / CXGRID,
+                        twid_to_datcode(t), twid_to_datcode(b));
+            }
+        }
+    }
+#endif
     return;
 }
 
