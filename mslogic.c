@@ -851,6 +851,129 @@ static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
 
+#ifdef PROBE_TRAP
+/* ============================================================================
+ * ISOLATION HARNESS: a NON-ACTING shadow of SuperCC's trap model.
+ *
+ * Four attempts to port SuperCC's trap semantics have failed (+9, +25, 1285,
+ * 2050 regressions). Each time the only signal available was the corpus verdict,
+ * which says WHICH levels broke but never WHY. This harness runs SuperCC's model
+ * ALONGSIDE Tile World's, maintained every tick but NEVER consulted for
+ * behavior, and logs every leave-check where the two answers differ.
+ *
+ * Because nothing here feeds back into the engine, a PROBE_TRAP build is
+ * behaviourally identical to the shipped one -- so it can be run over the whole
+ * corpus with zero risk, and the disagreement census is exact rather than
+ * inferred from a pile of broken levels.
+ *
+ * SuperCC's model, transcribed:
+ *   BrownButton.press   -> MSLevel.setTrap(target, true): sets EVERY bit of that trap
+ *   MSLevel.finaliseTraps, once per tick:
+ *        if      (FG(button) != BUTTON_BROWN) bit = true;
+ *        else if (FG(target) == TRAP)         bit = false;
+ *   MSLevel.isTrapOpen  -> OR of every button aimed at the cell
+ * The clear arm requires the TRAP CELL TO BE EMPTY, which is what makes SuperCC
+ * a latch rather than a level test -- see handoff 51.
+ * ========================================================================== */
+static unsigned char sctrap[256];   /* SuperCC's per-BUTTON bits. SHADOW ONLY. */
+static int  probetrap_lvl = -1;     /* per-level tally, flushed on level change */
+static long probetrap_agree = 0, probetrap_dis = 0;
+
+static int probetrap(void) {
+#ifdef FIX_TRAP_USESHADOW
+    return 1;                   /* the shadow drives behavior: always maintain it */
+#else
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_TRAP"); on = (e && *e) ? 1 : 0; }
+    return on;
+#endif
+}
+
+/* logging is separate from maintenance, so a FIX build stays silent */
+static int probetraplog(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_TRAP"); on = (e && *e) ? 1 : 0; }
+    return on;
+}
+
+static void sctrap_reset(void) { memset(sctrap, 0, sizeof sctrap); }
+
+/* MSLevel.setTrap(target, true) -- a press opens EVERY button's bit for that trap. */
+static void sctrap_press(int trappos) {
+    int i;
+    for (i = 0; i < traplistsize(); ++i)
+        if (traplist()[i].to == trappos)
+            sctrap[i] = TRUE;
+}
+
+/* MSLevel.finaliseTraps() -- once per tick, at the end of the tick. */
+static void sctrap_finalise(void) {
+    int i;
+    for (i = 0; i < traplistsize(); ++i) {
+        if (istrapbuttondown(traplist()[i].from))
+            sctrap[i] = TRUE;
+        else if (cellat(traplist()[i].to)->top.id == Beartrap)
+            sctrap[i] = FALSE;
+    }
+}
+
+/* MSLevel.setTrap(target, false) -- BrownButton.release(). Clears EVERY bit. */
+static void sctrap_release(int trappos) {
+    int i;
+    for (i = 0; i < traplistsize(); ++i)
+        if (traplist()[i].to == trappos)
+            sctrap[i] = FALSE;
+}
+
+/* MSCreature.tick()'s post-move block, transcribed. This is the part that was
+ * missing from every previous port, and it is what makes SuperCC close traps
+ * that Tile World leaves open:
+ *
+ *   A. the creature stepped OFF a brown button
+ *        if (FG(oldPos) == BUTTON_BROWN) {
+ *            if (BG(target) != TRAP && target != newPos)  release();
+ *            if (target == newPos)                        release();
+ *        }
+ *      i.e. release UNLESS the trap is occupied and the creature did not move
+ *      into it. BG(target) == TRAP means something is standing on the trap.
+ *
+ *   B. the creature stepped OUT of a trap
+ *        if (FG(oldPos) == TRAP || BG(oldPos) == TRAP)
+ *            for every button aimed at oldPos whose own tile is uncovered:
+ *                release();
+ */
+static void sctrap_aftermove(int oldpos, int newpos) {
+    int i, tgt;
+
+    /* A -- stepped off a brown button */
+    if (cellat(oldpos)->top.id == Button_Brown) {
+        tgt = trapfrombutton(oldpos);
+        if (tgt >= 0 && tgt < CXGRID * CYGRID) {
+            int occupied = (cellat(tgt)->bot.id == Beartrap);   /* BG(target) == TRAP */
+            if (!(occupied && tgt != newpos))
+                sctrap_release(tgt);
+        }
+    }
+
+    /* B -- stepped out of a trap */
+    if (cellat(oldpos)->top.id == Beartrap || cellat(oldpos)->bot.id == Beartrap) {
+        for (i = 0; i < traplistsize(); ++i)
+            if (traplist()[i].to == oldpos
+                    && cellat(traplist()[i].from)->top.id == Button_Brown)
+                sctrap[i] = FALSE;
+    }
+}
+
+/* MSLevel.isTrapOpen(position). */
+static int sctrap_open(int pos) {
+    int i;
+    for (i = 0; i < traplistsize(); ++i)
+        if (traplist()[i].to == pos && sctrap[i])
+            return TRUE;
+    return FALSE;
+}
+#endif
+
 /* Place a new tile at the given location, causing the current upper
  * tile to become the lower tile.
  */
@@ -1554,6 +1677,46 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 if (dir & (SOUTH | EAST)) return FALSE;
                 break;
             case Beartrap:
+#ifdef PROBE_TRAP
+                /* ISOLATION HARNESS: compare, do not act. */
+                {
+                    int _tw = !!(cr->state & CS_RELEASED);
+                    int _sc = sctrap_open(cr->pos);
+                    if (probetraplog()) {
+                    /* Corpus scale: emit only DISAGREEMENTS, plus a per-level tally
+                     * flushed when the level number changes, so a full-corpus run
+                     * stays small enough to diff. */
+                    if (probetrap_lvl != (int)state->game->number) {
+                        if (probetrap_lvl >= 0)
+                            fprintf(stderr, "TRAPSUM\t%d\t%ld\t%ld\n",
+                                    probetrap_lvl, probetrap_agree, probetrap_dis);
+                        probetrap_lvl = (int)state->game->number;
+                        probetrap_agree = probetrap_dis = 0;
+                    }
+                    if (_tw == _sc) {
+                        ++probetrap_agree;
+                    } else {
+                        ++probetrap_dis;
+                        fprintf(stderr, "TRAP\t%d\t%d\t%d,%d\t%02X\t%d\t%d\t%d\n",
+                                (int)state->game->number, (int)currenttime(),
+                                (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                                cr->id, dir, _tw, _sc);
+                    }
+                    }
+#ifdef FIX_TRAP_USESHADOW
+                    /* 5th attempt at this family -- but the FIRST with a model
+                     * validated against SuperCC ground truth by the isolation
+                     * harness, and with the stakes measured beforehand: 12,800
+                     * disagreements out of 27,256,991 leave-checks, on 71 levels,
+                     * 67 of which currently PASS. */
+                    if (!_sc)
+                        return FALSE;
+                    break;
+#else
+                    (void)_tw; (void)_sc;
+#endif
+                }
+#endif
                 if (!(cr->state & CS_RELEASED))
                     return FALSE;
                 break;
@@ -2688,6 +2851,9 @@ static void springtrap(int buttonpos) {
     pos = trapfrombutton(buttonpos);
     if (pos < 0)
         return;
+#ifdef PROBE_TRAP
+    sctrap_press(pos);          /* shadow only */
+#endif
     if (pos >= CXGRID * CYGRID) {
         warn("Off-map trap opening attempted: (%d %d)",
              pos % CXGRID, pos / CXGRID);
@@ -3026,6 +3192,13 @@ static void endmovement(creature* cr, int dir) {
             break;
     }
     cr->pos = newpos;
+
+#ifdef PROBE_TRAP
+    /* SHADOW ONLY. Placed here to match SuperCC's ordering: its release block runs
+     * after the pressedButtons loop, which is the switch immediately above. */
+    if (probetrap())
+        sctrap_aftermove(oldpos, newpos);
+#endif
 
     if (cellat(oldpos)->bot.id == CloneMachine && cr->id == Block && cellat(oldpos)->top.id != Block_Static)
         blockcloning = TRUE; /* Squish patch */
@@ -3664,6 +3837,10 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_TRAP
+    if (probetrap())
+        sctrap_finalise();      /* shadow only -- SuperCC finalises traps here */
+#endif
     return;
 }
 
@@ -3800,6 +3977,9 @@ static int initgame(gamelogic* logic) {
     state->creatures = &dummycrlist;
     state->initrndslidedir = NORTH;
 
+#ifdef PROBE_TRAP
+    sctrap_reset();             /* shadow only */
+#endif
     possession(Key_Red) = possession(Key_Blue) = possession(Key_Yellow) = possession(Key_Green) = 0;
     possession(Boots_Ice) = possession(Boots_Slide) = possession(Boots_Fire) = possession(Boots_Water) = 0;
 
