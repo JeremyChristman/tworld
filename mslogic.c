@@ -847,6 +847,27 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+#ifdef PROBE_SLIP
+/* HARNESS #8 gate. TW_PROBE_SLIP=<level number>.
+ *
+ * ⚠ Tile World SKIPS Chip in this pass (`if (cr->id == Chip) { n++; continue; }`) and slides
+ * him separately, before it. SuperCC's slipList can still CONTAIN Chip, and SlipList.tick()
+ * iterates him along with everything else. The SuperCC side therefore logs Chip too and the
+ * differ accounts for him -- dropping him silently on one side would make the two sequences
+ * look misaligned from the first tick Chip ever slides.
+ */
+static int probeslip_step = 0;
+
+static int probeslip(void) {
+    static int lvl = -2;
+    if (lvl == -2) {
+        char const* e = getenv("TW_PROBE_SLIP");
+        lvl = (e && *e) ? atoi(e) : -1;
+    }
+    return lvl;
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -3343,6 +3364,34 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             continue;
         }
         cr->frame = cr->dir; /* Tank Top Glitch */
+#ifdef PROBE_SLIP
+        /* HARNESS #8: the SLIP-PASS ITERATION SEQUENCE.
+         *
+         * Both engines model MSCC's slide delay, with structurally different machinery:
+         *
+         *   Tile World  for (n = 0; n < slipcount;)   -- n is NOT auto-incremented; an
+         *                                                `advance` counter suppresses it
+         *   SuperCC     for (int i = size(); i > 0; i--) get(size() - i)
+         *                                             -- size() is re-read every pass, so
+         *                                                a list that grows or shrinks
+         *                                                mid-tick shifts the index
+         *
+         * §62 showed the consequence: keeping one extra entry on Tile World's slip list
+         * shifted every later index and put a fireball on ice one tick behind, 240 ticks
+         * later and nowhere near the change. Comparing the two SEQUENCES directly is the
+         * only way to see that.
+         *
+         * Emitted for each creature the pass actually TICKS, in order:
+         *     SLIPT <level> <ct> <step> <n> <slipcount> <x>,<y> <id> <dir>
+         *
+         * Non-acting: printing only.
+         */
+        if (probeslip() >= 0 && probeslip() == (int)state->game->number)
+            fprintf(stderr, "SLIPT\t%d\t%d\t%d\t%d\t%d\t%d,%d\t%02X\t%d\n",
+                    (int)state->game->number, (int)currenttime(), probeslip_step++,
+                    n, (int)slipcount,
+                    (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id, slipdir);
+#endif
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
 #ifdef FIX_KEEPSLOT_OCCUPANT
@@ -3694,6 +3743,9 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_SLIP
+    probeslip_step = 0;   /* the step counter is per TICK, not per run */
+#endif
     return;
 }
 
