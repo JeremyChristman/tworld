@@ -851,6 +851,28 @@ static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
 
+#ifdef PROBE_CLOCK
+/* Blob/teeth step-phase harness. Observes only; changes nothing. */
+static int probeclock_lvl = -1, probeclock_ct = -1;
+
+static int probeclock(void) {
+    static int on = -1;
+    if (on < 0) { char const* e = getenv("TW_PROBE_CLOCK"); on = (e && *e) ? 1 : 0; }
+    return on;
+}
+
+/* Would SuperCC step teeth/blobs at this Tile World tick, under a candidate
+ * alignment offset (in SuperCC ticks)? Returns -1 when no SuperCC tick maps here. */
+static int sc_steps(int ct, int off) {
+    int t;
+    if (ct & 1) return -1;              /* odd TW tick has no SuperCC counterpart */
+    t = (ct + 2) / 2 + off;
+    if (t <= 0) return -1;
+    if (t & 1) return 0;                /* SuperCC's monster phase runs on EVEN ticks */
+    return ((stepping() & 4) == 0) ? ((t % 4) == 0) : ((t % 4) == 2);
+}
+#endif
+
 /* Place a new tile at the given location, causing the current upper
  * tile to become the lower tile.
  */
@@ -1876,6 +1898,36 @@ static void choosecreaturemove(creature* cr) {
         return;
     if (cr->id == Block)
         return;
+#ifdef PROBE_CLOCK
+    /* ISOLATION HARNESS #2: the blob/teeth STEP PHASE, observed not changed.
+     *
+     * Tile World gates teeth/blobs with
+     *     if (currenttime() & 2) return;                 -- all creature movement
+     *     if ((currenttime() + stepping()) & 4) return;  -- teeth/blobs only
+     * SuperCC runs its monster phase on EVEN ticks only and gates within it on
+     *     teethStep = step.isEven() != (tickNumber % 4 == 2)
+     * i.e. it steps them at  t % 4 == 0 (even step)  or  t % 4 == 2 (odd step).
+     *
+     * §52 concluded these are one SuperCC tick out of phase, but that rested on
+     * the alignment TW_ct = 2*t - 2, which was derived for comparing T-lines and
+     * then reused for MOVE PHASES. Rather than assume it, this logs Tile World's
+     * own decision alongside SuperCC's prediction under SEVERAL candidate
+     * alignments; whichever offset agrees on the levels that currently pass IS
+     * the alignment, measured rather than asserted.
+     *
+     * One record per tick (deduped), not per creature. */
+    if (probeclock() && (cr->id == Teeth || cr->id == Blob)) {
+        int _ct = (int)currenttime();
+        if (probeclock_lvl != (int)state->game->number || probeclock_ct != _ct) {
+            int _tw = ((_ct & 2) == 0) && (((_ct + stepping()) & 4) == 0);
+            probeclock_lvl = (int)state->game->number;
+            probeclock_ct  = _ct;
+            fprintf(stderr, "CLK\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+                    (int)state->game->number, _ct, (int)stepping(), _tw,
+                    sc_steps(_ct, -1), sc_steps(_ct, 0), sc_steps(_ct, +1));
+        }
+    }
+#endif
     if (currenttime() & 2)
         return;
     if (cr->id == Teeth || cr->id == Blob) {
