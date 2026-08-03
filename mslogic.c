@@ -281,6 +281,27 @@
 #define	FIX_CHIP_ONTO_BURIED_BLOCK	1
 #endif
 
+/* MOD (Jeremy): jc-17's keep-the-slip-slot rule extended to BLOCK movers, ON by
+ * default. FIX_KEEPSLOT_OCCUPANT set cmm_keepslot only in canmakemove()'s creature
+ * branch, so a blocked BLOCK still dropped off the slip list and was re-appended.
+ * SuperCC makes no such distinction: its entry guard fails every term when the
+ * destination holds an ordinary creature and the terrain underneath refuses --
+ * creatures are transparent so the `!newTileFG.isTransparent()` term dies, and the
+ * `isBlock && (isBoot || isChip || isSwimmingChip)` term only rescues Chip and boots.
+ * tryEnter never runs, `sliding` is never cleared, and the block keeps its slot.
+ * The drop does not merely reorder: measured on TomP2#56 the shift moves the NEXT
+ * block into the index the iterator's `advance` skip is about to consume, so that
+ * block silently loses its move while the re-appended one gets a second.
+ * Fixes 1 desync (TomP2#56 "Quick Race Through Chip Town!") with 0 regressions.
+ * Measured negative recorded alongside it: the same gap does NOT exist for a CHIP
+ * mover -- the predicate holds 9 times across four large sets and never once during
+ * a failed slide, and forcing it changes nothing (0 fixed / 0 regressions).
+ * Build with -DNO_FIX_KEEPSLOT_BLOCK_OCCUPANT to restore the old behavior.
+ */
+#if !defined(NO_FIX_KEEPSLOT_BLOCK_OCCUPANT) && !defined(FIX_KEEPSLOT_BLOCK_OCCUPANT)
+#define	FIX_KEEPSLOT_BLOCK_OCCUPANT	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
