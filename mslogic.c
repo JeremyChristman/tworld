@@ -324,6 +324,27 @@
 #define	FIX_TANK_IN_TRAP_STALL	1
 #endif
 
+/* MOD (Jeremy): a Chip tile lying on a teleport's LANDING cell is seen through, ON by
+ * default. SuperCC judges a teleport exit by the BACKGROUND whenever the foreground is
+ * transparent -- MSCreature.teleport:
+ *     if (creatureType.isChip() && exitTile.isTransparent())
+ *         exitTile = level.getLayerBG().get(exitPosition);
+ * with Tile.isTransparent() == `ordinal() >= BUG_UP.ordinal()` (>= 0x40). Tile World
+ * refused the candidate outright in canmakemove()'s Chip branch and skipped to a later
+ * teleport.
+ * ⚠ CHIP ONLY, NOT Swimming_Chip: 0x6C-0x6F (Chip) are >= 0x40 and transparent, while
+ * 0x3C-0x3F (Chip swimming) are < 0x40 and OPAQUE. Including swimming Chip cost
+ * CatatonicP1#50, a level that had matched SuperCC tick-for-tick. Block is left refusing
+ * -- BLOCK is not transparent in SuperCC and has its own push branch there.
+ * Fixes 1 desync (KeyboardWielder#133 "Identity Crisis", a level DECORATED with Chip
+ * tiles -- the jc-11 junk-Chip-tile family) with 0 regressions. Scope: 197 levels have
+ * more than one foreground Chip tile, 103 of those also have a teleport.
+ * Build with -DNO_FIX_TELEPORT_EXIT_CHIP_TILE to restore the old behavior.
+ */
+#if !defined(NO_FIX_TELEPORT_EXIT_CHIP_TILE) && !defined(FIX_TELEPORT_EXIT_CHIP_TILE)
+#define	FIX_TELEPORT_EXIT_CHIP_TILE	1
+#endif
+
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
