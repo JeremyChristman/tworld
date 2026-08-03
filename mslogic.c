@@ -2980,8 +2980,44 @@ static void endmovement(creature* cr, int dir) {
 
     wasslipping = cr->state & (CS_SLIP | CS_SLIDE);
 
-    if (floor == Teleport)
+    if (floor == Teleport
+#ifdef FIX_BROKEN_TELEPORT_NO_SLIP
+        /* MOD (Jeremy): a BROKEN teleport must not arm a slide at all.
+         *
+         * A teleport lying under a floor tile is flagged FS_BROKEN when the level
+         * loads, and endmovement()'s teleport branch and teleportcreature() both
+         * honor that. jc-3 (FIX_BROKEN_TELEPORT_SLIDE) added the same respect to
+         * the slide FAILURE path in floormovements_of_chip(). This ARMING site was
+         * never touched, so landing on a broken teleport still gives Chip CS_SLIP --
+         * and choosechipmove() is called as
+         *     choosechipmove(cr, cr->state & CS_SLIP)
+         * which discards the player's input outright. Chip is then carried along a
+         * row of broken teleports with every keypress swallowed.
+         *
+         * SuperCC never starts a slide there: setSliding is driven by the tile's
+         * slide behavior, and a buried teleport is plain floor to it, so
+         * chip.isSliding() is false and MSLevel.moveChip takes the move.
+         *
+         * Measured on JacquesS2#7 "Slippertele" (176 teleports, most of them
+         * buried), ct=146 -- Chip at 19,6 wants NORTH:
+         *     TP@146@19,6@cr=40@top=41@bot=18@broken=1     <- armed anyway
+         *     M@146@19,6@in=1@crdir=2@slip=1@...@decision=DISCARD
+         * SuperCC has him at 19,5 by t=74. */
+        && !(tile->state & FS_BROKEN)
+#endif
+    ) {
+#ifdef TRACE_DESYNC
+        /* PROBE: is the teleport Chip is landing on FLAGGED BROKEN? jc-3 honors
+         * FS_BROKEN in the slide FAILURE path but this ARMING site never looks. */
+        if (tracethistick())
+            fprintf(stderr, "TP@%d@%d,%d@cr=%02X@top=%02X@bot=%02X@broken=%d\n",
+                    (int)currenttime(),
+                    (int)(newpos % CXGRID), (int)(newpos / CXGRID), cr->id,
+                    cell->top.id, cell->bot.id,
+                    !!(tile->state & FS_BROKEN));
+#endif
         startfloormovement(cr, floor, NIL); /* NIL for tank reversal patch */
+    }
     else if (isice(floor) && (cr->id != Chip || !possession(Boots_Ice)))
         startfloormovement(cr, floor, NIL); /* NIL for tank reversal patch */
     else if (isslide(floor) && (cr->id != Chip || !possession(Boots_Slide)))
