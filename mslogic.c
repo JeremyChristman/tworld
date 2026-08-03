@@ -2909,6 +2909,35 @@ static void handlebuttons(void) {
  * Return FALSE if the creature cannot initiate the indicated move
  * (side effects may still occur).
  */
+#ifndef NO_FIX_TELEPORT_PREPUSH_FG
+/* MOD (Jeremy): the move destination's top tile as it stood BEFORE this move pushed anything.
+ *
+ * startmovement() calls canmakemove(), which can push a block off the destination; endmovement()
+ * then reads the destination's top AFTERWARDS and tests it with `floor == Teleport`. SuperCC
+ * captures the equivalent value ONCE, before its push:
+ *
+ *     Tile newTileFG = level.getLayerFG().get(newPosition);   // captured first
+ *     ...
+ *     if (tryEnter(direction, newPosition, newTileFG, ...)) { // tryEnter does the push
+ *         if (newTileFG != TELEPORT) level.popTile(position);
+ *
+ * so SuperCC's leave-pop cancellation tests a PRE-push tile while Tile World tests a POST-push
+ * one. Measured on JacquesS2 #7 with S, MOVE and TILE interleaved in a single binary (§76):
+ *
+ *   S    7 92 3 phase=4-chip cr=40@17,6   <- Chip's advancecreature enters
+ *   S    7 92 4 phase=4-chip cr=44@18,6   <- block pushed from inside Chip's canmakemove
+ *   TILE 7 92 pop@3193 18,6 top 36->18    <- block leaves, teleport exposed
+ *   MOVE 7 92 40 17,6->18,6 floor=18      <- Chip's later read sees a BARE teleport
+ *
+ * SuperCC saw Block there, so its cancellation did not fire and it popped Chip's old cell a
+ * second time, destroying the teleport he was standing on (§70).
+ *
+ * ⚠ Set in advancecreature() immediately BEFORE endmovement(), not in startmovement(): a
+ * pushed block runs its own nested advancecreature INSIDE startmovement, and setting this any
+ * earlier would let that nested move overwrite the outer creature's value. */
+static int prepush_destfloor = -1;
+#endif
+
 static int startmovement(creature* cr, int dir) {
     int floor;
     int odir = cr->dir; /* b2 fix with convergence glitch */
@@ -3144,6 +3173,16 @@ static void endmovement(creature* cr, int dir) {
                 }
             }
         }
+#ifndef NO_FIX_TELEPORT_PREPUSH_FG
+        /* SuperCC's leave-pop cancellation tests the PRE-push destination tile, so when a
+         * block was pushed off the teleport during this very move the cancellation misses and
+         * Chip's old cell is popped a SECOND time -- consuming the teleport he was standing
+         * on. Reproduce that, and only that: the guard needs the destination to have been
+         * something other than a bare teleport before the push. */
+        if (prepush_destfloor >= 0 && prepush_destfloor != Teleport
+                && cellat(oldpos)->top.id == Teleport)
+            poptile(oldpos);
+#endif
     }
 
     cr->pos = newpos;
@@ -3270,6 +3309,9 @@ static void endmovement(creature* cr, int dir) {
 /* Move the given creature in the given direction.
  */
 static int advancecreature(creature* cr, int dir) {
+#ifndef NO_FIX_TELEPORT_PREPUSH_FG
+    int prepush_saved = -1;   /* local: nested moves get their own copy */
+#endif
     if (dir == NIL)
         return TRUE;
 
@@ -3284,6 +3326,14 @@ static int advancecreature(creature* cr, int dir) {
     if (cr->id == Chip)
         chipwait() = 0;
 
+#ifndef NO_FIX_TELEPORT_PREPUSH_FG
+    {
+        static int const ac_delta[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
+        int pp = cr->pos + ac_delta[dir];
+        prepush_saved = (pp >= 0 && pp < CXGRID * CYGRID) ? cellat(pp)->top.id : -1;
+    }
+#endif
+
     if (!startmovement(cr, dir)) {
         if (cr->id == Chip) {
             addsoundeffect(SND_CANT_MOVE);
@@ -3293,6 +3343,11 @@ static int advancecreature(creature* cr, int dir) {
         return FALSE;
     }
 
+#ifndef NO_FIX_TELEPORT_PREPUSH_FG
+    /* Published only now: a pushed block ran its own nested advancecreature inside
+     * startmovement() above, and would have clobbered a value set any earlier. */
+    prepush_destfloor = prepush_saved;
+#endif
     endmovement(cr, dir);
 #ifdef FIX_BLUE_BUTTON_TIMING
     /* MOD (Jeremy): now that the move is complete -- position committed and the
