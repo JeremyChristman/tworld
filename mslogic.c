@@ -1279,6 +1279,69 @@ static void startfloormovement(creature* cr, int floor, int fdir) {
     }
 }
 
+#ifdef PROBE_SFM
+/* HARNESS #10: who grants a slip slot, and when.
+ *
+ * §73 established the root of JacquesS2 #7: Tile World has the block at 18,6 SLIDING east
+ * across the teleport row while SuperCC never puts it on any slip list at all (0 SLIPT
+ * records for the whole level, against 1,352 on a level that does slide things). Everything
+ * downstream -- the stale newTileFG, the teleport double-pop, five failed guards -- follows
+ * from that. This finds the moment the block acquires the slot.
+ *
+ * startfloormovement() is the only place a slot is granted (prependtosliplist at 1241 for
+ * Chip, appendtosliplist at 1278 for everything else). C has no stack trace, so the CALLER
+ * comes from __LINE__ through a macro defined below the real function -- every later call
+ * site is rewritten, the definition above is not. Same technique as harness #9.
+ *
+ * Emits, for blocks only (the case in question), before and after the call:
+ *     SFM <level> <ct> <x>,<y> id=<id> floor=<f> fdir=<d> caller=<line>
+ *         state <before>-><after> slot <before>-><after> slipdir=<d>
+ *
+ * TW_PROBE_SFM=<level>
+ */
+static int probesfm(void) {
+    static int lvl = -2;
+    if (lvl == -2) {
+        char const* e = getenv("TW_PROBE_SFM");
+        lvl = (e && *e) ? atoi(e) : -1;
+    }
+    return lvl;
+}
+
+static int probesfm_slot(creature const* cr, int* dirout) {
+    int n;
+    for (n = 0 ; n < slipcount ; ++n)
+        if (slips[n].cr == cr) {
+            if (dirout)
+                *dirout = slips[n].dir;
+            return n;
+        }
+    if (dirout)
+        *dirout = NIL;
+    return -1;
+}
+
+static void probesfm_w(creature* cr, int floor, int fdir, int line) {
+    int s0, s1, d0, d1, st0;
+    if (probesfm() < 0 || probesfm() != (int)state->game->number || cr->id != Block) {
+        startfloormovement(cr, floor, fdir);
+        return;
+    }
+    st0 = cr->state;
+    s0 = probesfm_slot(cr, &d0);
+    startfloormovement(cr, floor, fdir);
+    s1 = probesfm_slot(cr, &d1);
+    fprintf(stderr, "SFM\t%d\t%d\t%d,%d\tid=%02X\tfloor=%02X\tfdir=%d\tcaller=%d"
+                    "\tstate %02X->%02X\tslot %d->%d\tslipdir=%d\n",
+            (int)state->game->number, (int)currenttime(),
+            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id,
+            floor, fdir, line, st0, cr->state, s0, s1, d1);
+}
+
+/* Every call site AFTER this point routes through the wrapper. */
+#define startfloormovement(c, f, d) probesfm_w((c), (f), (d), __LINE__)
+#endif
+
 /* Remove the given creature from the slip list.
  */
 static void endfloormovement(creature* cr) {
@@ -2992,6 +3055,16 @@ static void endmovement(creature* cr, int dir) {
     cell = cellat(newpos);
     tile = &cell->top;
     floor = tile->id;
+#ifdef PROBE_SFM
+    /* The destination's top tile as read at ENTRY, before the switch below can push a block
+     * off it. §72 printed `floor` AFTER that switch and read Teleport, which contradicted the
+     * block being on 18,6; this shows the pre-switch value so the two can be compared. */
+    if (probesfm() >= 0 && probesfm() == (int)state->game->number && cr->id == Chip)
+        fprintf(stderr, "SMENTRY\t%d\t%d\t%d,%d->%d,%d\tfloor_at_entry=%02X\tnewbot=%02X\n",
+                (int)state->game->number, (int)currenttime(),
+                oldpos % CXGRID, oldpos / CXGRID, newpos % CXGRID, newpos / CXGRID,
+                floor, cell->bot.id);
+#endif
     crid = creatureid(cellat(oldpos)->top.id); /* Non-existence patch */
     if (cr->id == Chip) {
         switch (floor) {
