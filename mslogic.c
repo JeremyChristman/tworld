@@ -2773,6 +2773,36 @@ static int startmovement(creature* cr, int dir) {
         if (cr->id == Chip || (floor != Beartrap && floor != CloneMachine && !(cr->state & CS_SLIP))) {
             if (cr->id != Chip || odir != NIL)
                 cr->dir = dir; /* b2 fix */
+#ifndef NO_FIX_BLOCKED_MOVE_REDRAW
+            /* MOD (Jeremy): a BLOCKED creature must not repaint its own map tile.
+             *
+             * SuperCC does this for TEETH only -- MSCreatureList.tickFreeMonster:
+             *
+             *     boolean success = monster.tick(directionPriorities, false);
+             *     if (!success && monster.getCreatureType() == TEETH && !monster.isSliding()){
+             *         monster.setDirection(directionPriorities[0]);
+             *         direction = directionPriorities[0];
+             *         level.getLayerFG().set(monster.getPosition(), monster.toTile());
+             *     }
+             *
+             * Tile World repainted for every creature, and that is what keeps its map
+             * truthful where SuperCC's goes stale. Measured on TLFC3 #18 (harness #6,
+             * §60): a toggle door at 9,17 opens with fifteen gliders stacked in the pocket
+             * at 9,18. One gets through; the other fourteen are blocked by the first one's
+             * own tile. SuperCC pops 9,18 to Floor and never redraws, so fourteen gliders
+             * carry on as ghosts its map cannot see -- and a later mover is allowed into
+             * what looks like empty floor. Tile World's fourteen blocked gliders each
+             * repaint the tile, the cell stays occupied, and the two engines part company
+             * at tick 78, long before the blob divergence at tick 236 that first drew
+             * attention to this level.
+             *
+             * SuperCC is the oracle, so Tile World has to reproduce the lossy behavior.
+             * The FACING update above stays -- only the map write is withheld, which is
+             * also what SuperCC does: MSCreature.tryMove writes the tile before setSliding,
+             * never after a refusal.
+             */
+            if (cr->id == Chip || cr->id == Teeth)
+#endif
             updatecreature(cr);
         }
         return FALSE;
