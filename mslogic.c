@@ -847,6 +847,8 @@ static maptile* getfloorat(int pos) {
 /* Return TRUE if the brown button at the give location is currently
  * held down.
  */
+
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -1473,6 +1475,31 @@ static struct {
 /* Move a block at the given position forward in the given direction.
  * FALSE is returned if the block cannot be pushed.
  */
+/* TRUE when the creature is forbidden to LEAVE its own cell in this direction.
+ *
+ * Mirrors SuperCC's MSCreature.canLeave, which covers exactly the thin walls and TRAP:
+ *
+ *     case THIN_WALL_UP        -> direction != UP;
+ *     ... (the four thin walls, plus DOWN_RIGHT)
+ *     case TRAP                -> level.isTrapOpen(position);
+ *     default                  -> true;
+ *
+ * Kept as a separate predicate rather than read back out of canmakemove(), because
+ * advancecreature() can call canmakemove() several times per move and any flag it left
+ * behind would be whichever attempt happened to run last.
+ */
+static int cantleavecell(creature const* cr, int dir) {
+    switch (cellat(cr->pos)->bot.id) {
+        case Wall_North:     return dir == NORTH;
+        case Wall_West:      return dir == WEST;
+        case Wall_South:     return dir == SOUTH;
+        case Wall_East:      return dir == EAST;
+        case Wall_Southeast: return !!(dir & (SOUTH | EAST));
+        case Beartrap:       return !(cr->state & CS_RELEASED);
+    }
+    return FALSE;
+}
+
 static int pushblock(int pos, int dir, int flags) {
     creature* cr;
     int slipdir, r;
@@ -1503,12 +1530,128 @@ static int pushblock(int pos, int dir, int flags) {
     if (!(flags & CMM_NODEFERBUTTONS))
         cr->state &= ~CS_DEFERPUSH;
     if (!r) {
+#ifndef NO_FIX_PUSH_CANTLEAVE
+        /* MOD (Jeremy): a push that fails because the block cannot LEAVE its own cell must
+         * not strip the block's slip state.
+         *
+         * SuperCC's push runs the block through MSCreature.tryMove:
+         *
+         *     setDirection(direction);
+         *     if (!canLeave(direction, position))
+         *         return false;              <-- returns HERE
+         *     boolean wasSliding = sliding;
+         *     ...                            <-- tryEnter, the only thing that clears sliding
+         *
+         * The leave refusal returns before `sliding` is ever touched, so the block stays on
+         * the slip list. Only an ENTRY refusal can clear it. Tile World cleared CS_SLIP and
+         * called removefromsliplist() for ANY failed push.
+         *
+         * Measured on TomR1 #100 "Three Pretenders" (§61). A block sits in the beartrap at
+         * 11,7 from level load, on the slip list, attempting its own facing each tick. Chip
+         * arrives at 11,8 and shoves north at ct=2356; the shove fails because the trap is
+         * shut, and Tile World dropped the block off the slip list right there. Two ticks
+         * later a pink ball covers the button at 18,4 and the trap opens -- with no slip slot
+         * left to act on, so the block only moved when Chip shoved it again. SuperCC kept the
+         * slot and the block left in the SAME slip pass as the press:
+         *
+         *     ORD 100 1179 1 3-slip-others b 17,4 RIGHT   <- ball covers the button
+         *     ORD 100 1179 2 3-slip-others # 11,7 UP      <- block leaves, same pass
+         *
+         * ⚠ Scope matters here. The first attempt at this put the same rule in
+         * canmakemove()'s leave check, where it applied to every mover and every leave
+         * refusal: 0 fixed / 34 broken, and it did not even fix this level -- the block was
+         * still absent from the press-tick slip pass, because the push path, not the slip
+         * path, is what removes it.
+         */
+        /* ⚠ EXCEPT on a TELEPORT push, which is the ONE place SuperCC does drop a trapped
+         * block off the slip list -- MSCreature.teleport:
+         *
+         *     if (block.tryMove(direction, false, pressedButtons) && canEnter(direction, exitTile))
+         *         break;
+         *     else if (block.isSliding()
+         *              && level.getLayerBG().get(exitPosition) == TRAP
+         *              && !level.isTrapOpen(exitPosition))
+         *         block.setSliding(true, false);
+         *
+         * That hardcoded (true, false) forces setSliding's block-on-trap branch, which removes
+         * the block and re-adds it only if it canLeave -- and on a shut trap it cannot, so it
+         * stays off. An ORDINARY push never reaches that code: MSCreature.tryMove returns on
+         * canLeave before touching `sliding` at all.
+         *
+         * This is what §62 got wrong. Measured with shadow_trapslide.ps1, which logs the
+         * CALLER of every setSliding on a block standing on a trap:
+         *
+         *   MikeL2 #137  19,11  from=teleport:294  was=true is=false  -> branch=TAKEN
+         *   TomR1  #100  11,7   from=tick:867      was=true is=true   -> branch=skipped  (x11)
+         *
+         * Both traps are shut throughout, so the trap state is NOT the discriminator (that was
+         * §64's prediction and it was wrong). The discriminator is WHICH CODE PATH ran.
+         */
+        if (cantleavecell(cr, dir) && !(flags & CMM_TELEPORTPUSH)) {
+            int sn;
+            /* ...and it FACES the way it was shoved. SuperCC's push calls the block's
+             * tryMove directly:
+             *
+             *     setDirection(direction);
+             *     if (!canLeave(direction, position)) return false;
+             *
+             * so the new facing sticks. The restoring `setDirection(oldCreature.direction)`
+             * lives in tick(), which a pushed block never goes through -- a self-initiated
+             * failed move IS restored, a failed push is NOT. Tile World drew no such
+             * distinction, and its blocked-move path excludes this case outright:
+             *
+             *     if (cr->id == Chip || (floor != Beartrap && floor != CloneMachine && ...))
+             *
+             * so a block shoved while sitting on a beartrap kept its old facing.
+             *
+             * The SLIP SLOT has to follow. Tile World keeps the slide direction in
+             * slips[n].dir, a field SuperCC has no counterpart for -- its
+             * getSlideDirectionPriority() falls through to the creature's OWN direction for a
+             * TRAP tile, so re-facing the block re-aims the slide. Setting cr->dir alone left
+             * the slot pointing EAST, and the block then left the trap on the right tick in
+             * the wrong direction (measured, harness #7).
+             *
+             * TomR1 #100 at 11,7: the block slides EAST into the trap at ct=2342 and both
+             * engines agree -- facing E, on the slip list -- until Chip's failed shove at
+             * ct=2356, where SuperCC turns it UP and Tile World left it E. Two ticks later
+             * the trap opens and SuperCC's block slides UP out; Tile World's had neither the
+             * slot nor the facing.
+             */
+            cr->dir = dir;
+            /* ⚠ BEARTRAP ONLY, for both the slot re-aim and the kept slip state.
+             *
+             * Re-aim: SuperCC's getSlideDirectionPriority derives the slide direction from
+             * the TILE the creature stands on -- ice and force floors compute it from the
+             * floor, and only the trap (the `default` arm) falls through to the creature's
+             * own direction. So re-facing re-aims the slide on a trap and nowhere else.
+             *
+             * Kept slip state: SuperCC keeps it for EVERY canLeave refusal, thin walls
+             * included, but Tile World's slip list is not just a set -- its iteration order
+             * IS the slide delay, so an entry that Tile World would have removed shifts every
+             * later index. Keeping thin-wall cases too cost "12 Room Level" (MikeL2 #137 =
+             * MikeL3 #62, one level in two packs): a fireball on the ice at 13,14/14,14 ran
+             * a tick behind from ct=544, nowhere near the push that caused it. Restricting
+             * to the beartrap keeps the one case TomR1 #100 needs.
+             */
+            if (cellat(cr->pos)->bot.id == Beartrap) {
+                for (sn = 0 ; sn < slipcount ; ++sn)
+                    if (slips[sn].cr == cr) {
+                        slips[sn].dir = dir;
+                        break;
+                    }
+                goto pushfailed;
+            }
+        }
+#endif
         cr->state &= ~(CS_SLIP | CS_SLIDE);
         if (slipping) { /* new MSCC-like accounting */
             msccslippers--;
             removefromsliplist(cr);
         }
     }
+#ifndef NO_FIX_PUSH_CANTLEAVE
+pushfailed:
+#endif
     return r;
 }
 
@@ -1690,7 +1833,11 @@ static int canmakemove(creature const* cr, int dir, int flags) {
         floor = cellat(to)->top.id;
         if (iscreature(floor)) {
             id = creatureid(floor);
-#ifdef FIX_KEEPSLOT_BLOCK_OCCUPANT
+/* BUILD FIX: this block writes cmm_keepslot, which is DECLARED under FIX_KEEPSLOT_OCCUPANT,
+ * so it has to require that flag too. Without this, -DNO_FIX_KEEPSLOT_OCCUPANT failed to
+ * compile ("'cmm_keepslot' undeclared") and the documented escape hatch did not actually
+ * exist. Pre-existing since jc-19, found while probing TomR1 #100. Default builds unaffected. */
+#if defined(FIX_KEEPSLOT_BLOCK_OCCUPANT) && defined(FIX_KEEPSLOT_OCCUPANT)
             /* MOD (Jeremy): jc-17's keep-the-slip-slot rule, for a BLOCK mover.
              *
              * FIX_KEEPSLOT_OCCUPANT set cmm_keepslot only in the creature branch
