@@ -849,7 +849,7 @@ static maptile* getfloorat(int pos) {
  */
 #ifdef PROBE_ORDER
 /* Harness #3: per-move record matching SuperCC ORD lines exactly. */
-static int probeorder_pos = -1, probeorder_id = 0, probeorder_dir = 0;
+static int probeorder_depth = 0;   /* nested advancecreature() = a pushed block */
 static int probeorder(void) {
     static int on = -1;
     if (on < 0) { char const* e = getenv("TW_PROBE_ORDER"); on = (e && *e) ? 1 : 0; }
@@ -3138,9 +3138,21 @@ static int advancecreature(creature* cr, int dir) {
      * and only the successful direction is logged. Comparing attempt-vs-success made a
      * stack of 22 blobs look like 22 moves against SuperCC's 1 and faked an enormous
      * "ordering difference" that does not exist. Emitted at the successful return. */
-    probeorder_pos = cr->pos;
-    probeorder_id  = cr->id;
-    probeorder_dir = dir;
+    /* ⚠ LOCALS, NOT STATICS. advancecreature() is RE-ENTRANT -- pushblock() calls it
+     * for the pushed block -- so file-scope state is clobbered by the nested frame and
+     * the outer frame then reports the INNER creature's position. That produced
+     * duplicate records (the same cell logged twice in one tick) which read exactly
+     * like a creature moving twice, i.e. a phantom "double move". */
+    int const po_pos = cr->pos;
+    int const po_id  = cr->id;
+    int const po_dir = dir;
+    /* Only TOP-LEVEL moves are comparable. A nested advancecreature() is a block being
+     * PUSHED (pushblock -> advancecreature), and SuperCC has no matching record: its
+     * probe sits in MSCreature.tick(), while a pushed block goes through
+     * block.tryMove(). Logging the nested frame adds a phantom extra move one cell
+     * ahead in the direction of travel -- which reads exactly like Tile World moving a
+     * creature SuperCC does not. */
+    int const po_top = (probeorder_depth++ == 0);
 #endif
 
     if (cr->id == Chip)
@@ -3152,6 +3164,11 @@ static int advancecreature(creature* cr, int dir) {
             resetbuttons();
             cancelgoal();
         }
+#ifdef PROBE_ORDER
+        probeorder_depth--;     /* must unwind on EVERY return, or the counter leaks
+                                 * and every record after the first failed move is
+                                 * silently suppressed */
+#endif
         return FALSE;
     }
 
@@ -3174,13 +3191,14 @@ static int advancecreature(creature* cr, int dir) {
     /* NB: gate on tracethistick() as well, so TW_TRACE_LEVEL narrows the harvest.
      * Without it a 1000-level set like Jacques emits for EVERY level and the run
      * cannot finish -- that is how the Jacques#922 capture timed out. */
-    if (probeorder() && tracethistick() && probeorder_pos >= 0) {
+    probeorder_depth--;
+    if (probeorder() && tracethistick() && po_top && po_pos >= 0) {
         static char const* dname[9] = {"?","UP","LEFT","?","DOWN","?","?","?","RIGHT"};
         fprintf(stderr, "ORD\t%d\t%d\t%d\t%s\t%c\t%d,%d\t%s\n",
                 (int)state->game->number, (int)currenttime() / 2, schedseq++,
-                schedphase, probeorder_letter(creatureid(probeorder_id)),
-                probeorder_pos % CXGRID, probeorder_pos / CXGRID,
-                dname[probeorder_dir & 15]);
+                schedphase, probeorder_letter(creatureid(po_id)),
+                po_pos % CXGRID, po_pos / CXGRID,
+                dname[po_dir & 15]);
     }
 #endif
     return TRUE;
