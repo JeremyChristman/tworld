@@ -849,6 +849,7 @@ static maptile* getfloorat(int pos) {
  */
 
 
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -3216,6 +3217,39 @@ static void endmovement(creature* cr, int dir) {
     } else if (cellat(newpos)->bot.id == Beartrap) {
         for (i = 0; i < traplistsize(); ++i) {
             if (traplist()[i].to == newpos) {
+#ifndef NO_FIX_TRAP_ENTRY_RELEASED
+                /* MOD (Jeremy): a creature ENTERING a beartrap is only "released" if that
+                 * trap is actually OPEN.
+                 *
+                 * Tile World set CS_RELEASED here unconditionally -- merely appearing in the
+                 * trap list was enough -- while the sibling branch immediately above, for a
+                 * creature LEAVING a trap, has always consulted istrapopen(). So entry handed
+                 * out a free pass that exit had to earn.
+                 *
+                 * SuperCC has no per-creature latch at all. MSCreature.canLeave asks the trap
+                 * every time:
+                 *
+                 *     case TRAP -> level.isTrapOpen(position);
+                 *
+                 * Measured on PB_Gourami_Levelsets #254 "Guinea Pig" (§68), harness #7 on the
+                 * trap at 2,3:
+                 *
+                 *     ct=24   4C state=01 RELEASED     <- released, legitimately
+                 *     ct=32   (gone)                   <- leaves; advancecreature clears it
+                 *     ct=36   4C state=01 RELEASED     <- RE-ENTERS, flag handed back free
+                 *     ct=40   (gone)                   <- and walks straight back out
+                 *
+                 * A pink ball steps off the brown button at 1,3 into the trap at 2,3, shutting
+                 * it behind itself. SuperCC keeps it there until a second ball covers the
+                 * button at t=22; Tile World let it out at t=20, two ticks early, because the
+                 * flag it acquired on entry was never conditioned on the trap being open.
+                 *
+                 * istrapopen() takes the mover's OLD cell as skippos, matching the call in the
+                 * branch above: a creature must not count its own departing weight as holding
+                 * the button down.
+                 */
+                if (istrapopen(newpos, oldpos))
+#endif
                 cr->state |= CS_RELEASED;
                 break;
             }
