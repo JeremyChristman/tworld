@@ -3124,7 +3124,48 @@ static void endmovement(creature* cr, int dir) {
         return;
     }
 
-    if (cr->id == Chip && floor == Teleport && !(tile->state & FS_BROKEN)) {
+    if (cr->id == Chip && floor == Teleport
+#ifdef NO_FIX_TELEPORT_BROKEN_DYNAMIC
+            && !(tile->state & FS_BROKEN)
+#endif
+       ) {
+        /* MOD (Jeremy): a teleport whose tile is on TOP right now works, whatever covered it
+         * when the level loaded.
+         *
+         * Tile World flags a covered teleport FS_BROKEN once at load and honors that forever:
+         *
+         *     if (isfloor(top) || creatureid(top) == Chip || creatureid(top) == Block)
+         *         if (bot == Teleport || ...) bot.state |= FS_BROKEN;
+         *
+         * SuperCC has no such flag. It dispatches on the CURRENT foreground, so a teleport
+         * under floor never fires (the switch sees FLOOR) while a teleport that becomes
+         * exposed does -- MSCreature.tryEnter's BLOCK case pushes the block and then
+         * RE-DISPATCHES on the newly revealed tile:
+         *
+         *     if (block.tryMove(direction, false, pressedButtons)){
+         *         ...
+         *         return tryEnter(direction, newPosition,
+         *                         msLevel.getLayerFG().get(newPosition), ...);
+         *
+         * `floor == Teleport` already tests exactly what SuperCC dispatches on -- the
+         * destination's top tile AT THIS MOMENT -- so the extra FS_BROKEN test is what makes
+         * Tile World diverge. Where the teleport is genuinely buried, floor is the covering
+         * tile and this branch is skipped anyway; the flag only bites once something has been
+         * cleared off it.
+         *
+         * Measured on JacquesS2 #7 "Slippertele" (§77, §78):
+         *
+         *     TELCOND 7 92 17,6->18,6 floor=18 state=04 broken=1 -> skipped
+         *
+         * floor IS Teleport and FS_BROKEN is the sole refusal. SuperCC teleports there --
+         * shadow_teleentry.ps1 counts 19 of the level's 39 teleports arriving at depth 2, i.e.
+         * only after a push exposed the tile.
+         *
+         * ⚠ A load-time exclusion for block-covered teleports was tried first and is the WRONG
+         * lever: 18,6 was covered by FLOOR at load and the block arrived during play, so the
+         * exclusion missed it entirely while unbreaking teleports elsewhere (Voting-CCLP5
+         * 0 -> 1). The test has to be dynamic.
+         */
         i = newpos;
         newpos = teleportcreature(cr, newpos);
         if (TRUE || newpos != i) { /* Convergence Patch */
