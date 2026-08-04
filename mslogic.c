@@ -1026,6 +1026,7 @@ static int istrapopen(int pos, int skippos) {
     return FALSE;
 }
 
+
 /* Flip-flop the state of any toggle walls.
  */
 static void togglewalls(void) {
@@ -1055,6 +1056,92 @@ static void togglewalls(void) {
 #define CS_SLIDE     0x20 /* is on the slip list but can move */
 #define CS_DEFERPUSH 0x40 /* button pushes will be delayed */
 #define CS_MUTANT    0x80 /* block is mutant, looks like Chip */
+
+#ifdef PROBE_DIAG
+/* ── TRAP TIMELINE ────────────────────────────────────────────────────────────────────────
+ *
+ * PB_Gourami #254's whole question is WHY Tile World believes a trap is passable at t=20 when
+ * SuperCC does not. Four wholesale ports of SuperCC's model have failed (+9, +25, 1285, 2050
+ * regressions -- §47, §51), so the target now is a NARROW predicate, and that needs the exact
+ * grant/clear/query timeline rather than another model.
+ *
+ * Everything CS_RELEASED-related, in ONE binary, interleaved:
+ *
+ *   TRAPQ  <lvl> <ct> open? trap=<x>,<y> skip=<x>,<y> -> <0|1> @<line> [<bx>,<by>:<0|1> ...]
+ *   TRAPG  <lvl> <ct> grant@<line> <x>,<y>/<id>
+ *   TRAPC  <lvl> <ct> clear        <x>,<y>/<id>
+ *   TRAPL  <lvl> <ct> leave? <x>,<y>/<id> rel=<0|1> -> <STUCK|MAY-LEAVE>
+ *   TRAPB  <lvl> <ct> buttons trap=<x>,<y> [<bx>,<by>:<0|1> ...]   (once per tick, per trap)
+ *
+ * ⚠ The call site is the point, not the value. §65/§66/§70/§78 all turned on WHICH site fired,
+ *   and values alone could not separate them -- hence __LINE__ through macros, the same
+ *   technique as harnesses #9 and #10.
+ *
+ * TW_DIAG_TRAP=1   (scoped to TW_DIAG_LEVEL like every other probe)
+ */
+static void diag_trapbuttons(char const* tag, int trappos, int ct) {
+    xyconn* traps;
+    int i;
+    if (!diagon() || !diagflag("TW_DIAG_TRAP"))
+        return;
+    fprintf(stderr, "%s\t%d\t%d\ttrap=%d,%d\t", tag, (int)state->game->number, ct,
+            trappos % CXGRID, trappos / CXGRID);
+    traps = traplist();
+    for (i = traplistsize(); i; ++traps, --i)
+        if (traps->to == trappos)
+            fprintf(stderr, "%d,%d:%d ", traps->from % CXGRID, traps->from / CXGRID,
+                    istrapbuttondown(traps->from) ? 1 : 0);
+    fprintf(stderr, "\n");
+}
+
+static int diag_istrapopen(int pos, int skippos, int line) {
+    int r = istrapopen(pos, skippos);
+    if (diagon() && diagflag("TW_DIAG_TRAP")) {
+        xyconn* traps = traplist();
+        int i;
+        fprintf(stderr, "TRAPQ\t%d\t%d\topen?\ttrap=%d,%d\tskip=%d,%d\t-> %d\t@%d\t",
+                (int)state->game->number, (int)currenttime(),
+                pos % CXGRID, pos / CXGRID,
+                skippos >= 0 ? skippos % CXGRID : -1, skippos >= 0 ? skippos / CXGRID : -1,
+                r, line);
+        for (i = traplistsize(); i; ++traps, --i)
+            if (traps->to == pos)
+                fprintf(stderr, "%d,%d:%d%s ", traps->from % CXGRID, traps->from / CXGRID,
+                        istrapbuttondown(traps->from) ? 1 : 0,
+                        traps->from == skippos ? "(SKIPPED)" : "");
+        fprintf(stderr, "\n");
+    }
+    return r;
+}
+
+static void diag_trapgrant(creature const* cr, int line) {
+    if (!diagon() || !diagflag("TW_DIAG_TRAP"))
+        return;
+    fprintf(stderr, "TRAPG\t%d\t%d\tgrant@%d\t%d,%d/%02X\n",
+            (int)state->game->number, (int)currenttime(), line,
+            cr->pos % CXGRID, cr->pos / CXGRID, cr->id);
+}
+
+static void diag_trapclear(creature const* cr) {
+    if (!diagon() || !diagflag("TW_DIAG_TRAP") || !(cr->state & CS_RELEASED))
+        return;
+    fprintf(stderr, "TRAPC\t%d\t%d\tclear\t%d,%d/%02X\n",
+            (int)state->game->number, (int)currenttime(),
+            cr->pos % CXGRID, cr->pos / CXGRID, cr->id);
+}
+
+static int diag_trapleave(creature const* cr, int stuck) {
+    if (diagon() && diagflag("TW_DIAG_TRAP"))
+        fprintf(stderr, "TRAPL\t%d\t%d\tleave?\t%d,%d/%02X\trel=%d\t-> %s\n",
+                (int)state->game->number, (int)currenttime(),
+                cr->pos % CXGRID, cr->pos / CXGRID, cr->id,
+                (cr->state & CS_RELEASED) ? 1 : 0, stuck ? "STUCK" : "MAY-LEAVE");
+    return stuck;
+}
+
+/* Every call site AFTER this point routes through the wrappers. */
+#define istrapopen(p, s)  diag_istrapopen((p), (s), __LINE__)
+#endif
 
 /* Return the creature located at pos. Ignores Chip unless includechip
  * is TRUE. Return NULL if no such creature is present.
@@ -1629,7 +1716,12 @@ static int cantleavecell(creature const* cr, int dir) {
         case Wall_South:     return dir == SOUTH;
         case Wall_East:      return dir == EAST;
         case Wall_Southeast: return !!(dir & (SOUTH | EAST));
-        case Beartrap:       return !(cr->state & CS_RELEASED);
+        case Beartrap:
+#ifdef PROBE_DIAG
+            return diag_trapleave(cr, !(cr->state & CS_RELEASED));
+#else
+            return !(cr->state & CS_RELEASED);
+#endif
     }
     return FALSE;
 }
@@ -1831,8 +1923,13 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 if (dir & (SOUTH | EAST)) return FALSE;
                 break;
             case Beartrap:
+#ifdef PROBE_DIAG
+                if (diag_trapleave(cr, !(cr->state & CS_RELEASED)))
+                    return FALSE;
+#else
                 if (!(cr->state & CS_RELEASED))
                     return FALSE;
+#endif
                 break;
         }
     }
@@ -3012,12 +3109,20 @@ static void springtrap(int buttonpos) {
     id = cellat(pos)->top.id;
     if (id == Block_Static || (cellat(pos)->bot.state & FS_HASMUTANT)) {
         cr = lookupblock(pos);
-        if (cr)
+        if (cr) {
             cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+            diag_trapgrant(cr, __LINE__);
+#endif
+        }
     } else if (iscreature(id)) {
         cr = lookupcreature(pos, TRUE);
-        if (cr)
+        if (cr) {
             cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+            diag_trapgrant(cr, __LINE__);
+#endif
+        }
     }
 }
 
@@ -3129,6 +3234,9 @@ static int startmovement(creature* cr, int dir) {
         if (cr->state & CS_MUTANT)
             cellat(cr->pos)->bot.state &= ~FS_HASMUTANT;
     }
+#ifdef PROBE_DIAG
+    diag_trapclear(cr);
+#endif
     cr->state &= ~CS_RELEASED;
 
     cr->dir = dir;
@@ -3494,12 +3602,20 @@ static void endmovement(creature* cr, int dir) {
         cellat(oldpos)->bot.state &= ~FS_CLONING;
 
     if (floor == Beartrap) {
-        if (istrapopen(newpos, oldpos))
+        if (istrapopen(newpos, oldpos)) {
             cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+            diag_trapgrant(cr, __LINE__);
+#endif
+        }
     } else if (cellat(newpos)->bot.id == Beartrap) {
         for (i = 0; i < traplistsize(); ++i) {
             if (traplist()[i].to == newpos) {
                 cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+                diag_trapgrant(cr, __LINE__);
+                diag_trapbuttons("TRAPB", newpos, (int)currenttime());
+#endif
                 break;
             }
         }
