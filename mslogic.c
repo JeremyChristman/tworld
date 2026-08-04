@@ -740,6 +740,76 @@ static void removefromsliplist(creature* cr) {
         slips[n] = slips[n + 1];
 }
 
+#ifdef PROBE_DIAG
+/* The shared PROBE_DIAG helpers are defined further down (next to the other probes); the slip
+ * list lives near the top of the file, so forward-declare them here. */
+static int diagon(void);
+static int diagflag(char const* name);
+static char diag_dirchar(int d);
+
+/* ── slip-list MUTATION stream ─────────────────────────────────────────────────────────────
+ *
+ * §84 proved the two engines' slip CURSORS are equivalent (porting SuperCC's wholesale was
+ * 0 fixed / 0 broken across 21,830 levels) and that the lists are identical entering the pass
+ * where Jacques #922 diverges. What still differs is what MUTATES the list during the pass:
+ * SuperCC's size drops 10 -> 9 after it ticks the blob, Tile World's stays 10.
+ *
+ * So log every add and every remove, WITH THE CALL SITE. C has no stack trace, so the site
+ * comes from __LINE__ through macros defined below the real functions -- every later call site
+ * is rewritten, these definitions are not. Same technique as harnesses #9 and #10.
+ *
+ *     SLIPMUT <level> <ct> <op>@<line> <x>,<y>/<id>/<dir> size <before>-><after> idx=<n>
+ *
+ * TW_DIAG_MUT=1
+ */
+static int diag_slipindex(creature const* cr) {
+    int n;
+    for (n = 0 ; n < slipcount ; ++n)
+        if (slips[n].cr == cr)
+            return n;
+    return -1;
+}
+
+static void diag_slipmut(char const* op, int line, creature const* cr, int dir, int before) {
+    if (!diagon() || !diagflag("TW_DIAG_MUT"))
+        return;
+    fprintf(stderr, "SLIPMUT\t%d\t%d\t%s@%d\t%d,%d/%02X/%c\tsize %d->%d\tidx=%d\n",
+            (int)state->game->number, (int)currenttime(), op, line,
+            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id, diag_dirchar(dir),
+            before, (int)slipcount, diag_slipindex(cr));
+}
+
+static creature* diag_append(creature* cr, int dir, int line) {
+    int before = slipcount;
+    creature* r = appendtosliplist(cr, dir);
+    diag_slipmut("append", line, cr, dir, before);
+    return r;
+}
+
+static creature* diag_prepend(creature* cr, int dir, int line) {
+    int before = slipcount;
+    creature* r = prependtosliplist(cr, dir);
+    diag_slipmut("prepend", line, cr, dir, before);
+    return r;
+}
+
+static void diag_remove(creature* cr, int line) {
+    int before = slipcount;
+    int idx = diag_slipindex(cr);
+    removefromsliplist(cr);
+    if (diagon() && diagflag("TW_DIAG_MUT"))
+        fprintf(stderr, "SLIPMUT\t%d\t%d\tremove@%d\t%d,%d/%02X/-\tsize %d->%d\twas_idx=%d\n",
+                (int)state->game->number, (int)currenttime(), line,
+                (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id,
+                before, (int)slipcount, idx);
+}
+
+/* Every call site AFTER this point routes through the wrappers. */
+#define appendtosliplist(c, d)  diag_append((c), (d), __LINE__)
+#define prependtosliplist(c, d) diag_prepend((c), (d), __LINE__)
+#define removefromsliplist(c)   diag_remove((c), __LINE__)
+#endif
+
 /*
  * Simple floor functions.
  */
@@ -3729,6 +3799,25 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
 #ifdef FIX_KEEPSLOT_OCCUPANT
             /* The slide attempt's decision; the ice retry ANDs into it below. */
             int keepslot = cmm_keepslot;
+#ifdef PROBE_DIAG
+            /* The keep-or-drop decision, diag-gated so it can run on a whole set in seconds
+             * (the TRACE_DESYNC version below is far too slow for a 1,000-level pack).
+             * `keepslot == 0` means Tile World will endfloormovement() + re-append, which
+             * REORDERS the list -- and on Jacques #922 that reorder is what shifts the blob
+             * out from under the cursor (§85). */
+            if (diagon() && diagflag("TW_DIAG_KEEP")) {
+                static int const kd[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
+                int dp = cr->pos + kd[slipdir];
+                fprintf(stderr, "KEEP\t%d\t%d\t%d,%d/%02X/%c\tdestTop=%02X\tdestBot=%02X"
+                                "\tlaw=%d\t-> %s\n",
+                        (int)state->game->number, (int)currenttime(),
+                        (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id,
+                        diag_dirchar(slipdir),
+                        cellat(dp)->top.id, cellat(dp)->bot.id,
+                        !!(movelaws[cellat(dp)->bot.id].creature & slipdir),
+                        keepslot ? "KEEP" : "DROP");
+            }
+#endif
 #ifdef TRACE_DESYNC
             /* PROBE: the same KEEP-or-DROP line the SuperCC shadow emits, so the two
              * decision streams can be diffed directly.  Position is the creature's
