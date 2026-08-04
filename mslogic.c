@@ -3622,7 +3622,44 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         if (!ac) {
 #ifdef FIX_KEEPSLOT_OCCUPANT
             /* The slide attempt's decision; the ice retry ANDs into it below. */
+#ifndef NO_FIX_KEEPSLOT_ALWAYS
+            /* MOD (Jeremy): a FAILED slide never costs the creature its slip slot.
+             *
+             * SuperCC's failure path in MSCreature.tick is
+             *
+             *     setSliding(this.sliding, oldCreature.sliding);
+             *
+             * i.e. (NEW, OLD) -- the inverted argument order of §65. tryEnter has already run
+             * `sliding = false`, so the call is (false, true) and setSliding's removing branch,
+             *
+             *     if (wasSliding && !isSliding) { ... slipList.remove(this); ... }
+             *
+             * CANNOT fire. On that path SuperCC never removes a slider from the list.
+             *
+             * Tile World instead removes and re-appends unless cmm_keepslot was set, and the
+             * predicate only sets it when the TERRAIN underneath would also have refused:
+             *
+             *     if (!(movelaws[cellat(to)->bot.id].creature & dir) && bot != CloneMachine)
+             *         cmm_keepslot = TRUE;
+             *
+             * so a slider blocked by a CREATURE over permissive terrain still drops. Measured
+             * on Jacques #922 at ct=834 (§85):
+             *
+             *     KEEP 922 834 22,12/58/S destTop=55 destBot=0F law=1 -> DROP
+             *
+             * destTop is a fireball; the terrain permits. The drop re-appends that walker at
+             * the end, which shifts the blob at 24,6 from index 4 down to index 3 -- the slot
+             * the cursor has just left -- so the blob is never ticked and loses its move. The
+             * slip-list mutation streams show SuperCC making NO mutation for that walker.
+             *
+             * Keeping the slot unconditionally is what SuperCC actually does. jc-17 narrowed
+             * this deliberately after broad versions scored 996 and 60 regressions, but those
+             * predates jc-12..jc-24; re-measure rather than assume. */
+            int keepslot = TRUE;
+            (void)cmm_keepslot;
+#else
             int keepslot = cmm_keepslot;
+#endif
 #ifdef TRACE_DESYNC
             /* PROBE: the same KEEP-or-DROP line the SuperCC shadow emits, so the two
              * decision streams can be diffed directly.  Position is the creature's
