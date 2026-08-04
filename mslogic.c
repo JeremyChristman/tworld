@@ -3360,8 +3360,58 @@ static void endmovement(creature* cr, int dir) {
         cellat(oldpos)->bot.state &= ~FS_CLONING;
 
     if (floor == Beartrap) {
+#ifndef NO_FIX_TRAP_SHUT_BEHIND
+        /* MOD (Jeremy): stepping off a brown button DIRECTLY INTO that button's own trap shuts
+         * the trap behind you.
+         *
+         * SuperCC, MSCreature.tick, immediately after a successful tryMove:
+         *
+         *     if (FG(oldPosition) == BUTTON_BROWN) {
+         *         BrownButton b = getButton(oldPosition, BrownButton.class);
+         *         ...
+         *         if (b != null && b.getTargetPosition().equals(position))
+         *             b.release(msLevel);          // <- setTrap(target, false)
+         *     }
+         *
+         * i.e. the trap's bit is actively CLEARED, unconditionally, whatever any other wired
+         * button is doing. Tile World's `istrapopen(newpos, oldpos)` implements only half of
+         * that: `skippos` declines to count the button you just left, but a DIFFERENT covered
+         * button still opens the trap.
+         *
+         * PB_Gourami #254 "Guinea Pig" is exactly that gap. Two pink balls oscillate around the
+         * trap at 2,3, whose four buttons are 2,2 / 3,3 / 2,4 / 1,3, and each one's presence on
+         * a button keeps releasing the other. Measured with harness #11 (Tile World) against
+         * shadow_trapdiag (SuperCC), aligned TW_ct = 2 * SCC_tick:
+         *
+         *     TW   ct=36  TRAPQ open? trap=2,3 skip=2,2 -> 1   2,2:0(SKIPPED) 3,3:0 2,4:0 1,3:1
+         *          ct=36  TRAPG grant@3608                     <- 1,3 is covered, so RELEASED
+         *          ct=40  TRAPL leave? 2,3/4C rel=1 -> MAY-LEAVE
+         *
+         *     SCC  t=18   setTrap 2,3 open=false from=tick:831 <- release-B: shut behind it
+         *          t=18   finaliseTraps: every button uncovered, trap occupied -> left-alone
+         *          t=20   canLeave 2,3/PINK_BALL open=false -> STUCK
+         *
+         * The ball entered the trap from button 2,2 in both engines. SuperCC shut the trap; Tile
+         * World read button 1,3 and opened it. Two ticks of divergence, and the level fails.
+         *
+         * ⚠ Deliberately NARROW. Four wholesale ports of SuperCC's trap model have been measured
+         * dead (+9, +25, 1285, 2050 regressions -- §47, §51) because they replaced Tile World's
+         * per-creature CS_RELEASED latch with a per-trap level test. This changes nothing about
+         * the latch; it only declines to grant it on one specific entry path, the one SuperCC
+         * answers with an explicit release event.
+         */
+        for (i = 0; i < traplistsize(); ++i) {
+            if (traplist()[i].from == oldpos && traplist()[i].to == newpos) {
+                cr->state &= ~CS_RELEASED;
+                goto trapentrydone;
+            }
+        }
+#endif
         if (istrapopen(newpos, oldpos))
             cr->state |= CS_RELEASED;
+#ifndef NO_FIX_TRAP_SHUT_BEHIND
+trapentrydone: ;
+#endif
     } else if (cellat(newpos)->bot.id == Beartrap) {
         for (i = 0; i < traplistsize(); ++i) {
             if (traplist()[i].to == newpos) {
@@ -4004,6 +4054,47 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+
+#ifndef NO_FIX_TRAP_REFRESH
+    /* MOD (Jeremy), the other half of the PB_Gourami #254 pair: a HELD brown button re-opens
+     * its trap every tick, not only on the tick it was pressed.
+     *
+     * SuperCC, MSLevel.finaliseTraps(), at the end of every tick:
+     *
+     *     if (FG(button) != BUTTON_BROWN && !pressedButtons.contains(button)) {
+     *         traps.set(idx, true);            // <- LEVEL-triggered, every tick
+     *         pressedButtons.add(button);
+     *     }
+     *     else if (FG(target) == TRAP) traps.set(idx, false);
+     *
+     * `pressedButtons` is a fresh local HashSet per sweep, so it only dedupes buttons that
+     * appear twice in one pass -- it does NOT persist across ticks. A creature standing still
+     * on a brown button therefore re-opens its trap on every single tick.
+     *
+     * Tile World's springtrap() is EDGE-triggered: it fires from handlebuttons() when a button
+     * is newly pressed, and never again while it stays covered. The `istrapopen()` live scan
+     * covers the gap at the moment of ENTRY, but nothing refreshes a creature already sitting
+     * in the trap.
+     *
+     * That gap is invisible until FIX_TRAP_SHUT_BEHIND stops handing out the entry grant. With
+     * only the shut-behind half, PB_Gourami #254's balls stay stuck forever (measured -- every
+     * leave-check from ct=32 on reads STUCK), because nothing re-grants what SuperCC re-grants
+     * at the end of every tick:
+     *
+     *     SCC  t=14  finaliseTraps btn=2,2 covered=true -> SET-OPEN
+     *          t=16  canLeave 2,3/PINK_BALL open=true  -> MAY-LEAVE
+     *
+     * ⚠ Purely ADDITIVE: this only ever grants CS_RELEASED, never withholds it, so it cannot
+     * refuse a move the shipped engine allows. That is the opposite of §47/§51's four failed
+     * ports, which all REPLACED the per-creature latch with a per-trap level test.
+     */
+    {
+        int ti;
+        for (ti = 0; ti < traplistsize(); ++ti)
+            if (istrapbuttondown(traplist()[ti].from))
+                springtrap(traplist()[ti].from);
+    }
+#endif
     return;
 }
 
