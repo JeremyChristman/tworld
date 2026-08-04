@@ -740,6 +740,76 @@ static void removefromsliplist(creature* cr) {
         slips[n] = slips[n + 1];
 }
 
+#ifdef PROBE_DIAG
+/* The shared PROBE_DIAG helpers are defined further down (next to the other probes); the slip
+ * list lives near the top of the file, so forward-declare them here. */
+static int diagon(void);
+static int diagflag(char const* name);
+static char diag_dirchar(int d);
+
+/* ── slip-list MUTATION stream ─────────────────────────────────────────────────────────────
+ *
+ * §84 proved the two engines' slip CURSORS are equivalent (porting SuperCC's wholesale was
+ * 0 fixed / 0 broken across 21,830 levels) and that the lists are identical entering the pass
+ * where Jacques #922 diverges. What still differs is what MUTATES the list during the pass:
+ * SuperCC's size drops 10 -> 9 after it ticks the blob, Tile World's stays 10.
+ *
+ * So log every add and every remove, WITH THE CALL SITE. C has no stack trace, so the site
+ * comes from __LINE__ through macros defined below the real functions -- every later call site
+ * is rewritten, these definitions are not. Same technique as harnesses #9 and #10.
+ *
+ *     SLIPMUT <level> <ct> <op>@<line> <x>,<y>/<id>/<dir> size <before>-><after> idx=<n>
+ *
+ * TW_DIAG_MUT=1
+ */
+static int diag_slipindex(creature const* cr) {
+    int n;
+    for (n = 0 ; n < slipcount ; ++n)
+        if (slips[n].cr == cr)
+            return n;
+    return -1;
+}
+
+static void diag_slipmut(char const* op, int line, creature const* cr, int dir, int before) {
+    if (!diagon() || !diagflag("TW_DIAG_MUT"))
+        return;
+    fprintf(stderr, "SLIPMUT\t%d\t%d\t%s@%d\t%d,%d/%02X/%c\tsize %d->%d\tidx=%d\n",
+            (int)state->game->number, (int)currenttime(), op, line,
+            (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id, diag_dirchar(dir),
+            before, (int)slipcount, diag_slipindex(cr));
+}
+
+static creature* diag_append(creature* cr, int dir, int line) {
+    int before = slipcount;
+    creature* r = appendtosliplist(cr, dir);
+    diag_slipmut("append", line, cr, dir, before);
+    return r;
+}
+
+static creature* diag_prepend(creature* cr, int dir, int line) {
+    int before = slipcount;
+    creature* r = prependtosliplist(cr, dir);
+    diag_slipmut("prepend", line, cr, dir, before);
+    return r;
+}
+
+static void diag_remove(creature* cr, int line) {
+    int before = slipcount;
+    int idx = diag_slipindex(cr);
+    removefromsliplist(cr);
+    if (diagon() && diagflag("TW_DIAG_MUT"))
+        fprintf(stderr, "SLIPMUT\t%d\t%d\tremove@%d\t%d,%d/%02X/-\tsize %d->%d\twas_idx=%d\n",
+                (int)state->game->number, (int)currenttime(), line,
+                (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id,
+                before, (int)slipcount, idx);
+}
+
+/* Every call site AFTER this point routes through the wrappers. */
+#define appendtosliplist(c, d)  diag_append((c), (d), __LINE__)
+#define prependtosliplist(c, d) diag_prepend((c), (d), __LINE__)
+#define removefromsliplist(c)   diag_remove((c), __LINE__)
+#endif
+
 /*
  * Simple floor functions.
  */
@@ -849,6 +919,70 @@ static maptile* getfloorat(int pos) {
  */
 
 
+#ifdef PROBE_DIAG
+/* ═══ COMBINED DIAGNOSTIC HARNESS (jc-24) ═══
+ *
+ * Every probe in ONE binary, each gated by its own env var, so the records interleave in a
+ * single ordered stream. Splitting them across builds is what made §74 unresolvable and cost
+ * an entire round on JacquesS2 #7 -- two prints in two runs cannot establish an ordering.
+ *
+ *   TW_DIAG_LEVEL=<n>    the level to instrument (required; everything below is scoped to it)
+ *   TW_DIAG_MAP=1        per-tick tile-stack changes, in DATA-FILE codes   -> MAP
+ *   TW_DIAG_SLIP=1       every creature the slip pass ticks, in order      -> SLIPT
+ *   TW_DIAG_CR=<x>,<y>   full state of whatever occupies a watched cell    -> CR
+ *
+ * All observe-only. Verify against the shipped engine's invalid list before trusting a number.
+ */
+static int diagslipstep = 0;   /* reset each tick in finalhousekeeping */
+
+static int diaglevel(void) {
+    static int lvl = -2;
+    if (lvl == -2) {
+        char const* e = getenv("TW_DIAG_LEVEL");
+        lvl = (e && *e) ? atoi(e) : -1;
+    }
+    return lvl;
+}
+
+static int diagon(void) {
+    return diaglevel() >= 0 && diaglevel() == (int)state->game->number;
+}
+
+static int diagflag(char const* name) {
+    char const* e = getenv(name);
+    return e && *e;
+}
+
+/* Data-file code for a Tile World tile id, or -1. Several data-file codes share one Tile World
+ * id (the cloning-block variants); scanning downward makes the lowest win, keeping it stable. */
+static int diag_datcode(int id) {
+    static signed short inv[256];
+    static int built = FALSE;
+    if (!built) {
+        int i;
+        for (i = 0 ; i < 256 ; ++i)
+            inv[i] = -1;
+        for (i = 0x6F ; i >= 0 ; --i) {
+            int t = fileidtotileid(i);
+            if (t >= 0 && t < 256)
+                inv[t] = (signed short)i;
+        }
+        built = TRUE;
+    }
+    return (id >= 0 && id < 256) ? inv[id] : -1;
+}
+
+static char diag_dirchar(int d) {
+    switch (d) {
+        case NORTH: return 'N';
+        case WEST:  return 'W';
+        case SOUTH: return 'S';
+        case EAST:  return 'E';
+    }
+    return '-';
+}
+#endif
+
 static int istrapbuttondown(int pos) {
     return pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id != Button_Brown;
 }
@@ -892,6 +1026,7 @@ static int istrapopen(int pos, int skippos) {
     return FALSE;
 }
 
+
 /* Flip-flop the state of any toggle walls.
  */
 static void togglewalls(void) {
@@ -921,6 +1056,92 @@ static void togglewalls(void) {
 #define CS_SLIDE     0x20 /* is on the slip list but can move */
 #define CS_DEFERPUSH 0x40 /* button pushes will be delayed */
 #define CS_MUTANT    0x80 /* block is mutant, looks like Chip */
+
+#ifdef PROBE_DIAG
+/* ── TRAP TIMELINE ────────────────────────────────────────────────────────────────────────
+ *
+ * PB_Gourami #254's whole question is WHY Tile World believes a trap is passable at t=20 when
+ * SuperCC does not. Four wholesale ports of SuperCC's model have failed (+9, +25, 1285, 2050
+ * regressions -- §47, §51), so the target now is a NARROW predicate, and that needs the exact
+ * grant/clear/query timeline rather than another model.
+ *
+ * Everything CS_RELEASED-related, in ONE binary, interleaved:
+ *
+ *   TRAPQ  <lvl> <ct> open? trap=<x>,<y> skip=<x>,<y> -> <0|1> @<line> [<bx>,<by>:<0|1> ...]
+ *   TRAPG  <lvl> <ct> grant@<line> <x>,<y>/<id>
+ *   TRAPC  <lvl> <ct> clear        <x>,<y>/<id>
+ *   TRAPL  <lvl> <ct> leave? <x>,<y>/<id> rel=<0|1> -> <STUCK|MAY-LEAVE>
+ *   TRAPB  <lvl> <ct> buttons trap=<x>,<y> [<bx>,<by>:<0|1> ...]   (once per tick, per trap)
+ *
+ * ⚠ The call site is the point, not the value. §65/§66/§70/§78 all turned on WHICH site fired,
+ *   and values alone could not separate them -- hence __LINE__ through macros, the same
+ *   technique as harnesses #9 and #10.
+ *
+ * TW_DIAG_TRAP=1   (scoped to TW_DIAG_LEVEL like every other probe)
+ */
+static void diag_trapbuttons(char const* tag, int trappos, int ct) {
+    xyconn* traps;
+    int i;
+    if (!diagon() || !diagflag("TW_DIAG_TRAP"))
+        return;
+    fprintf(stderr, "%s\t%d\t%d\ttrap=%d,%d\t", tag, (int)state->game->number, ct,
+            trappos % CXGRID, trappos / CXGRID);
+    traps = traplist();
+    for (i = traplistsize(); i; ++traps, --i)
+        if (traps->to == trappos)
+            fprintf(stderr, "%d,%d:%d ", traps->from % CXGRID, traps->from / CXGRID,
+                    istrapbuttondown(traps->from) ? 1 : 0);
+    fprintf(stderr, "\n");
+}
+
+static int diag_istrapopen(int pos, int skippos, int line) {
+    int r = istrapopen(pos, skippos);
+    if (diagon() && diagflag("TW_DIAG_TRAP")) {
+        xyconn* traps = traplist();
+        int i;
+        fprintf(stderr, "TRAPQ\t%d\t%d\topen?\ttrap=%d,%d\tskip=%d,%d\t-> %d\t@%d\t",
+                (int)state->game->number, (int)currenttime(),
+                pos % CXGRID, pos / CXGRID,
+                skippos >= 0 ? skippos % CXGRID : -1, skippos >= 0 ? skippos / CXGRID : -1,
+                r, line);
+        for (i = traplistsize(); i; ++traps, --i)
+            if (traps->to == pos)
+                fprintf(stderr, "%d,%d:%d%s ", traps->from % CXGRID, traps->from / CXGRID,
+                        istrapbuttondown(traps->from) ? 1 : 0,
+                        traps->from == skippos ? "(SKIPPED)" : "");
+        fprintf(stderr, "\n");
+    }
+    return r;
+}
+
+static void diag_trapgrant(creature const* cr, int line) {
+    if (!diagon() || !diagflag("TW_DIAG_TRAP"))
+        return;
+    fprintf(stderr, "TRAPG\t%d\t%d\tgrant@%d\t%d,%d/%02X\n",
+            (int)state->game->number, (int)currenttime(), line,
+            cr->pos % CXGRID, cr->pos / CXGRID, cr->id);
+}
+
+static void diag_trapclear(creature const* cr) {
+    if (!diagon() || !diagflag("TW_DIAG_TRAP") || !(cr->state & CS_RELEASED))
+        return;
+    fprintf(stderr, "TRAPC\t%d\t%d\tclear\t%d,%d/%02X\n",
+            (int)state->game->number, (int)currenttime(),
+            cr->pos % CXGRID, cr->pos / CXGRID, cr->id);
+}
+
+static int diag_trapleave(creature const* cr, int stuck) {
+    if (diagon() && diagflag("TW_DIAG_TRAP"))
+        fprintf(stderr, "TRAPL\t%d\t%d\tleave?\t%d,%d/%02X\trel=%d\t-> %s\n",
+                (int)state->game->number, (int)currenttime(),
+                cr->pos % CXGRID, cr->pos / CXGRID, cr->id,
+                (cr->state & CS_RELEASED) ? 1 : 0, stuck ? "STUCK" : "MAY-LEAVE");
+    return stuck;
+}
+
+/* Every call site AFTER this point routes through the wrappers. */
+#define istrapopen(p, s)  diag_istrapopen((p), (s), __LINE__)
+#endif
 
 /* Return the creature located at pos. Ignores Chip unless includechip
  * is TRUE. Return NULL if no such creature is present.
@@ -1495,7 +1716,12 @@ static int cantleavecell(creature const* cr, int dir) {
         case Wall_South:     return dir == SOUTH;
         case Wall_East:      return dir == EAST;
         case Wall_Southeast: return !!(dir & (SOUTH | EAST));
-        case Beartrap:       return !(cr->state & CS_RELEASED);
+        case Beartrap:
+#ifdef PROBE_DIAG
+            return diag_trapleave(cr, !(cr->state & CS_RELEASED));
+#else
+            return !(cr->state & CS_RELEASED);
+#endif
     }
     return FALSE;
 }
@@ -1697,8 +1923,13 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 if (dir & (SOUTH | EAST)) return FALSE;
                 break;
             case Beartrap:
+#ifdef PROBE_DIAG
+                if (diag_trapleave(cr, !(cr->state & CS_RELEASED)))
+                    return FALSE;
+#else
                 if (!(cr->state & CS_RELEASED))
                     return FALSE;
+#endif
                 break;
         }
     }
@@ -2878,12 +3109,20 @@ static void springtrap(int buttonpos) {
     id = cellat(pos)->top.id;
     if (id == Block_Static || (cellat(pos)->bot.state & FS_HASMUTANT)) {
         cr = lookupblock(pos);
-        if (cr)
+        if (cr) {
             cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+            diag_trapgrant(cr, __LINE__);
+#endif
+        }
     } else if (iscreature(id)) {
         cr = lookupcreature(pos, TRUE);
-        if (cr)
+        if (cr) {
             cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+            diag_trapgrant(cr, __LINE__);
+#endif
+        }
     }
 }
 
@@ -2995,6 +3234,9 @@ static int startmovement(creature* cr, int dir) {
         if (cr->state & CS_MUTANT)
             cellat(cr->pos)->bot.state &= ~FS_HASMUTANT;
     }
+#ifdef PROBE_DIAG
+    diag_trapclear(cr);
+#endif
     cr->state &= ~CS_RELEASED;
 
     cr->dir = dir;
@@ -3403,12 +3645,23 @@ static void endmovement(creature* cr, int dir) {
         for (i = 0; i < traplistsize(); ++i) {
             if (traplist()[i].from == oldpos && traplist()[i].to == newpos) {
                 cr->state &= ~CS_RELEASED;
+#ifdef PROBE_DIAG
+                if (diagon() && diagflag("TW_DIAG_TRAP"))
+                    fprintf(stderr, "TRAPS\t%d\t%d\tshut-behind\t%d,%d -> %d,%d/%02X\n",
+                            (int)state->game->number, (int)currenttime(),
+                            oldpos % CXGRID, oldpos / CXGRID,
+                            newpos % CXGRID, newpos / CXGRID, cr->id);
+#endif
                 goto trapentrydone;
             }
         }
 #endif
-        if (istrapopen(newpos, oldpos))
+        if (istrapopen(newpos, oldpos)) {
             cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+            diag_trapgrant(cr, __LINE__);
+#endif
+        }
 #ifndef NO_FIX_TRAP_SHUT_BEHIND
 trapentrydone: ;
 #endif
@@ -3416,6 +3669,10 @@ trapentrydone: ;
         for (i = 0; i < traplistsize(); ++i) {
             if (traplist()[i].to == newpos) {
                 cr->state |= CS_RELEASED;
+#ifdef PROBE_DIAG
+                diag_trapgrant(cr, __LINE__);
+                diag_trapbuttons("TRAPB", newpos, (int)currenttime());
+#endif
                 break;
             }
         }
@@ -3667,9 +3924,39 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
     int oldmsccslippers;
     int advance = 0;
 
+#ifdef PROBE_DIAG
+    /* The whole slip list as it stands ENTERING the pass. The ticked-sequence records alone
+     * cannot answer "where is creature X in the list" -- on Jacques #922 the blob shows up in
+     * an end-of-tick sample at slot 5, yet the pass ticks ten entries and never reaches it.
+     * Membership and ORDER are the question, so dump both. */
+    if (diagon() && diagflag("TW_DIAG_LIST")) {
+        int q;
+        fprintf(stderr, "LIST\t%d\t%d\tsize=%d\t",
+                (int)state->game->number, (int)currenttime(), (int)slipcount);
+        for (q = 0 ; q < slipcount ; ++q)
+            fprintf(stderr, "%d:%d,%d/%02X/%c%s ", q,
+                    (int)(slips[q].cr->pos % CXGRID), (int)(slips[q].cr->pos / CXGRID),
+                    slips[q].cr->id, diag_dirchar(slips[q].dir),
+                    (slips[q].cr->state & (CS_SLIP | CS_SLIDE)) ? "" : "!");
+        fprintf(stderr, "\n");
+    }
+#endif
     for (n = 0; n < slipcount;) {
         oldmsccslippers = msccslippers;
         cr = slips[n].cr;
+#ifdef PROBE_DIAG
+        /* EVERY iteration, including the ones that skip without ticking anything. The ticked
+         * sequence alone hides the cursor: `n` is not incremented after a creature is
+         * processed -- the `advance` counter does it next time round -- so which entry is
+         * visited, revisited or SKIPPED is invisible from the SLIPT records. */
+        if (diagon() && diagflag("TW_DIAG_ITER"))
+            fprintf(stderr, "ITER\t%d\t%d\tn=%d\tsize=%d\tadvance=%d\tslippers=%d\t%d,%d/%02X/%c%s\n",
+                    (int)state->game->number, (int)currenttime(), n, (int)slipcount, advance,
+                    msccslippers,
+                    (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id,
+                    diag_dirchar(slips[n].dir),
+                    (cr->state & (CS_SLIP | CS_SLIDE)) ? "" : " NOSLIP");
+#endif
 #ifdef TRACE_DESYNC
         /* PROBE: the slip-pass ITERATOR itself. `n` is not incremented after a
          * creature is processed -- the loop relies on `advance`, which only
@@ -3703,11 +3990,42 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             continue;
         }
         cr->frame = cr->dir; /* Tank Top Glitch */
+#ifdef PROBE_DIAG
+        /* The slip pass's iteration sequence -- which creature it actually ticks, in order,
+         * with the list index and size. Tile World's loop does not auto-increment n; an
+         * `advance` counter suppresses it, which is its model of MSCC's slide delay. SuperCC
+         * instead re-reads size() every pass. Comparing the two SEQUENCES is the only way to
+         * see a skipped or repeated creature (harness #8). */
+        if (diagon() && diagflag("TW_DIAG_SLIP"))
+            fprintf(stderr, "SLIPT\t%d\t%d\t%d\t%d\t%d\t%d,%d\t%02X\t%d\n",
+                    (int)state->game->number, (int)currenttime(), diagslipstep++,
+                    n, (int)slipcount,
+                    (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id, slipdir);
+#endif
         ac = advancecreature(cr, slipdir); /* useful to have ac */
         if (!ac) {
 #ifdef FIX_KEEPSLOT_OCCUPANT
             /* The slide attempt's decision; the ice retry ANDs into it below. */
             int keepslot = cmm_keepslot;
+#ifdef PROBE_DIAG
+            /* The keep-or-drop decision, diag-gated so it can run on a whole set in seconds
+             * (the TRACE_DESYNC version below is far too slow for a 1,000-level pack).
+             * `keepslot == 0` means Tile World will endfloormovement() + re-append, which
+             * REORDERS the list -- and on Jacques #922 that reorder is what shifts the blob
+             * out from under the cursor (§85). */
+            if (diagon() && diagflag("TW_DIAG_KEEP")) {
+                static int const kd[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
+                int dp = cr->pos + kd[slipdir];
+                fprintf(stderr, "KEEP\t%d\t%d\t%d,%d/%02X/%c\tdestTop=%02X\tdestBot=%02X"
+                                "\tlaw=%d\t-> %s\n",
+                        (int)state->game->number, (int)currenttime(),
+                        (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), cr->id,
+                        diag_dirchar(slipdir),
+                        cellat(dp)->top.id, cellat(dp)->bot.id,
+                        !!(movelaws[cellat(dp)->bot.id].creature & slipdir),
+                        keepslot ? "KEEP" : "DROP");
+            }
+#endif
 #ifdef TRACE_DESYNC
             /* PROBE: the same KEEP-or-DROP line the SuperCC shadow emits, so the two
              * decision streams can be diffed directly.  Position is the creature's
@@ -4054,6 +4372,105 @@ static void initialhousekeeping(void) {
 /* Actions and checks that occur at the end of a tick.
  */
 static void finalhousekeeping(void) {
+#ifdef PROBE_DIAG
+    if (diagon()) {
+        /* ── tile-stack changes, in data-file codes ─────────────────────────────── */
+        if (diagflag("TW_DIAG_MAP")) {
+            static unsigned char snaptop[CXGRID * CYGRID], snapbot[CXGRID * CYGRID];
+            static int snaplvl = -1;
+            int fresh = (snaplvl != (int)state->game->number);
+            int pos;
+            if (fresh)
+                snaplvl = (int)state->game->number;
+            for (pos = 0 ; pos < CXGRID * CYGRID ; ++pos) {
+                int t = cellat(pos)->top.id, b = cellat(pos)->bot.id;
+                if (!fresh && t == snaptop[pos] && b == snapbot[pos])
+                    continue;
+                snaptop[pos] = (unsigned char)t;
+                snapbot[pos] = (unsigned char)b;
+                fprintf(stderr, "MAP\t%d\t%d\t%d,%d\t%d\t%d\n",
+                        (int)state->game->number, (int)currenttime(),
+                        pos % CXGRID, pos / CXGRID,
+                        diag_datcode(t), diag_datcode(b));
+            }
+        }
+        /* ── full creature state at a watched cell, emitted only on change ──────── */
+        if (diagflag("TW_DIAG_CR")) {
+            static char last[192] = "";
+            char now[192];
+            char const* e = getenv("TW_DIAG_CR");
+            int wx = -1, wy = -1, n, slot = -1, slipdir = NIL;
+            creature* cr = NULL;
+            if (sscanf(e, "%d,%d", &wx, &wy) == 2 && wx >= 0) {
+                int wpos = wy * CXGRID + wx;
+                for (n = 0 ; n < blockcount ; ++n)
+                    if (blocks[n]->pos == wpos && !blocks[n]->hidden)
+                        cr = blocks[n];
+                if (!cr)
+                    for (n = 0 ; n < creaturecount ; ++n)
+                        if (creatures[n]->pos == wpos && !creatures[n]->hidden)
+                            cr = creatures[n];
+                if (cr)
+                    for (n = 0 ; n < slipcount ; ++n)
+                        if (slips[n].cr == cr) { slot = n; slipdir = slips[n].dir; break; }
+                if (cr)
+                    sprintf(now, "%02X facing=%c slip=%c slot=%d state=%02X frame=%d",
+                            cr->id, diag_dirchar(cr->dir), diag_dirchar(slipdir),
+                            slot, cr->state, cr->frame);
+                else
+                    sprintf(now, "(empty) top=%02X bot=%02X",
+                            cellat(wpos)->top.id, cellat(wpos)->bot.id);
+                if (strcmp(now, last) != 0) {
+                    fprintf(stderr, "CR\t%d\t%d\t%d,%d\t%s\n",
+                            (int)state->game->number, (int)currenttime(), wx, wy, now);
+                    strcpy(last, now);
+                }
+            }
+        }
+    }
+    diagslipstep = 0;   /* per TICK, not per run */
+#endif
+
+#ifndef NO_FIX_TRAP_REFRESH
+    /* MOD (Jeremy), the other half of the PB_Gourami #254 pair: a HELD brown button re-opens
+     * its trap every tick, not only on the tick it was pressed.
+     *
+     * SuperCC, MSLevel.finaliseTraps(), at the end of every tick:
+     *
+     *     if (FG(button) != BUTTON_BROWN && !pressedButtons.contains(button)) {
+     *         traps.set(idx, true);            // <- LEVEL-triggered, every tick
+     *         pressedButtons.add(button);
+     *     }
+     *     else if (FG(target) == TRAP) traps.set(idx, false);
+     *
+     * `pressedButtons` is a fresh local HashSet per sweep, so it only dedupes buttons that
+     * appear twice in one pass -- it does NOT persist across ticks. A creature standing still
+     * on a brown button therefore re-opens its trap on every single tick.
+     *
+     * Tile World's springtrap() is EDGE-triggered: it fires from handlebuttons() when a button
+     * is newly pressed, and never again while it stays covered. The `istrapopen()` live scan
+     * covers the gap at the moment of ENTRY, but nothing refreshes a creature already sitting
+     * in the trap.
+     *
+     * That gap is invisible until FIX_TRAP_SHUT_BEHIND stops handing out the entry grant. With
+     * only the shut-behind half, PB_Gourami #254's balls stay stuck forever (measured -- every
+     * leave-check from ct=32 on reads STUCK), because nothing re-grants what SuperCC re-grants
+     * at the end of every tick:
+     *
+     *     SCC  t=14  finaliseTraps btn=2,2 covered=true -> SET-OPEN
+     *          t=16  canLeave 2,3/PINK_BALL open=true  -> MAY-LEAVE
+     *
+     * ⚠ Purely ADDITIVE: this only ever grants CS_RELEASED, never withholds it, so it cannot
+     * refuse a move the shipped engine allows. That is the opposite of §47/§51's four failed
+     * ports, which all REPLACED the per-creature latch with a per-trap level test.
+     */
+    {
+        int ti;
+        for (ti = 0; ti < traplistsize(); ++ti)
+            if (istrapbuttondown(traplist()[ti].from))
+                springtrap(traplist()[ti].from);
+    }
+#endif
     return;
 }
 
