@@ -2972,6 +2972,30 @@ static int startmovement(creature* cr, int dir) {
  * is also the only place where a creature can be added to the slip
  * list.
  */
+#ifndef NO_FIX_TELEPORT_STALE_FG
+/* MOD (Jeremy), step 2 of the JacquesS2 #7 pair: the destination's top tile as it stood BEFORE
+ * this move pushed anything off it.
+ *
+ * SuperCC captures the destination foreground ONCE, before its push, and its leave-pop
+ * cancellation tests that captured value:
+ *
+ *     Tile newTileFG = level.getLayerFG().get(newPosition);   // captured first
+ *     ...
+ *     if (tryEnter(direction, newPosition, newTileFG, ...)) { // tryEnter does the push
+ *         if (newTileFG != TELEPORT) level.popTile(position);
+ *
+ * When a block is pushed off a teleport, tryEnter RE-DISPATCHES on the exposed tile and
+ * teleport() pops Chip's cell -- but the outer frame's newTileFG is still Block, so the
+ * cancellation misses and Chip's cell is popped a SECOND time. Tile World reads its
+ * destination tile AFTER the push, so it cannot reproduce that without a snapshot.
+ *
+ * ⚠ Declared here, above endmovement(), because endmovement is what reads it -- and PUBLISHED
+ * in advancecreature() immediately before the endmovement() call, never in startmovement():
+ * a pushed block runs its own nested advancecreature INSIDE startmovement and would clobber a
+ * value set any earlier. */
+static int prepush_destfloor = -1;
+#endif
+
 static void endmovement(creature* cr, int dir) {
     static int const delta[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
     mapcell* cell;
@@ -3124,7 +3148,76 @@ static void endmovement(creature* cr, int dir) {
         return;
     }
 
-    if (cr->id == Chip && floor == Teleport && !(tile->state & FS_BROKEN)) {
+#ifdef PROBE_TELCOND
+    /* Every Chip teleport Tile World performs, so the list can be diffed against SuperCC's
+     * TELE stream. `broken` records what the load-time flag SAID, to separate the teleports
+     * step 1 newly enabled from the ones that always worked. */
+    if (getenv("TW_PROBE_TELCOND") && cr->id == Chip && floor == Teleport)
+        fprintf(stderr, "TWTELE\t%d\t%d\t%d,%d->%d,%d\tbroken=%d\n",
+                (int)state->game->number, (int)currenttime(),
+                oldpos % CXGRID, oldpos / CXGRID, newpos % CXGRID, newpos / CXGRID,
+                !!(tile->state & FS_BROKEN));
+#endif
+    if (cr->id == Chip && floor == Teleport
+#ifndef NO_FIX_TELEPORT_BROKEN_DYNAMIC
+            /* A load-time-broken teleport is honored ONLY when this very move exposed it by
+             * pushing a block off it. That is the one case SuperCC reaches teleport() with a
+             * covered teleport -- tryEnter's BLOCK case pushes, then re-dispatches on the
+             * revealed tile (§78, 19 of JacquesS2 #7's 39 teleports arrive that way).
+             *
+             * Dropping the FS_BROKEN test outright (§79-§81) was too blunt: it also revived
+             * teleports SuperCC never performs. Measured on the two casualties --
+             *
+             *   geodave1 #64        TW ct=924  25,10->24,10 broken=1   SuperCC: no teleport
+             *   Jacques_Medium #22  TW ct=5304 23,26->22,26 broken=1   SuperCC: no teleport
+             *
+             * -- against SuperCC's only teleports on those levels (t=479 and t=1525; t=2654),
+             * all at tryEnter depth 1 on genuinely bare teleporters. So the flag does real
+             * work and only the block-exposed case may override it. */
+            && (!(tile->state & FS_BROKEN)
+                || prepush_destfloor == Block_Static
+                || (prepush_destfloor >= 0 && creatureid(prepush_destfloor) == Block))
+#else
+            && !(tile->state & FS_BROKEN)
+#endif
+       ) {
+        /* MOD (Jeremy): a teleport whose tile is on TOP right now works, whatever covered it
+         * when the level loaded.
+         *
+         * Tile World flags a covered teleport FS_BROKEN once at load and honors that forever:
+         *
+         *     if (isfloor(top) || creatureid(top) == Chip || creatureid(top) == Block)
+         *         if (bot == Teleport || ...) bot.state |= FS_BROKEN;
+         *
+         * SuperCC has no such flag. It dispatches on the CURRENT foreground, so a teleport
+         * under floor never fires (the switch sees FLOOR) while a teleport that becomes
+         * exposed does -- MSCreature.tryEnter's BLOCK case pushes the block and then
+         * RE-DISPATCHES on the newly revealed tile:
+         *
+         *     if (block.tryMove(direction, false, pressedButtons)){
+         *         ...
+         *         return tryEnter(direction, newPosition,
+         *                         msLevel.getLayerFG().get(newPosition), ...);
+         *
+         * `floor == Teleport` already tests exactly what SuperCC dispatches on -- the
+         * destination's top tile AT THIS MOMENT -- so the extra FS_BROKEN test is what makes
+         * Tile World diverge. Where the teleport is genuinely buried, floor is the covering
+         * tile and this branch is skipped anyway; the flag only bites once something has been
+         * cleared off it.
+         *
+         * Measured on JacquesS2 #7 "Slippertele" (§77, §78):
+         *
+         *     TELCOND 7 92 17,6->18,6 floor=18 state=04 broken=1 -> skipped
+         *
+         * floor IS Teleport and FS_BROKEN is the sole refusal. SuperCC teleports there --
+         * shadow_teleentry.ps1 counts 19 of the level's 39 teleports arriving at depth 2, i.e.
+         * only after a push exposed the tile.
+         *
+         * ⚠ A load-time exclusion for block-covered teleports was tried first and is the WRONG
+         * lever: 18,6 was covered by FLOOR at load and the block arrived during play, so the
+         * exclusion missed it entirely while unbreaking teleports elsewhere (Voting-CCLP5
+         * 0 -> 1). The test has to be dynamic.
+         */
         i = newpos;
         newpos = teleportcreature(cr, newpos);
         if (TRUE || newpos != i) { /* Convergence Patch */
@@ -3144,6 +3237,27 @@ static void endmovement(creature* cr, int dir) {
                 }
             }
         }
+#ifndef NO_FIX_TELEPORT_STALE_FG
+        /* Step 2: SuperCC pops Chip's old cell a SECOND time whenever the outer frame's
+         * newTileFG was not a Teleporter -- i.e. whenever this teleport was only reached
+         * because a push exposed it. poptile(oldpos) above already did the first.
+         *
+         *     POPD 20  from=11,4 to=10,4 CHIP_SLIDING newTileFG=Teleporter -> cancelled
+         *     POPD 47  from=17,6 to=18,6 CHIP         newTileFG=Block      -> POPPED
+         *
+         * Measured with shadow_poplayer.ps1. Only reachable now that step 1 lets this branch
+         * run at all -- it entered zero times on this level before (§77, §79). */
+        /* ⚠ Narrowed to a BLOCK specifically. SuperCC pops twice only when the outer tryMove
+         * frame's newTileFG was not a Teleporter AND teleport() was reached anyway -- and the
+         * only route to that is tryEnter's BLOCK case, which pushes the block and then
+         * re-dispatches on the exposed tile (§78). Testing merely `!= Teleport` is far weaker:
+         * it is true for every teleport whose top differed before the move, however it came to
+         * differ, and step 1 had just made a great many previously dead teleports live. That
+         * version replayed #7 but took Voting-CCLP5 from 0 to 29 (§80). */
+        if (prepush_destfloor == Block_Static
+                || (prepush_destfloor >= 0 && creatureid(prepush_destfloor) == Block))
+            poptile(oldpos);
+#endif
     }
 
     cr->pos = newpos;
@@ -3270,6 +3384,9 @@ static void endmovement(creature* cr, int dir) {
 /* Move the given creature in the given direction.
  */
 static int advancecreature(creature* cr, int dir) {
+#ifndef NO_FIX_TELEPORT_STALE_FG
+    int prepush_saved = -1;   /* local, so nested moves each keep their own */
+#endif
     if (dir == NIL)
         return TRUE;
 
@@ -3284,6 +3401,14 @@ static int advancecreature(creature* cr, int dir) {
     if (cr->id == Chip)
         chipwait() = 0;
 
+#ifndef NO_FIX_TELEPORT_STALE_FG
+    {
+        static int const ac_delta[] = {0, -CXGRID, -1, 0, +CXGRID, 0, 0, 0, +1};
+        int pp = cr->pos + ac_delta[dir];
+        prepush_saved = (pp >= 0 && pp < CXGRID * CYGRID) ? cellat(pp)->top.id : -1;
+    }
+#endif
+
     if (!startmovement(cr, dir)) {
         if (cr->id == Chip) {
             addsoundeffect(SND_CANT_MOVE);
@@ -3293,6 +3418,9 @@ static int advancecreature(creature* cr, int dir) {
         return FALSE;
     }
 
+#ifndef NO_FIX_TELEPORT_STALE_FG
+    prepush_destfloor = prepush_saved;   /* only now: nested pushes have finished */
+#endif
     endmovement(cr, dir);
 #ifdef FIX_BLUE_BUTTON_TIMING
     /* MOD (Jeremy): now that the move is complete -- position committed and the
