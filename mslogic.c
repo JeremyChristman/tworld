@@ -3581,6 +3581,9 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
     int n;
     int oldmsccslippers;
     int advance = 0;
+#ifndef NO_FIX_SLIP_CURSOR_SHIFT
+    int shiftheld = -1;   /* index whose advance was already suppressed once; bounds the loop */
+#endif
 
     for (n = 0; n < slipcount;) {
         oldmsccslippers = msccslippers;
@@ -3750,8 +3753,48 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         cr->frame = 0; /* Tank Top Glitch */
         if (checkforending())
             return;
+#ifndef NO_FIX_SLIP_CURSOR_SHIFT
+        /* MOD (Jeremy): do not advance the cursor when the list SHIFTED underneath it.
+         *
+         * `n` is never incremented after a creature is processed; the `advance` counter does it
+         * on the next pass. The guard for setting it is the MSCC slipper COUNT -- but a removal
+         * and an addition in the same step net to zero, so the count can hold steady while the
+         * entries below the cursor all shift down by one. The pending advance then eats the
+         * entry that shifted INTO slips[n], and that creature loses its move entirely.
+         *
+         * Measured on Jacques #922 at ct=834 (harness, branch harness/jc24-diag), logging every
+         * iteration including the ones that tick nothing:
+         *
+         *     ITER n=3 advance=0 slippers=10  22,12/58/S    <- processed
+         *     ITER n=3 advance=1 slippers=10  24,6/5C/E     <- THE BLOB, skipped
+         *     ITER n=4 advance=0 slippers=10  26,11/4C/W
+         *
+         * slips[3] changed identity between the two visits, with slippers unchanged at 10.
+         *
+         * The slip LISTS are identical in both engines entering that pass, so this is neither
+         * membership nor ordering -- purely the cursor. SuperCC's is index = size() - i, which
+         * REPEATS an index when the list shrinks and so re-processes the shifted-in entry:
+         *
+         *     SCC (i, index, size): 0/0/10 1/1/10 2/2/10 3/3/10 4/4/10 5/4/9  <- index repeats
+         *     TW  (n):              0 1 2 3 4 5 6 7 8 9                        <- never repeats
+         *
+         * Comparing the identity at slips[n] catches exactly the case the count misses.
+         *
+         * ⚠ MUST be bounded. `n` only moves when advance is consumed, so suppressing the
+         * increment unconditionally spins forever -- the first cut of this hung Tile World on
+         * the very first set. Suppress at most ONCE per index (`shiftheld`), which guarantees
+         * progress while still giving the shifted-in creature its move. */
+        if (msccslippers == oldmsccslippers
+                && !(n < slipcount && slips[n].cr != cr && shiftheld != n)) {
+            advance++;
+            shiftheld = -1;
+        } else if (n < slipcount && slips[n].cr != cr) {
+            shiftheld = n;
+        }
+#else
         if (msccslippers == oldmsccslippers)
             advance++;
+#endif
     }
 }
 
