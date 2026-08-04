@@ -3581,10 +3581,53 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
     int n;
     int oldmsccslippers;
     int advance = 0;
-
+#ifndef NO_FIX_SLIP_CURSOR_PORT
+    /* MOD (Jeremy): iterate the slip list the way SuperCC does.
+     *
+     * SuperCC's SlipList.tick, comment and all:
+     *
+     *     public void tick(){
+     *         // Iterating like this causes slide delay.
+     *         for (int i = size(); i > 0; i--){
+     *             MSCreature monster = (MSCreature) get(size()-i);
+     *
+     * It runs exactly size-at-entry iterations and recomputes the index as `size() - i` every
+     * pass, so a list that SHRINKS mid-tick makes an index repeat -- the entry that shifted
+     * down is processed rather than skipped -- and one that grows skips ahead. Tile World
+     * models the same delay with an `advance` counter gated on the MSCC slipper COUNT:
+     *
+     *     if (msccslippers == oldmsccslippers)
+     *         advance++;
+     *
+     * A removal and an addition in the same step net to zero, so that count can hold steady
+     * while every entry below the cursor shifts down one, and the pending advance then eats
+     * the creature that shifted in. Measured on Jacques #922 at ct=834 (harness/jc24-diag),
+     * with both engines' slip lists IDENTICAL entering the pass:
+     *
+     *     ITER n=3 advance=0 slippers=10  22,12/58/S    <- processed
+     *     ITER n=3 advance=1 slippers=10  24,6/5C/E     <- the BLOB, skipped; loses its move
+     *     ITER n=4 advance=0 slippers=10  26,11/4C/W
+     *
+     *     SCC (i, index, size): 0/0/10 1/1/10 2/2/10 3/3/10 4/4/10 5/4/9  <- index REPEATS
+     *     TW  (n):              0 1 2 3 4 5 6 7 8 9                        <- never repeats
+     *
+     * Patching the heuristic was tried first and rejected: unbounded it HANGS (n only moves
+     * when advance is consumed), and bounded to one suppression per index it cost Jacques +70
+     * and Voting-CCLP5 +100 without fixing #922. So port the cursor itself, which is bounded
+     * by construction -- exactly `slipstart` iterations, no advance counter. */
+    int slipstart = slipcount;
+    int slipi;
+    for (slipi = slipstart ; slipi > 0 ; --slipi) {
+        n = slipcount - slipi;
+        if (n < 0 || n >= slipcount)
+            continue;
+        oldmsccslippers = msccslippers;
+        cr = slips[n].cr;
+#else
     for (n = 0; n < slipcount;) {
         oldmsccslippers = msccslippers;
         cr = slips[n].cr;
+#endif
 #ifdef TRACE_DESYNC
         /* PROBE: the slip-pass ITERATOR itself. `n` is not incremented after a
          * creature is processed -- the loop relies on `advance`, which only
@@ -3602,11 +3645,13 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
             n++;
             continue;
         }
+#ifdef NO_FIX_SLIP_CURSOR_PORT
         if (advance) {
             advance--;
             n++;
             continue;
         }
+#endif
         if (!(slips[n].cr->state & (CS_SLIP | CS_SLIDE))) {
             n++;
             continue;
@@ -3750,8 +3795,12 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
         cr->frame = 0; /* Tank Top Glitch */
         if (checkforending())
             return;
+#ifdef NO_FIX_SLIP_CURSOR_PORT
         if (msccslippers == oldmsccslippers)
             advance++;
+#else
+        (void)advance;   /* the ported cursor is driven by slipi, not by advance */
+#endif
     }
 }
 
