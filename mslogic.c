@@ -1727,6 +1727,49 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 && (iskey(cellat(to)->top.id) || isboots(cellat(to)->top.id)))
             floor = cellat(to)->top.id;
 #endif
+#ifndef NO_FIX_CHIP_PICKUP_ON_BLOCK
+        /* MOD (Jeremy): a key or a pair of boots sitting ON A BLOCK. Chip collects it and
+         * stands on the block -- he does NOT push the block.
+         *
+         * Same root cause as FIX_CHIP_ONTO_CLONER directly above, and the same remedy:
+         * floorat() deliberately looks *underneath* a pickup, so it reports Block_Static and
+         * Chip falls into the push branch below. Tile World shoves a block whose top tile it
+         * never looked at.
+         *
+         * SuperCC special-cases this pairing by name -- MSCreature.tryMove:
+         *
+         *     if (newTileFG.isPickup()) {
+         *         if (isChip) {
+         *             if (canEnter(direction, newTileBG) || newTileBG == Tile.BLOCK)
+         *                 pickupCheck = true;
+         *         }
+         *         ...
+         *     }
+         *
+         * and the move is then admitted by `(pickupCheck && blockMachineCheck)` and dispatched
+         * with `tryEnter(direction, newPosition, newTileFG, ...)` -- i.e. on the PICKUP. The
+         * block is never consulted, so it never moves; it is revealed only when Chip steps off.
+         *
+         * Note this is the ONLY background tile for which a pickup changes the answer. A key on
+         * a WALL is refused by both engines: `canEnter(dir, WALL)` is false, `newTileBG == BLOCK`
+         * is false, and Tile.isTransparent() is `ordinal() >= BUG_UP.ordinal()` (>= 0x40), which
+         * makes a key (0x64-0x67) TRANSPARENT, so the `!newTileFG.isTransparent()` term fails
+         * too. Hence Block_Static and nothing else.
+         *
+         * Measured on TCCLP #147 "Testing Lab", first divergence SuperCC t=457 / TW ct=912.
+         * The level is a tile showcase: row 7 is keys on Gravel, row 8 keys on Dirt, row 9 keys
+         * on BLOCK. Chip walks up column 26 into the KeyBlue-over-Block at 26,9:
+         *
+         *     SCC  t=457  chip=26,9  B:[... 8,16 8,18 9,16 9,18]          <- block stays put
+         *     TW   ct=912 chip=26,9  B:[... 26,8 8,16 8,18 9,16 9,18]     <- block SHOVED north
+         *
+         * Scope measured BEFORE writing the guard: 34 such cells, 11 levels, 6 sets. Nine of
+         * those levels currently REPLAY, so they are the regression surface and every one is
+         * checked. */
+        if (floor == Block_Static
+                && (iskey(cellat(to)->top.id) || isboots(cellat(to)->top.id)))
+            floor = cellat(to)->top.id;
+#endif
         if (!(movelaws[floor].chip & dir))
             return FALSE;
         if (floor == Socket && chipsneeded() > 0)
