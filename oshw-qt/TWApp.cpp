@@ -36,7 +36,7 @@ TileWorldMainWnd* g_pMainWnd = nullptr;
 // string on each production deploy (jc-1, jc-2, ...) so the running build is
 // always identifiable. Combined with the pack + level subtitle set in
 // tworld.c, the title reads "Tile World [jc-N] - <pack> - <level>".
-const QString TileWorldApp::s_sTitle = QStringLiteral("Tile World [jc-24]");
+const QString TileWorldApp::s_sTitle = QStringLiteral("Tile World [jc-25]");
 
 
 TileWorldApp::TileWorldApp(int& argc, char** argv)
