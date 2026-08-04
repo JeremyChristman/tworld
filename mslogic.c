@@ -3148,8 +3148,36 @@ static void endmovement(creature* cr, int dir) {
         return;
     }
 
+#ifdef PROBE_TELCOND
+    /* Every Chip teleport Tile World performs, so the list can be diffed against SuperCC's
+     * TELE stream. `broken` records what the load-time flag SAID, to separate the teleports
+     * step 1 newly enabled from the ones that always worked. */
+    if (getenv("TW_PROBE_TELCOND") && cr->id == Chip && floor == Teleport)
+        fprintf(stderr, "TWTELE\t%d\t%d\t%d,%d->%d,%d\tbroken=%d\n",
+                (int)state->game->number, (int)currenttime(),
+                oldpos % CXGRID, oldpos / CXGRID, newpos % CXGRID, newpos / CXGRID,
+                !!(tile->state & FS_BROKEN));
+#endif
     if (cr->id == Chip && floor == Teleport
-#ifdef NO_FIX_TELEPORT_BROKEN_DYNAMIC
+#ifndef NO_FIX_TELEPORT_BROKEN_DYNAMIC
+            /* A load-time-broken teleport is honored ONLY when this very move exposed it by
+             * pushing a block off it. That is the one case SuperCC reaches teleport() with a
+             * covered teleport -- tryEnter's BLOCK case pushes, then re-dispatches on the
+             * revealed tile (§78, 19 of JacquesS2 #7's 39 teleports arrive that way).
+             *
+             * Dropping the FS_BROKEN test outright (§79-§81) was too blunt: it also revived
+             * teleports SuperCC never performs. Measured on the two casualties --
+             *
+             *   geodave1 #64        TW ct=924  25,10->24,10 broken=1   SuperCC: no teleport
+             *   Jacques_Medium #22  TW ct=5304 23,26->22,26 broken=1   SuperCC: no teleport
+             *
+             * -- against SuperCC's only teleports on those levels (t=479 and t=1525; t=2654),
+             * all at tryEnter depth 1 on genuinely bare teleporters. So the flag does real
+             * work and only the block-exposed case may override it. */
+            && (!(tile->state & FS_BROKEN)
+                || prepush_destfloor == Block_Static
+                || (prepush_destfloor >= 0 && creatureid(prepush_destfloor) == Block))
+#else
             && !(tile->state & FS_BROKEN)
 #endif
        ) {
