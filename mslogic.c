@@ -1919,8 +1919,43 @@ static int canmakemove(creature const* cr, int dir, int flags) {
              * so a cloner underneath makes the guard PASS regardless, tryEnter runs,
              * `sliding` is cleared and the creature DOES drop. movelaws[CloneMachine]
              * refuses, so without this exclusion the predicate keeps the slot there. */
-            if (!(movelaws[cellat(to)->bot.id].creature & dir)
-                    && cellat(to)->bot.id != CloneMachine)
+            if ((!(movelaws[cellat(to)->bot.id].creature & dir)
+#ifndef NO_FIX_KEEPSLOT_FIRE
+                 /* MOD (Jeremy): FIRE refuses BUGS and WALKERS, which movelaws does not know.
+                  *
+                  * This predicate asks "would the terrain underneath have refused too?", and
+                  * answers with movelaws[].creature -- a per-TILE mask with no notion of which
+                  * creature is asking. SuperCC's canEnter is creature-type aware:
+                  *
+                  *     case FIRE -> getCreatureType() != BUG && getCreatureType() != WALKER;
+                  *
+                  * so for a walker or a bug the entry guard fails outright, tryEnter never
+                  * runs, `sliding` is never cleared, and the slider KEEPS ITS SLOT. Tile World
+                  * saw movelaws[Fire] = {NWSE, NWSE, NWSE}, concluded the terrain permits, and
+                  * dropped the slot instead.
+                  *
+                  * Measured on Jacques #922 at ct=834 (§85). A WALKER at 22,12 slides SOUTH
+                  * into a cell holding a fireball over FIRE:
+                  *
+                  *     KEEP 922 834 22,12/58/S destTop=55 destBot=0F law=1 -> DROP
+                  *
+                  * The drop re-appends it at the end of the slip list, which shifts the blob
+                  * at 24,6 from index 4 down to index 3 -- the slot the cursor has just left --
+                  * so the blob is never ticked and loses its move. The mutation streams show
+                  * SuperCC making NO mutation at all for that walker:
+                  *
+                  *     SCC  remove FIREBALL idx=2 ; add idx=9
+                  *          remove BLOB     idx=4                  <- ticked, leaves for good
+                  *     TW   remove 22,11/54 idx=2 ; append idx=9
+                  *          remove 22,12/58 idx=3 ; append idx=9    <- the walker, reordered
+                  *
+                  * This touches ONLY the keep-or-drop predicate. Whether Tile World lets a
+                  * walker walk into fire and die there is a separate question and is left
+                  * exactly as it was. */
+                 || (cellat(to)->bot.id == Fire
+                     && (cr->id == Bug || cr->id == Walker))
+#endif
+                ) && cellat(to)->bot.id != CloneMachine)
                 cmm_keepslot = TRUE;
 #endif
             if (!(flags & CMM_CLONECANTBLOCK)) /* not cloning */
