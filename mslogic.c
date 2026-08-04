@@ -2419,6 +2419,16 @@ static void choosechipmove(creature* cr, int discard) {
 
     if (!(currenttime() & 3))
         cr->state &= ~CS_HASMOVED;
+#ifdef TRACE_DESYNC
+    /* PROBE: the raw input stream and the goal, on EVERY tick, before anything consumes them.
+     * The M@ probe below sits after the CS_HASMOVED early-return, so it is blind to exactly the
+     * ticks where a click arrives while Chip has already moved -- which is the case in question. */
+    if (tracethistick())
+        fprintf(stderr, "CI@%d@%d,%d@in=%d@goal=%d@hasmoved=%d@slip=%d@slide=%d@dir=%d\n",
+                (int)currenttime(), (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                (int)currentinput(), goalpos(), !!(cr->state & CS_HASMOVED),
+                !!(cr->state & CS_SLIP), !!(cr->state & CS_SLIDE), (int)cr->dir);
+#endif
     if (cr->state & CS_HASMOVED) {
         if (currentinput() != NIL && hasgoal()) {
             cancelgoal();
@@ -3883,12 +3893,150 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
     }
 }
 
+#ifndef NO_FIX_CLICK_EARLY
+/* MOD (Jeremy): the "TSG stuff, not yet included" that the line below has been asking for.
+ *
+ * A MOUSE-driven voluntary move by a SLIDING Chip resolves BETWEEN his own slide and the
+ * blocks'/monsters' slide -- not after both, which is where Tile World puts every Chip move.
+ *
+ * SuperCC, MSLevel.tick, in order:
+ *
+ *     if (chip.isSliding()) moveChipSliding();                 <- Tile World's 2-slip-chip
+ *     if (moveType == CLICK_EARLY && voluntaryMoveAllowed) {   <- THIS. no Tile World counterpart
+ *         Direction sought = chip.seek(new Position(mouseGoal))[0];
+ *         if (!chip.isSliding() || !sought.equals(chip.getDirection())) {
+ *             failedDirections = moveChip(new Direction[]{sought});
+ *             voluntaryMoveAllowed = false;
+ *         }
+ *     }
+ *     tickNumber++;
+ *     slipList.tick();                                         <- Tile World's 3-slip-others
+ *     if (moveType == KEY) moveChip(directions);               <- Tile World's 4-chip
+ *
+ * and `moveType(c, halfMove, chipSliding)` returns CLICK_EARLY exactly when the move char is a
+ * click (or a WAIT continuing one), `mouseGoal != NO_CLICK`, and CHIP IS SLIDING. A keyboard
+ * move is KEY and stays after the slip list, which is what Tile World already does -- so this
+ * changes nothing for a solution without mouse moves.
+ *
+ * `moveChip` then refuses a sliding Chip unless he is on a force floor and the direction differs
+ * from his slide:
+ *     if (chip.isSliding()) {
+ *         if (!layerBG.get(chip.getPosition()).isFF())  continue;
+ *         if (direction == chip.getDirection())         continue;
+ *     }
+ * both of which are reproduced below.
+ *
+ * ⚠ seek()[0] ONLY -- the PRIMARY direction, with no fallback. Tile World's own
+ * chipmovetogoalpos() falls back to the secondary axis when the primary is blocked
+ * (`canmakemove(d1) ? d1 : d2`), and SuperCC does that for CLICK_LATE but NOT for CLICK_EARLY,
+ * which passes a one-element array. Using the fallback here would move Chip on a tick where
+ * SuperCC leaves him.
+ *
+ * ⚠ CS_HASMOVED is the analogue of `voluntaryMoveAllowed`, and it has to be cleared HERE as
+ * well. SuperCC sets `voluntaryMoveAllowed = true` at the top of every half-move tick; Tile
+ * World clears CS_HASMOVED inside choosechipmove(), which runs in phase 4 -- AFTER this point --
+ * so without the clear below the flag is still set from the previous move and this branch never
+ * fires. The alignment is exact: SuperCC's odd (half-move) tick is Tile World's ct == 0 mod 4.
+ *
+ * Measured on BlakeE1 #118 "Technical Difficulties", the last tick of the solution,
+ * SuperCC t=79 / TW ct=156:
+ *
+ *     SCC  t=78  chip=30,13 sliding bg=Force Floor Down   blocks 30,15 30,16
+ *          t=79  chip=31,14 -- slid to 30,14, then CLICK_EARLY stepped him EAST out of it
+ *     TW   ct=156 phase=2-slip-chip  cr=40@30,13 dir=4    <- slides to 30,14
+ *                 phase=3-slip-others cr=44@30,15 ...     <- block lands ON him, crushed
+ *                 (no phase=4-chip at all: the goal-following move is gated to ct&3 == 2)
+ *
+ * Scope measured BEFORE the port: of 22,927 solution files, exactly 19 contain a click char
+ * (22 clicks in total). Nothing without a mouse goal can reach this code, so that set of 19 --
+ * 16 of which currently replay -- is the entire regression surface.
+ */
+#ifdef TRACE_DESYNC
+/* PROBE: which guard refused. Written because the first build of this function fired ZERO times
+ * and "it did not fire" names no cause -- the §77 lesson. */
+#define CE_BAIL(why)  do { if (tracethistick()) \
+        fprintf(stderr, "CE@%d@%d,%d@goal=%d@slip=%d@slide=%d@hasmoved=%d@dir=%d@bot=%02X@%s\n", \
+                (int)currenttime(), (int)(getchip()->pos % CXGRID), (int)(getchip()->pos / CXGRID), \
+                goalpos(), !!(getchip()->state & CS_SLIP), !!(getchip()->state & CS_SLIDE), \
+                !!(getchip()->state & CS_HASMOVED), (int)getchip()->dir, \
+                floorat(getchip()->pos), (why)); \
+        return; } while (0)
+#else
+#define CE_BAIL(why)  return
+#endif
+
+static void chipclickearlymove(void) {
+    creature* cr;
+    int dir, d1, d2, x, y;
+
+    cr = getchip();
+    if (!hasgoal())
+        CE_BAIL("no-goal");
+    if (cr->hidden || chipstatus() != CHIP_OKAY)
+        CE_BAIL("hidden-or-dead");
+    if (!(cr->state & (CS_SLIP | CS_SLIDE)))
+        CE_BAIL("not-sliding");                 /* CLICK_EARLY requires a SLIDING Chip */
+    if (!(currenttime() & 3))
+        cr->state &= ~CS_HASMOVED;              /* SuperCC: isHalfMove -> voluntaryMoveAllowed */
+    if (cr->state & CS_HASMOVED)
+        CE_BAIL("hasmoved");
+    if (goalpos() == cr->pos) {
+        cancelgoal();
+        CE_BAIL("goal-reached");
+    }
+    if (!isslide(floorat(cr->pos)))
+        CE_BAIL("not-on-ff");                   /* moveChip: a sliding Chip needs a force floor */
+
+    /* seek()[0]: the axis with the LARGER remaining distance, ties going to the vertical. */
+    y = goalpos() / CXGRID - cr->pos / CXGRID;
+    x = goalpos() % CXGRID - cr->pos % CXGRID;
+    d1 = y < 0 ? NORTH : y > 0 ? SOUTH : NIL;
+    d2 = x < 0 ? WEST  : x > 0 ? EAST  : NIL;
+    if (y < 0) y = -y;
+    if (x < 0) x = -x;
+    /* No fallback to the other axis: SuperCC's seek() picks the axis with the larger remaining
+     * distance (ties to the vertical) and CLICK_EARLY passes that ONE direction. With
+     * goalpos() != cr->pos already established above, the primary is never NIL. */
+    dir = (x > y) ? d2 : d1;
+    if (dir == NIL)
+        CE_BAIL("no-direction");
+    if (dir == cr->dir)
+        CE_BAIL("sought==slidedir");            /* sought.equals(chip.getDirection()) */
+#ifdef TRACE_DESYNC
+    if (tracethistick())
+        fprintf(stderr, "CE@%d@%d,%d@goal=%d@slip=%d@slide=%d@hasmoved=%d@dir=%d@bot=%02X@FIRE-%d\n",
+                (int)currenttime(), (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID),
+                goalpos(), !!(cr->state & CS_SLIP), !!(cr->state & CS_SLIDE),
+                !!(cr->state & CS_HASMOVED), (int)cr->dir, floorat(cr->pos), dir);
+#endif
+
+    /* SuperCC clears voluntaryMoveAllowed UNCONDITIONALLY after the attempt, and clears the goal
+     * only when the move failed:
+     *     failedDirections = moveChip(new Direction[]{sought});
+     *     voluntaryMoveAllowed = false;
+     *     ...
+     *     else if ((moveType == CLICK_LATE || moveType == CLICK_EARLY) && failedDirections)
+     *         mouseGoal = NO_CLICK;
+     * Tile World's own phase-4 likewise sets CS_HASMOVED without consulting the return value. */
+    if (!advancecreature(cr, dir))
+        cancelgoal();                           /* failedDirections -> mouseGoal = NO_CLICK */
+    cr->state |= CS_HASMOVED;                   /* voluntaryMoveAllowed = false */
+}
+#endif
+
 static void floormovements(void) /* split version with patch */
 {
     SCHEDPHASE("2-slip-chip");
     floormovements_of_chip();
     updatesliplist(); /* remove deadwood */
     /* TSG stuff, not yet included */
+#ifndef NO_FIX_CLICK_EARLY
+    if (!checkforending()) {
+        SCHEDPHASE("2b-click-early");
+        chipclickearlymove();
+        updatesliplist();
+    }
+#endif
     if (!checkforending()) { /* Squish patch (maybe was oversight?) */
         SCHEDPHASE("3-slip-others");
         floormovements_of_blocks_and_monsters();
