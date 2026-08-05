@@ -2476,6 +2476,31 @@ static void choosechipmove(creature* cr, int discard) {
         if ((dir & (NORTH | SOUTH)) && (dir & (EAST | WEST)))
             dir &= NORTH | SOUTH;
         lastmove() = dir;
+#ifndef NO_FIX_KEY_CLEARS_GOAL
+        /* MOD (Jeremy): a KEYBOARD move abandons any outstanding mouse goal.
+         *
+         * SuperCC, at the foot of MSLevel.tick:
+         *     if (moveType == KEY || chip.getPosition().getIndex() == mouseGoal)
+         *         mouseGoal = NO_CLICK;
+         * -- pressing a direction key cancels the click outright. Tile World cancels the goal on
+         * several paths (the discard path, and new input arriving while CS_HASMOVED) but NOT on
+         * an ordinary successful key move, so a click stayed live indefinitely and kept steering
+         * Chip on every tick that carried no input.
+         *
+         * Invisible until the .tws holds the RIGHT click target: with the old, wrong targets a
+         * stale goal usually pointed somewhere harmless. Measured on JacquesOld #159
+         * "Teeth Hacker" once SuperCC's TWSWriter was fixed to export the true target:
+         *
+         *     click at tick 1936, chip 19,0 -> target 21,0
+         *     ...29 keyboard moves follow immediately ("dd-d-d-d-d-d-...")
+         *     SCC  t=1996  chip=31,15   <- goal was dropped at the first key press
+         *     TW   ct=3990 chip=31,14   <- still walking toward 21,0, 60 ticks later
+         *
+         * `dir` here is currentinput(), which is NIL on a tick with no input -- only a real
+         * key press cancels. */
+        if (dir != NIL)
+            cancelgoal();
+#endif
     }
 
     if (dir == NIL && hasgoal() && (currenttime() & 3) == 2)
