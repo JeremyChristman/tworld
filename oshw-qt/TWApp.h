@@ -12,7 +12,14 @@ class TileWorldMainWnd;
 class TileWorldApp : public QApplication
 {
 public:
+	// MOD (Jeremy): the build tag is TOGGLEABLE AT RUNTIME -- see TWApp.cpp.
+	// s_sTitle is the bare program name; s_sBuildTag is "[jc-N]"; WindowTitle()
+	// joins them when the tag is switched on. Use WindowTitle() everywhere a
+	// title is displayed, never s_sTitle directly.
 	static const QString s_sTitle;
+	static const QString s_sBuildTag;
+	static bool ShowBuildTag();
+	static QString WindowTitle();
 
 	TileWorldApp(int& argc, char** argv);
 	~TileWorldApp();

@@ -2201,6 +2201,15 @@ int tworld(int argc, char* argv[]) {
     loadhistory();
     loadsettings();
 
+    /* MOD (Jeremy): re-apply the window title now that the settings are in.
+     * initoptionswithcmdline() -> initializesystem() -> oshwinitialize() has already
+     * created and titled the window, and that happened BEFORE loadsettings(), so the
+     * runtime "showbuildtag" toggle could not have been read yet. savedir is only
+     * known after the command line is parsed, so loadsettings() cannot move earlier;
+     * re-titling here is the cheap half. setsubtitle(NULL) recomposes through
+     * TileWorldApp::WindowTitle() with an empty subtitle. */
+    setsubtitle(NULL);
+
     atexit(shutdownsystem);
 
     char const* selectedseries = getstringsetting("selectedseries");
