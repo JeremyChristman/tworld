@@ -1342,7 +1342,7 @@ int TileWorldMainWnd::DisplayInputPrompt(const char* szPrompt, char* pInput, int
 		case INPUT_YESNO:
 		{
 			QMessageBox::StandardButton eBtn = QMessageBox::question(
-				this, TileWorldApp::s_sTitle, TWTextCoder::decode(szPrompt),
+				this, TileWorldApp::WindowTitle(), TWTextCoder::decode(szPrompt),
 				QMessageBox::Yes|QMessageBox::No);
 			pInput[0] = (eBtn==QMessageBox::Yes) ? 'Y' : 'N';
 			pInput[1] = '\0';
@@ -1353,7 +1353,7 @@ int TileWorldMainWnd::DisplayInputPrompt(const char* szPrompt, char* pInput, int
 		default:
 		{
 			// TODO: proper validation, maybe embedded prompt
-			QString sText = QInputDialog::getText(this, TileWorldApp::s_sTitle,
+			QString sText = QInputDialog::getText(this, TileWorldApp::WindowTitle(),
 				TWTextCoder::decode(szPrompt));
 			if (sText.isEmpty())
 				return false;
@@ -1384,12 +1384,21 @@ void ding(void)
  */
 void setsubtitle(char const *subtitle)
 {
+	/* MOD (Jeremy): BATCH MODE HAS NO WINDOW. main() short-circuits to tworld()
+	 * for the one-letter options (-b -r -l -s -t -h -d -v -V) WITHOUT constructing
+	 * TileWorldApp, so g_pMainWnd is null. The pre-existing call sites are all on
+	 * GUI-only paths and never noticed; the jc-30 re-title after loadsettings() is
+	 * on the common path and crashed every batch run instantly -- the corpus guard
+	 * ("NO invalid solutions anywhere ... the binary almost certainly failed to
+	 * start") caught it, which is precisely why that guard exists. */
+	if (!g_pMainWnd)
+		return;
 	g_pMainWnd->SetSubtitle(subtitle);
 }
 
 void TileWorldMainWnd::SetSubtitle(const char* szSubtitle)
 {
-	QString sTitle = TileWorldApp::s_sTitle;
+	QString sTitle = TileWorldApp::WindowTitle();
 	if (szSubtitle && *szSubtitle)
 		sTitle += QStringLiteral(" - ") + TWTextCoder::decode(szSubtitle);
 	setWindowTitle(sTitle);

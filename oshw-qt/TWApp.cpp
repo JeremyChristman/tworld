@@ -11,6 +11,7 @@
 #include "../gen.h"
 #include "../defs.h"
 #include "../oshw.h"
+#include "../settings.h"
 #include "TWTextCoder.h"
 
 #include <QClipboard>
@@ -32,11 +33,41 @@ TileWorldApp* g_pApp = nullptr;
 TileWorldMainWnd* g_pMainWnd = nullptr;
 
 
-// MOD (Jeremy): fork build tag shown in the window/dialog title. Bump this
-// string on each production deploy (jc-1, jc-2, ...) so the running build is
-// always identifiable. Combined with the pack + level subtitle set in
-// tworld.c, the title reads "Tile World [jc-N] - <pack> - <level>".
-const QString TileWorldApp::s_sTitle = QStringLiteral("Tile World [jc-29]");
+// MOD (Jeremy): fork build tag shown in the window/dialog title. Bump s_sBuildTag
+// on each production deploy (jc-1, jc-2, ...) so the running build is identifiable.
+// Combined with the pack + level subtitle set in tworld.c, the title reads
+// "Tile World [jc-N] - <pack> - <level>".
+//
+// TOGGLEABLE AT RUNTIME (jc-30). The tag is useful while the engine is under active
+// modification and just noise the rest of the time, so it is switched by a setting
+// rather than by a rebuild:
+//
+//     <CC>\save\settings      showbuildtag=0   -> "Tile World"
+//                             showbuildtag=1   -> "Tile World [jc-N]"
+//                             (absent)         -> ON, the default
+//
+// getintsetting() returns -1 for a missing key, so "anything but an explicit 0" is
+// ON and a fresh install keeps the tag. The settings file is a plain key=value list
+// that round-trips through a map, so hand-adding the line is safe and it survives
+// savesettings().
+//
+// ⚠ The tag is NOT the only way to identify a build -- the string is in the binary,
+// so `strings` / a UTF-16LE search still names the release even with the tag off.
+// Turning it off never makes a deployed exe unidentifiable.
+const QString TileWorldApp::s_sTitle    = QStringLiteral("Tile World");
+const QString TileWorldApp::s_sBuildTag = QStringLiteral("[jc-30]");
+
+bool TileWorldApp::ShowBuildTag()
+{
+	return getintsetting("showbuildtag") != 0;
+}
+
+QString TileWorldApp::WindowTitle()
+{
+	if (!ShowBuildTag())
+		return s_sTitle;
+	return s_sTitle + QLatin1Char(' ') + s_sBuildTag;
+}
 
 
 TileWorldApp::TileWorldApp(int& argc, char** argv)
@@ -97,7 +128,7 @@ bool TileWorldApp::Initialize(bool bSilence, int nSoundBufSize,
 	m_bFullScreen = bFullScreen;
 	
 	g_pMainWnd = new TileWorldMainWnd;
-	g_pMainWnd->setWindowTitle(s_sTitle);
+	g_pMainWnd->setWindowTitle(WindowTitle());
 
 	if ( ! (
 		_generictimerinitialize(bShowHistogram) &&
