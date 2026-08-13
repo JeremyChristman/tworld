@@ -94,6 +94,7 @@ private:
 	int GetTWKeyForAction(QAction* pAction) const;
 
 	/* MOD (Jeremy): user-selectable background color. See TWTheme. */
+	QColor StockBackground() const;
 	void SetBackgroundColor(const QColor& color, bool bSave);
 	void ChooseBackgroundColor();
 	

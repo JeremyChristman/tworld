@@ -37,17 +37,11 @@ namespace
 }
 
 
-QColor TWTheme::defaultBackground()
-{
-	return QColor(40, 80, 128);
-}
-
-
-QColor TWTheme::loadBackground()
+QColor TWTheme::loadBackground(const QColor& fallback)
 {
 	char const *saved = getstringsetting(BGCOLOR_SETTING);
 	if (saved == nullptr)
-		return defaultBackground();
+		return fallback;
 
 	/* An unparseable value is treated as "no preference" rather than as an
 	 * error: a hand-edited settings file should never be able to stop the
@@ -55,7 +49,7 @@ QColor TWTheme::loadBackground()
 	 */
 	QColor color(QString::fromLatin1(saved).trimmed());
 	if (!color.isValid())
-		return defaultBackground();
+		return fallback;
 
 	/* A translucent window background is not something the picker can
 	 * produce, but a hand-edited "#80285080" would be.

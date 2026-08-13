@@ -247,7 +247,7 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	 * choosegameatstartup(), which is what eventually constructs this window.
 	 */
 	m_stockPalette = m_pMainWidget->palette();
-	SetBackgroundColor(TWTheme::loadBackground(), false);
+	SetBackgroundColor(TWTheme::loadBackground(StockBackground()), false);
 
 	m_pTblList->setItemDelegate(new TWStyledItemDelegate(m_pTblList));
 	
@@ -1416,9 +1416,18 @@ void TileWorldMainWnd::SetSubtitle(const char* szSubtitle)
  * choice permanent; the live preview passes false so that hovering around the
  * color picker never writes to the settings file.
  */
+/* MOD (Jeremy): the stock Tile World blue, read back out of the palette
+ * TWMainWnd.ui built rather than repeated as a literal, so the .ui stays the
+ * single source of truth for it.
+ */
+QColor TileWorldMainWnd::StockBackground() const
+{
+	return m_stockPalette.color(QPalette::Active, QPalette::Window);
+}
+
 void TileWorldMainWnd::SetBackgroundColor(const QColor& color, bool bSave)
 {
-	QColor const bg = color.isValid() ? color : TWTheme::defaultBackground();
+	QColor const bg = color.isValid() ? color : StockBackground();
 
 	m_bgColor = bg;
 	m_pMainWidget->setPalette(TWTheme::recolor(m_stockPalette, bg));
@@ -1443,6 +1452,31 @@ void TileWorldMainWnd::ChooseBackgroundColor()
 
 	bool const bAccepted = (dialog.exec() == QDialog::Accepted)
 		&& dialog.selectedColor().isValid();
+
+	/* Two things have to be put right before the game loop resumes, both of
+	 * them consequences of exec() running a nested event loop inside the
+	 * loop's own eventupdate() call:
+	 *
+	 * 1. HandleEvent() deliberately forwards EVERY key to keyeventcallback()
+	 *    even while a modal is up (it only declines to CONSUME them), to keep
+	 *    the game's key state in sync. Those keys sit in the key table as
+	 *    KS_STRUCK, and the next input() turns a struck key straight into a
+	 *    command -- so typing a hex value or arrow-keying around the swatch
+	 *    grid would fire Chip moves and game commands the moment the picker
+	 *    closes. The other two exec() sites in this file already answer this
+	 *    with ReleaseAllKeys(); this one must too.
+	 *
+	 * 2. waitfortick() was never called while the dialog was up, so
+	 *    nexttickat is now far in the past and has no clamp -- the loop would
+	 *    burn every missed tick back-to-back with no input sampled, standing
+	 *    Chip still while the monsters and the clock ran. settimer(+1)
+	 *    rebases it to now. Safe in every state: a PAUSED game never reaches
+	 *    waitfortick() (tworld.c takes the input(TRUE) branch), and unpausing
+	 *    recomputes nexttickat anyway.
+	 */
+	ReleaseAllKeys();
+	settimer(+1);
+	this->activateWindow();
 
 	/* Cancel has to undo the preview, so either way the window is repainted
 	 * from a known color rather than left wherever the picker wandered.
@@ -1690,7 +1724,7 @@ void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 
 	if (pAction == action_RestoreBackground)
 	{
-		SetBackgroundColor(TWTheme::defaultBackground(), true);
+		SetBackgroundColor(StockBackground(), true);
 		return;
 	}
 
