@@ -20,7 +20,9 @@
 
 #include <QMainWindow>
 
+#include <QColor>
 #include <QLocale>
+#include <QPalette>
 
 class QSortFilterProxyModel;
 
@@ -78,7 +80,8 @@ private slots:
 	void OnTextReturn();
 	void OnCopyText();
 	void OnMenuActionTriggered(QAction* pAction);
-	
+	void OnBackgroundColorPreview(const QColor& color);
+
 private:
 	bool HandleEvent(QObject* pObject, QEvent* pEvent);
 	void SetCurrentPage(Page ePage);
@@ -89,6 +92,10 @@ private:
 	void ReleaseAllKeys();
 	void PulseKey(int nTWKey);
 	int GetTWKeyForAction(QAction* pAction) const;
+
+	/* MOD (Jeremy): user-selectable background color. See TWTheme. */
+	void SetBackgroundColor(const QColor& color, bool bSave);
+	void ChooseBackgroundColor();
 	
 	enum HintMode { HINT_EMPTY, HINT_TEXT, HINT_INITSTATE };
 	bool SetHintMode(HintMode newmode);
@@ -118,6 +125,14 @@ private:
 	bool m_bReplay;
     QString m_title;
     QString m_author;
+
+	/* MOD (Jeremy): the palette as TWMainWnd.ui built it, captured before any
+	 * recoloring. Every retint derives from this, never from the widget's
+	 * current palette -- deriving from the current one would compound, and
+	 * its Window role is a gradient brush with no single color to read back.
+	 */
+	QPalette m_stockPalette;
+	QColor m_bgColor;
 
 	QSortFilterProxyModel* m_pSortFilterProxyModel;
 	QLocale m_locale;
