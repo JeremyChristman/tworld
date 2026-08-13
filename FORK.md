@@ -78,10 +78,12 @@ exactly what's mine:
    `Base` (the level list, the find box, the LCD panels) keep white text and are left alone, as are
    the green list highlight and the game view itself.
 
-   Known behavior: the picker is modal, and the menu bar only exists on the game page, so on a level
-   that is already **running** the clock keeps ticking in real time while the picker is open
-   (measured: 11 seconds lost across a 12.9-second dialog — normal passage, not a catch-up burst).
-   On a level that has not been started yet it costs nothing.
+   Known behavior: the picker is modal and the menu bar only exists on the game page, so changing
+   the color means being on a level. A level that has not been started costs nothing. On a level
+   already **running**, the dialog's nested event loop blocks the game loop, so `waitfortick()` is
+   not called while it is open; `settimer(+1)` on close rebases the tick clock, without which
+   `generic/timer.c` (which has no clamp) replayed every missed tick in a burst with no input
+   sampled. Measured with a ~10 s dialog: **13 seconds of clock lost before that fix, 3 after**.
 
 ## Building (Windows, MSYS2)
 
