@@ -18,6 +18,7 @@
 #include "../err.h"
 #include "../help.h"
 #include "TWTextCoder.h"
+#include "TWTheme.h"
 
 extern int pedanticmode;
 
@@ -30,6 +31,7 @@ extern int pedanticmode;
 #include <QWheelEvent>
 #include <QShortcut>
 
+#include <QColorDialog>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QPushButton>
@@ -219,6 +221,8 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	m_bReplay(false),
     m_title(""),
     m_author(""),
+	m_stockPalette(),
+	m_bgColor(),
 	m_pSortFilterProxyModel()
 {
 	setupUi(this);
@@ -233,14 +237,17 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 		pGameLayout->setAlignment(m_pMessagesFrame, Qt::AlignHCenter);
 	}
 	
-	QPalette pal = m_pMainWidget->palette();
-	QLinearGradient gradient(0, 0, 1, 1);
-	gradient.setCoordinateMode(QGradient::StretchToDeviceMode);
-	QColor color = pal.window().color();
-	gradient.setColorAt(0, color.lighter(125));
-	gradient.setColorAt(1, color.darker(125));
-	pal.setBrush(QPalette::Window, QBrush(gradient));
-	m_pMainWidget->setPalette(pal);
+	/* MOD (Jeremy): capture the palette TWMainWnd.ui built before anything
+	 * modifies it, then paint the saved background color through it. The
+	 * stock blue goes through this same path -- including the diagonal
+	 * gradient that used to be built inline here -- so there is one way for
+	 * the window to get its colors and no second one to drift from it.
+	 *
+	 * Reading the setting here is safe: tworld() calls loadsettings() before
+	 * choosegameatstartup(), which is what eventually constructs this window.
+	 */
+	m_stockPalette = m_pMainWidget->palette();
+	SetBackgroundColor(TWTheme::loadBackground(), false);
 
 	m_pTblList->setItemDelegate(new TWStyledItemDelegate(m_pTblList));
 	
@@ -1405,6 +1412,50 @@ void TileWorldMainWnd::SetSubtitle(const char* szSubtitle)
 }
 
 
+/* MOD (Jeremy): repaint the window in the given color. Passing bSave makes the
+ * choice permanent; the live preview passes false so that hovering around the
+ * color picker never writes to the settings file.
+ */
+void TileWorldMainWnd::SetBackgroundColor(const QColor& color, bool bSave)
+{
+	QColor const bg = color.isValid() ? color : TWTheme::defaultBackground();
+
+	m_bgColor = bg;
+	m_pMainWidget->setPalette(TWTheme::recolor(m_stockPalette, bg));
+
+	if (bSave)
+		TWTheme::saveBackground(bg);
+}
+
+void TileWorldMainWnd::ChooseBackgroundColor()
+{
+	QColor const before = m_bgColor;
+
+	QColorDialog dialog(before, this);
+	dialog.setWindowTitle(tr("Background Color"));
+	/* Qt's own picker rather than the platform one: it is guaranteed to be
+	 * present in the static build, and it reports each color as it is
+	 * chosen, which is what makes the live preview below possible.
+	 */
+	dialog.setOption(QColorDialog::DontUseNativeDialog, true);
+	connect(&dialog, &QColorDialog::currentColorChanged,
+		this, &TileWorldMainWnd::OnBackgroundColorPreview);
+
+	bool const bAccepted = (dialog.exec() == QDialog::Accepted)
+		&& dialog.selectedColor().isValid();
+
+	/* Cancel has to undo the preview, so either way the window is repainted
+	 * from a known color rather than left wherever the picker wandered.
+	 */
+	SetBackgroundColor(bAccepted ? dialog.selectedColor() : before, bAccepted);
+}
+
+void TileWorldMainWnd::OnBackgroundColorPreview(const QColor& color)
+{
+	SetBackgroundColor(color, false);
+}
+
+
 /* Display a message to the user. cfile and lineno can be NULL and 0
  * respectively; otherwise, they identify the source code location
  * where this function was called from. prefix is an optional string
@@ -1628,6 +1679,19 @@ void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 	    setintsetting("forceshowtimer", pAction->isChecked() ? 1 : 0);
 		drawscreen(TRUE);
 	    return;
+	}
+
+	/* MOD (Jeremy): user-selectable background color. */
+	if (pAction == action_BackgroundColor)
+	{
+		ChooseBackgroundColor();
+		return;
+	}
+
+	if (pAction == action_RestoreBackground)
+	{
+		SetBackgroundColor(TWTheme::defaultBackground(), true);
+		return;
 	}
 
 	if (pAction == action_About)

@@ -21,14 +21,14 @@ exactly what's mine:
    it fires. Levels were built on it deliberately (TLFC3's *BLOCKED* / *REENTRY* / *THROUGH THE
    GATES*). Tile World discarded these wirings, so SuperCC solutions for such levels could not
    replay. **On by default**; build with `-DCMAKE_C_FLAGS=-DNO_FIX_ROW32_CLONER` to get the old
-   discard-the-wiring behaviour back.
+   discard-the-wiring behavior back.
    Measured over 269 MS sets / 20,332 valid solutions plus 909 Lynx solutions, same tree built both
-   ways: **on = 4 fixes, 0 regressions**; off reproduces the old behaviour exactly, down to an
+   ways: **on = 4 fixes, 0 regressions**; off reproduces the old behavior exactly, down to an
    identical stderr warning census.
 
 3. **Broken-teleport slide state** (`mslogic.c`, `NO_FIX_BROKEN_TELEPORT_SLIDE`).
    A teleport lying under a floor tile is flagged `FS_BROKEN` at load, and every place that *acts* on
-   a teleport honours that — `teleportcreature()` and `endmovement()` both skip it. The slide code did
+   a teleport honors that — `teleportcreature()` and `endmovement()` both skip it. The slide code did
    not: after bouncing Chip off a blocked slide it re-armed his slip state, and `choosechipmove()`
    discards input from a slipping Chip, so the player's next move was swallowed. Fixes `TCCLP#283`.
 
@@ -59,6 +59,29 @@ exactly what's mine:
    of a batch run. When compiled with `-DTRACE_DESYNC`, `advancegame()` dumps the
    shared-RNG value + blob/walker positions each engine tick to stderr, for diffing against
    SuperCC's trace to pin SuperCC→Tile World solution-replay desyncs. See the RE writeup below.
+
+7. **User-selectable background color** (`oshw-qt/TWTheme.{h,cpp}` (new), `oshw-qt/TWMainWnd.{h,cpp,ui}`).
+   **Options > Background Color...** opens a full color picker with a live preview; **Options >
+   Restore Default Background** goes back to the stock Tile World blue. The choice is written to
+   `<CC>\save\settings` as `bgcolor=#rrggbb` the moment it is made (not just at exit) and is read
+   back in `TileWorldMainWnd`'s constructor, so it survives restarts. Any color name `QColor`
+   understands works if the line is hand-edited (`bgcolor=darkorange`); an unparseable value falls
+   back to the default rather than failing to start.
+
+   The stock look is **one color plus five shades of it** — `TWMainWnd.ui` hardcodes #285080 for
+   Window/Button and its `lighter(150)/lighter(125)/darker(200)/darker(150)` derivations for the
+   frame borders. `TWTheme::recolor()` reproduces exactly that derivation from whatever color is
+   chosen, so the whole window retints as one theme instead of one panel changing and the trim
+   staying blue. Rendering with the default color is **pixel-identical to jc-30** (verified: 0 of
+   673,360 pixels differ on the same level). Foreground text flips between white and black by WCAG
+   relative luminance, so pale backgrounds stay readable; roles that sit on the deliberately black
+   `Base` (the level list, the find box, the LCD panels) keep white text and are left alone, as are
+   the green list highlight and the game view itself.
+
+   Known behavior: the picker is modal, and the menu bar only exists on the game page, so on a level
+   that is already **running** the clock keeps ticking in real time while the picker is open
+   (measured: 11 seconds lost across a 12.9-second dialog — normal passage, not a catch-up burst).
+   On a level that has not been started yet it costs nothing.
 
 ## Building (Windows, MSYS2)
 

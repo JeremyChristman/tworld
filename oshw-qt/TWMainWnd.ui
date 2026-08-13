@@ -2318,6 +2318,9 @@ p, li { white-space: pre-wrap; }
     </property>
     <addaction name="action_displayCCX"/>
     <addaction name="action_forceShowTimer"/>
+    <addaction name="separator"/>
+    <addaction name="action_BackgroundColor"/>
+    <addaction name="action_RestoreBackground"/>
    </widget>
    <widget class="QMenu" name="menu_Help">
     <property name="title">
@@ -2434,6 +2437,16 @@ p, li { white-space: pre-wrap; }
   <action name="action_TimesClipboard">
    <property name="text">
     <string>&amp;Copy Best Times to Clipboard</string>
+   </property>
+  </action>
+  <action name="action_BackgroundColor">
+   <property name="text">
+    <string>&amp;Background Color...</string>
+   </property>
+  </action>
+  <action name="action_RestoreBackground">
+   <property name="text">
+    <string>&amp;Restore Default Background</string>
    </property>
   </action>
   <action name="action_About">

@@ -2201,13 +2201,22 @@ int tworld(int argc, char* argv[]) {
     loadhistory();
     loadsettings();
 
-    /* MOD (Jeremy): re-apply the window title now that the settings are in.
-     * initoptionswithcmdline() -> initializesystem() -> oshwinitialize() has already
-     * created and titled the window, and that happened BEFORE loadsettings(), so the
-     * runtime "showbuildtag" toggle could not have been read yet. savedir is only
-     * known after the command line is parsed, so loadsettings() cannot move earlier;
-     * re-titling here is the cheap half. setsubtitle(NULL) recomposes through
-     * TileWorldApp::WindowTitle() with an empty subtitle. */
+    /* MOD (Jeremy): re-apply the window title now that the settings are in, so
+     * the runtime "showbuildtag" toggle is reflected as early as possible.
+     *
+     * CORRECTED 2026-08-12: this comment used to claim the window already
+     * existed here, via initoptionswithcmdline() -> initializesystem(). It does
+     * not. initializesystem() is called from choosegameatstartup() BELOW, so
+     * g_pMainWnd is still null on this line and setsubtitle() returns
+     * immediately -- the call is a harmless no-op kept for the day that
+     * ordering changes. The build tag toggles correctly regardless, because
+     * every later setsubtitle() recomposes the title through
+     * TileWorldApp::WindowTitle(), which reads the by-then-loaded setting.
+     *
+     * The useful consequence: settings ARE loaded before the main window is
+     * constructed, so the window can read them directly in its constructor
+     * (see TileWorldMainWnd, which does exactly that for the background color
+     * and the Options state). */
     setsubtitle(NULL);
 
     atexit(shutdownsystem);
