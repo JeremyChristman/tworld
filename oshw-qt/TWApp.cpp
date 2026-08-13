@@ -55,7 +55,7 @@ TileWorldMainWnd* g_pMainWnd = nullptr;
 // so `strings` / a UTF-16LE search still names the release even with the tag off.
 // Turning it off never makes a deployed exe unidentifiable.
 const QString TileWorldApp::s_sTitle    = QStringLiteral("Tile World");
-const QString TileWorldApp::s_sBuildTag = QStringLiteral("[jc-31]");
+const QString TileWorldApp::s_sBuildTag = QStringLiteral("[jc-32]");
 
 bool TileWorldApp::ShowBuildTag()
 {

@@ -18,17 +18,16 @@
 class TWTheme
 {
 public:
-	/* The stock Tile World blue, #285080. This is what Restore Default
-	 * Background goes back to, and the fallback whenever the saved setting
-	 * is missing or unparseable.
+	/* The background color recorded in <CC>\save\settings, or fallback if
+	 * the key is absent or not a valid color. Only meaningful after
+	 * loadsettings() has run.
+	 *
+	 * The stock blue is passed IN rather than hardcoded here: its one true
+	 * copy is TWMainWnd.ui, and the window hands over the value it read out
+	 * of the captured palette. Editing the .ui therefore cannot leave a
+	 * second, stale #285080 behind in this file.
 	 */
-	static QColor defaultBackground();
-
-	/* The background color recorded in <CC>\save\settings, or
-	 * defaultBackground() if the key is absent or not a valid color.
-	 * Only meaningful after loadsettings() has run.
-	 */
-	static QColor loadBackground();
+	static QColor loadBackground(const QColor& fallback);
 
 	/* Record the color in the settings map and flush the file immediately,
 	 * so the choice survives even if this session never shuts down cleanly.
