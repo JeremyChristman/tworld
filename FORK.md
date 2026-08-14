@@ -63,7 +63,7 @@ exactly what's mine:
 7. **User-selectable background color** (`oshw-qt/TWTheme.{h,cpp}` (new), `oshw-qt/TWMainWnd.{h,cpp,ui}`).
    **Options > Background Color...** opens a full color picker with a live preview; **Options >
    Restore Default Background** goes back to the stock Tile World blue. The choice is written to
-   `<CC>\save\settings` as `bgcolor=#rrggbb` the moment it is made (not just at exit) and is read
+   `tw_settings.ini` as `bgcolor=#rrggbb` the moment it is made (not just at exit) and is read
    back in `TileWorldMainWnd`'s constructor, so it survives restarts. Any color name `QColor`
    understands works if the line is hand-edited (`bgcolor=darkorange`); an unparseable value falls
    back to the default rather than failing to start.

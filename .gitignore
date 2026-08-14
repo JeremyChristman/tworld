@@ -12,3 +12,8 @@
 CMakeCache.txt
 CMakeFiles/
 build-*/
+
+# Release packaging output (package.ps1): the zip attached to the GitHub
+# release, plus the staged folder it is built from. Contains the built exe and
+# redistributable DLLs -- artifacts, not source.
+/dist/

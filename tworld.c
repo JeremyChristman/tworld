@@ -1839,6 +1839,11 @@ static int choosegame(gamespec* gs, char const* lastseries) {
  * Initialization functions.
  */
 
+/* MOD (Jeremy): the directory the program itself lives in (or was started from). settings.cpp
+ * reads and writes tw_settings.ini here; see the comment on sfname there for why the settings file
+ * moved out of the save directory. Defined here because initdirs() below is what resolves it. */
+char *appdir = NULL;
+
 /* Set the four directories that the program uses (the series
  * directory, the series data directory, the resource directory, and
  * the save directory).  Any or all of the arguments can be NULL,
@@ -1896,6 +1901,14 @@ static void initdirs(char const* series, char const* seriesdat,
 #endif
         }
     }
+
+    /* MOD (Jeremy): the program's own directory, published so settings.cpp can put
+     * tw_settings.ini beside the executable instead of inside the save directory. It is the same
+     * "root" the res/sets/data directories hang off -- $TWORLDDIR, or ROOTDIR on a system build,
+     * or "." for the portable Windows release, which is the case that matters here. Resolved even
+     * when -R/-L/-D were all given, because those override the subdirectories, not the root. */
+    appdir = getpathbuffer();
+    strcpy(appdir, root ? root : ".");
 
     resdir = getpathbuffer();
     if (res)

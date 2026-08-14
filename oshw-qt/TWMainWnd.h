@@ -103,6 +103,15 @@ private:
 
 	bool m_bSetupUi;
 	bool m_bWindowClosed;
+
+	/* MOD (Jeremy, jc-33): legacy (Tile World 2.2) score-list styling. The table widget is shared
+	 * with the level-set picker, solution list and help pages, so the style is applied for the
+	 * score list only and cleared again afterwards; m_bScoreListStyled tracks which state it is
+	 * in, and m_nDefaultRowHeight remembers the stock row height to restore. */
+	void ApplyScoreListStyle(bool bLegacy);
+	bool m_bScoreListStyled = false;
+	int m_nDefaultRowHeight = 0;
+	static int const kLegacyRowHeight = 25;
 	
 	Qt_Surface* m_pSurface;
 	Qt_Surface* m_pInvSurface;

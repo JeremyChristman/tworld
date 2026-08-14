@@ -35,6 +35,7 @@ extern int pedanticmode;
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QPushButton>
+#include <QHeaderView>   // MOD (Jeremy, jc-33): legacy score-list header styling
 
 #include <QTextDocument>
 
@@ -104,8 +105,14 @@ protected:
 	
 	int m_nRows, m_nCols;
 	std::vector<ItemInfo> m_vecItems;
-	
+	/* MOD (Jeremy, jc-33): when true, leave U+00B7 alone instead of swapping it for U+25CF.
+	 * That swap arrived after 2.2, so the legacy score list must not do it. */
+	bool m_bLegacyDots = false;
+
 	QVariant GetData(int row, int col, int role) const;
+
+public:
+	void SetLegacyDots(bool b) { m_bLegacyDots = b; }
 };
 
 
@@ -138,7 +145,9 @@ void TWTableModel::SetTableSpec(const tablespec* pSpec)
 		ii.sText = TWTextCoder::decode(p + 2);
 		// The "center dot" character (U+00B7) isn't very visible in
 		// some fonts, so we use U+25CF instead.
-		ii.sText.replace(QChar(0x00B7), QChar(0x25CF));
+		// MOD (Jeremy, jc-33): ...except in the legacy score list, which predates that change.
+		if (!m_bLegacyDots)
+			ii.sText.replace(QChar(0x00B7), QChar(0x25CF));
 
 		char c = p[1];
 		Qt::Alignment ha = (c=='+' ? Qt::AlignRight : c=='.' ? Qt::AlignHCenter : Qt::AlignLeft);
@@ -250,6 +259,8 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	SetBackgroundColor(TWTheme::loadBackground(StockBackground()), false);
 
 	m_pTblList->setItemDelegate(new TWStyledItemDelegate(m_pTblList));
+	// MOD (Jeremy, jc-33): remember the stock row height before any legacy styling touches it.
+	m_nDefaultRowHeight = m_pTblList->verticalHeader()->defaultSectionSize();
 	
 	m_pTextBrowser->setSearchPaths(QStringList{ QString::fromLocal8Bit(seriesdatdir) });
 	
@@ -1237,6 +1248,106 @@ int displaylist(char const *title, tablespec const *table, int *index,
 	return g_pMainWnd->DisplayList(title, table, index, listtype, inputcallback);
 }
 
+/* MOD (Jeremy, jc-33): switch the score list between today's appearance and Tile World 2.2's.
+ *
+ * WHAT ACTUALLY DIFFERS, and why this is a restyle rather than a restored code path: 2.3.0 moved
+ * Tile World from Qt4 to Qt5 (see Changelog). No "old score renderer" was deleted -- the list is
+ * the same QTableView fed by the same tablespec, and its look changed because the toolkit's
+ * default styling did. Comparing 2.2.0 and 2.3.1 side by side on the same set, three things moved:
+ *
+ *   1. Column headers were individually BOXED cells; Qt5 draws one flat strip, so "Level" and
+ *      "Name" (and "Base"/"Bonus"/"Score") read as though they were run together.
+ *   2. The list font was bolder.
+ *   3. Rows were roomier -- about 25px against Qt5's ~20.
+ *
+ * This reproduces those three. It is an APPROXIMATION and is documented as one: a Qt4 style cannot
+ * be reproduced exactly under Qt5, and chasing pixel equality would mean shipping a hand-drawn
+ * delegate whose bugs would be ours forever. The point is to make the screen feel like 2.2 again.
+ *
+ * The border color is taken from the CURRENT palette rather than hardcoded, so the boxed headers
+ * still look right against a user-chosen background color (jc-31). */
+void TileWorldMainWnd::ApplyScoreListStyle(bool bLegacy)
+{
+	if (bLegacy == m_bScoreListStyled)
+		return;
+	m_bScoreListStyled = bLegacy;
+
+	QHeaderView *pHeader = m_pTblList->horizontalHeader();
+
+	if (!bLegacy)
+	{
+		if (pHeader)
+			pHeader->setStyleSheet(QString());
+		m_pTblList->verticalHeader()->setDefaultSectionSize(m_nDefaultRowHeight);
+		return;
+	}
+
+	if (!pHeader)
+		return;
+
+	/* ⚠ THE FONT IS DELIBERATELY NOT TOUCHED, and that is a correction rather than an omission.
+	 * The first version of this bolded the list, on the assumption that 2.2's heavier-looking text
+	 * was a difference. It is not: TWMainWnd.ui already gives m_pTblList MS Sans Serif 10pt BOLD,
+	 * so the list is bold in both builds. Worse, the font was taken from m_pMainWidget -- a
+	 * QStackedWidget carrying the ~9pt app default -- so "legacy" actually rendered SMALLER, and
+	 * the restore path then wrote that smaller font back over the .ui's, permanently, for every
+	 * later list in the session (the level-set picker and the solution list are the same widget).
+	 * Not setting a font at all is both more faithful and impossible to leak. */
+
+	/* ⚠ THE STYLE SHEET GOES ON THE HEADER, NEVER ON THE TABLE. Setting one on the QTableView
+	 * hands that whole widget to Qt's style-sheet engine, which then ignores the palette the .ui
+	 * built -- the list turns white-on-white and the header paints as a black bar. (Measured, not
+	 * theorized: that is exactly what the first attempt did.) Confining it to the header keeps the
+	 * cells palette-driven.
+	 *
+	 * For the same reason the background and text colors are stated EXPLICITLY here: once the
+	 * style-sheet engine paints this widget it will not read them from the palette either. Both
+	 * are taken from the live palette, so a user-chosen background color (jc-31) still governs. */
+	/* Colors come from QPalette::Button / ButtonText on the themed widget, because that is the
+	 * pair TWTheme::recolor() paints the window's background and text into (see TWTheme.cpp) --
+	 * so a user-chosen background color (jc-31) still governs the legacy header.
+	 *
+	 * Neither QPalette::Window nor the header's own resolved backgroundRole works here: both come
+	 * back near-black against this .ui's palette, and the header strip rendered black instead of
+	 * blue. Measured, twice. */
+	QColor bg = m_pMainWidget->palette().color(QPalette::Button);
+	if (!bg.isValid())
+		bg = m_pMainWidget->palette().color(QPalette::Window);
+	QColor fg = m_pMainWidget->palette().color(QPalette::ButtonText);
+	if (!fg.isValid())
+		fg = m_pMainWidget->palette().color(QPalette::WindowText);
+
+	/* The bevel colors cannot come from lighter()/darker() alone. Both scale the HSV *value*, so
+	 * against pure black -- a perfectly reachable choice in Options > Background Color -- they both
+	 * return black and the boxed headers, the entire point of legacy mode, become invisible.
+	 * Blend toward white/black instead whenever the background is too dark or too light to bevel. */
+	QColor light = bg.lighter(160);
+	QColor dark  = bg.darker(160);
+	int const v = bg.value();
+	if (v < 48)   light = QColor(qMin(255, bg.red() + 96), qMin(255, bg.green() + 96), qMin(255, bg.blue() + 96));
+	if (v < 48)   dark  = QColor(qMin(255, bg.red() + 32), qMin(255, bg.green() + 32), qMin(255, bg.blue() + 32));
+	if (v > 224)  dark  = QColor(qMax(0, bg.red() - 96), qMax(0, bg.green() - 96), qMax(0, bg.blue() - 96));
+	pHeader->setStyleSheet(QStringLiteral(
+		/* The header widget itself, not just its sections: the strip to the RIGHT of the last
+		 * column belongs to the widget, and the style-sheet engine paints that part white unless
+		 * told otherwise. 2.2 carried the header color across the full width. */
+		"QHeaderView { background-color: %1; }"
+		"QHeaderView::section {"
+		"  background-color: %1;"
+		"  color: %2;"
+		"  border-top: 1px solid %3;"
+		"  border-left: 1px solid %3;"
+		"  border-bottom: 1px solid %4;"
+		"  border-right: 1px solid %4;"
+		"  padding: 1px 4px;"
+		"}")
+		/* NOTE: %1 appears TWICE above (the widget's background and each section's). QString::arg
+		 * substitutes EVERY occurrence of the lowest-numbered placeholder from ONE argument, so
+		 * there are four arguments here, not five. Passing a fifth shifts every following
+		 * placeholder by one and paints the header text in the background color -- invisible. */
+		.arg(bg.name(), fg.name(), light.name(), dark.name()));
+}
+
 int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSpec, int* pnIndex,
 		DisplayListType eListType, int (*pfnInputCallback)(int*))
 {
@@ -1244,7 +1355,14 @@ int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSp
   
   // dummy scope to force model destructors before ExitTWorld
   {
+	/* MOD (Jeremy, jc-33): the legacy 2.2 look, scoped to the SCORE LIST only. This table widget
+	 * is shared by the level-set picker, the solution-file list and the help pages, so the style
+	 * is applied per call and cleared again below -- those screens keep today's appearance. */
+	bool const bLegacy = (eListType == LIST_SCORES) && TileWorldApp::LegacyScores();
+	ApplyScoreListStyle(bLegacy);
+
 	TWTableModel model;
+	model.SetLegacyDots(bLegacy);
 	model.SetTableSpec(pTableSpec);
 	QSortFilterProxyModel proxyModel;
 	m_pSortFilterProxyModel = &proxyModel;
@@ -1256,7 +1374,13 @@ int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSp
 	QModelIndex index = proxyModel.mapFromSource(model.index(*pnIndex, 0));
 	m_pTblList->setCurrentIndex(index);
 	m_pTblList->resizeColumnsToContents();
-	m_pTblList->resizeRowsToContents();
+	// MOD (Jeremy, jc-33): legacy rows are a fixed, roomier height (2.2 drew ~25px rows where
+	// resizeRowsToContents gives ~20). Setting it via the vertical header rather than per row so
+	// a later resizeRowsToContents cannot quietly undo it.
+	if (bLegacy)
+		m_pTblList->verticalHeader()->setDefaultSectionSize(kLegacyRowHeight);
+	else
+		m_pTblList->resizeRowsToContents();
 	m_pTxtFind->clear();
 	SetCurrentPage(PAGE_TABLE);
 	m_pTblList->setFocus();
@@ -1273,6 +1397,7 @@ int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSp
 	SetCurrentPage(PAGE_GAME);
 	m_pTblList->setModel(nullptr);
 	m_pSortFilterProxyModel = nullptr;
+	ApplyScoreListStyle(false);   // MOD (Jeremy, jc-33): hand the shared widget back unstyled
   }
 	
   if (m_bWindowClosed) g_pApp->ExitTWorld();
