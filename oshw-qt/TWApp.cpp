@@ -42,24 +42,59 @@ TileWorldMainWnd* g_pMainWnd = nullptr;
 // modification and just noise the rest of the time, so it is switched by a setting
 // rather than by a rebuild:
 //
-//     <CC>\save\settings      showbuildtag=0   -> "Tile World"
-//                             showbuildtag=1   -> "Tile World [jc-N]"
-//                             (absent)         -> ON, the default
+//     tw_settings.ini         showbuildtag=1      -> "Tile World [jc-N]"
+//                             showbuildtag=true   -> same
+//                             anything else       -> "Tile World"
+//                             (absent)            -> OFF, the default
 //
-// getintsetting() returns -1 for a missing key, so "anything but an explicit 0" is
-// ON and a fresh install keeps the tag. The settings file is a plain key=value list
-// that round-trips through a map, so hand-adding the line is safe and it survives
-// savesettings().
+// ⚠ THE DEFAULT WAS INVERTED IN jc-33, deliberately, and it must stay this way.
+// Up to jc-32 the rule was "anything but an explicit 0 is ON", so every fresh
+// download showed a build number in its title bar until the user found this key.
+// Jeremy hands the GitHub link to other people and does not want them seeing one.
+// The tag is now strictly OPT-IN, matching SuperCC's ShowBuildTag exactly. The
+// acceptance test is a clean-room one: no tw_settings.ini at all -> launch -> no tag.
 //
 // ⚠ The tag is NOT the only way to identify a build -- the string is in the binary,
 // so `strings` / a UTF-16LE search still names the release even with the tag off.
 // Turning it off never makes a deployed exe unidentifiable.
 const QString TileWorldApp::s_sTitle    = QStringLiteral("Tile World");
-const QString TileWorldApp::s_sBuildTag = QStringLiteral("[jc-32]");
+const QString TileWorldApp::s_sBuildTag = QStringLiteral("[jc-33]");
+
+/* MOD (Jeremy, jc-33): ONE definition of "this switch is on", shared by every opt-in setting in
+ * tw_settings.ini. Strictly opt-in: only "1" or "true" (any casing). Absent, blank, "0", garbage,
+ * and a missing settings file all mean OFF, so a setting can never switch itself on by accident.
+ *
+ * A STRING read, not getintsetting(), on purpose: the file is meant to be hand-edited and
+ * "showbuildtag=true" is what someone reading the README will naturally type. getintsetting()
+ * cannot parse that and would silently report -1. Mirrors SuperCC's optedIn(). */
+bool TileWorldApp::SettingOptedIn(char const *name)
+{
+	char const *raw = getstringsetting(name);
+	if (raw == nullptr)
+		return false;
+	QString const s = QString::fromLatin1(raw).trimmed();
+	return s.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0
+	    || s == QLatin1String("1");
+}
 
 bool TileWorldApp::ShowBuildTag()
 {
-	return getintsetting("showbuildtag") != 0;
+	return SettingOptedIn("showbuildtag");
+}
+
+/* MOD (Jeremy, jc-33): render the Games > Scores list the way Tile World 2.2 did.
+ *
+ *     tw_settings.ini    legacyscores=true   ->  the 2.2 look
+ *                        (absent / anything else) -> today's look, the default
+ *
+ * 2.3.0 rebuilt Tile World on Qt5 (from Qt4) and SDL2 (from SDL1), and the score list's
+ * appearance changed with the toolkit rather than by intent -- boxed column headers became a flat
+ * strip, the font lightened, and the rows tightened. This restores that look; see
+ * TileWorldMainWnd::ApplyScoreListStyle() for exactly what it changes and the honest limits of
+ * reproducing a Qt4 style under Qt5. */
+bool TileWorldApp::LegacyScores()
+{
+	return SettingOptedIn("legacyscores");
 }
 
 QString TileWorldApp::WindowTitle()

@@ -18,7 +18,7 @@
 class TWTheme
 {
 public:
-	/* The background color recorded in <CC>\save\settings, or fallback if
+	/* The background color recorded in tw_settings.ini, or fallback if
 	 * the key is absent or not a valid color. Only meaningful after
 	 * loadsettings() has run.
 	 *

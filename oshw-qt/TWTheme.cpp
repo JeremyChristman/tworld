@@ -16,7 +16,7 @@
 
 namespace
 {
-	/* The key written to <CC>\save\settings, as "#rrggbb". A string rather
+	/* The key written to tw_settings.ini, as "#rrggbb". A string rather
 	 * than a packed int so the file stays hand-editable, the way the
 	 * showbuildtag line is.
 	 */

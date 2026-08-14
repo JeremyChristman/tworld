@@ -21,6 +21,12 @@ public:
 	static bool ShowBuildTag();
 	static QString WindowTitle();
 
+	// MOD (Jeremy, jc-33): tw_settings.ini switches, all strictly opt-in ("1"/"true").
+	// Put any future on/off setting through SettingOptedIn() rather than writing a
+	// second, subtly different rule.
+	static bool SettingOptedIn(char const *name);
+	static bool LegacyScores();
+
 	TileWorldApp(int& argc, char** argv);
 	~TileWorldApp();
 	
