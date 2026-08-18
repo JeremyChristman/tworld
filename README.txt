@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-35
+  Tile World  --  Jeremy Christman's fork                    build jc-36
 ==============================================================================
 
   1. What this is
@@ -369,6 +369,44 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-36  --  The grand total on the score screen stopped being cut off
+--------------------------------------------------------------------
+
+  * FIXED: on the Games > Scores screen, the last line -- "Total Score" and the
+    grand total itself -- was chopped off partway through. On a large set it was
+    unreadable: Joshie's total showed as "443,47" with the next digit sliced in
+    half, when the real number is 443,476,450, and the label read "Total S".
+    Accomplishes: the number the whole screen exists to show can be read.
+
+  * WHY IT HAPPENED. The score table describes its own layout, and two of its
+    entries are written to run across more than one column: "Total Score" is
+    meant to occupy the Level and Name columns together, and the grand total is
+    meant to occupy Base, Bonus and Score together. The Qt front end read those
+    widths and then discarded them, drawing each string inside its first column
+    only. A level's own base score fits in the Base column; a whole set's total
+    does not, so it was clipped at the column edge. The command-line score dump
+    (-s) never had the bug, which is why the two disagreed.
+
+  * The columns are unchanged. Widths are still measured from the ordinary
+    one-value-per-column rows, so Level stays narrow and Base stays sized to a
+    level's score, exactly as before -- the long lines simply stop being cut.
+
+  * KNOWN, AND LEFT ALONE FOR NOW: with legacyscores off, the total line is
+    still a little taller than the lines above it. That is a separate old
+    quirk, not new here, and the obvious fix for it would have started
+    truncating long level names on sets over 1000 levels -- a worse problem
+    than a tall line. It is written up in FORK.md. The 2.2 style, which uses a
+    fixed line height, never showed it.
+
+  * Present in both score-screen styles, so the fix applies to legacyscores
+    on and off alike. It also repairs the two other multi-column lines the
+    score table can produce: *BAD* markers on a replaceable solution, and the
+    name of a level you have not solved.
+
+  * The Find box still works on the fixed lines: filter the list and the total
+    keeps its full width wherever it lands.
 
 
 jc-35  --  Ignore Passwords

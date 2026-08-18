@@ -109,6 +109,10 @@ private:
 	 * score list only and cleared again afterwards; m_bScoreListStyled tracks which state it is
 	 * in, and m_nDefaultRowHeight remembers the stock row height to restore. */
 	void ApplyScoreListStyle(bool bLegacy);
+
+	/* MOD (Jeremy, jc-36): apply the tablespec's column spans to the view. Must run after the
+	 * column widths are computed, and again after every Find-box filter change. */
+	void ApplyTableSpans();
 	bool m_bScoreListStyled = false;
 	int m_nDefaultRowHeight = 0;
 	static int const kLegacyRowHeight = 25;
