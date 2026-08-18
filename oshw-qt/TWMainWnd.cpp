@@ -87,6 +87,35 @@ void TWStyledItemDelegate::paint(QPainter* pPainter, const QStyleOptionViewItem&
 // ... All this just to remove a silly little dotted focus rectangle
 
 
+/* MOD (Jeremy, jc-36): the model reports a cell's COLUMN SPAN through this role.
+ *
+ * A tablespec item is prefixed with a digit giving how many columns it covers ("2-Total Score"
+ * covers Level+Name, "3+<total>" covers Base+Bonus+Score), and TWTableModel has always parsed that
+ * digit -- it just threw the result away, filling the covered columns with empty cells. Nothing
+ * ever told the QTableView about the span, so a spanned string was drawn inside its FIRST column
+ * alone and clipped there. On a big set that is exactly where the grand total lives: Joshie's
+ * "Total Score" rendered as "Total S" and its 443,476,450 as "443,47" plus half a digit -- the
+ * same list dumped by "tworld2 -s", whose text renderer honors the spans, printed both in full.
+ *
+ * SCOPE, audited rather than assumed: the score list is the only table whose spanned body cells
+ * were ever too narrow for their text, but it is NOT the only table with spans. generic/in.c's
+ * keyhelp_twplusplus carries four span-2 body items -- two blank spacers and the section headings
+ * "Before level playing starts:" and "During solution playback:" -- shown by the Keys command
+ * through LIST_HELP; they now merge across both columns, which is what the "2-" prefix was asking
+ * for all along, and since the Key column already held them the screen does not move at all --
+ * Help > Keys renders identically on jc-35 and jc-36 (0 of 561,925 pixels differ). Two further spanned items, the
+ * help topic list's "2-" and the solution list's "2-Select a solution file", sit in row 0, which
+ * headerData() serves and ApplyTableSpans() never reaches. The level-set picker and
+ * createtimelist() are span-1 throughout.
+ *
+ * Carrying it as a data role rather than as a method on TWTableModel is deliberate: the view talks
+ * to a QSortFilterProxyModel, not to the model, and a proxy forwards arbitrary roles untouched.
+ * So the span survives the filter with no downcast and no second pointer to keep in sync.
+ *
+ * Value convention: >= 1 on the cell that owns the span, 0 on the cells it covers. */
+static int const TWSpanRole = Qt::UserRole + 1;
+
+
 class TWTableModel : public QAbstractTableModel
 {
 public:
@@ -103,7 +132,10 @@ protected:
 	{
 		QString sText;
 		Qt::Alignment align;
-		ItemInfo() : align(Qt::AlignCenter) {}
+		/* MOD (Jeremy, jc-36): columns covered by this item; 0 marks a cell that an earlier
+		 * item's span covers. See TWSpanRole. */
+		int nSpan;
+		ItemInfo() : align(Qt::AlignCenter), nSpan(0) {}
 	};
 	
 	int m_nRows, m_nCols;
@@ -155,10 +187,21 @@ void TWTableModel::SetTableSpec(const tablespec* pSpec)
 		char c = p[1];
 		Qt::Alignment ha = (c=='+' ? Qt::AlignRight : c=='.' ? Qt::AlignHCenter : Qt::AlignLeft);
 		ii.align = (ha | Qt::AlignVCenter);
-		
+
+		/* MOD (Jeremy, jc-36): keep the span rather than discarding it, and floor it at one
+		 * column. The floor is not cosmetic: `i` only ever advances by `d`, so a prefix of '0'
+		 * or any byte below it left `i` frozen while `pp` kept walking, running off the end of
+		 * pSpec->items and dereferencing whatever followed. Unreachable with the specs in this
+		 * tree (every prefix is 1-4) but a one-line guard is cheaper than trusting that forever.
+		 * The dummies pushed below keep their default nSpan of 0, and that is what marks them
+		 * as covered. */
+		int d = p[0] - '0';
+		if (d < 1)
+			d = 1;
+		ii.nSpan = d;
+
 		m_vecItems.push_back(ii);
 
-		int d = p[0] - '0';
 		for (int j = 1; j < d; ++j)
 		{
 			m_vecItems.push_back(dummyItemInfo);
@@ -192,7 +235,10 @@ QVariant TWTableModel::GetData(int row, int col, int role) const
 			
 		case Qt::TextAlignmentRole:
 			return int(ii.align);
-		
+
+		case TWSpanRole:            // MOD (Jeremy, jc-36)
+			return ii.nSpan;
+
 		default:
 			return QVariant();
 	}
@@ -1359,6 +1405,64 @@ void TileWorldMainWnd::ApplyScoreListStyle(bool bLegacy)
 		.arg(bg.name(), fg.name(), light.name(), dark.name()));
 }
 
+/* MOD (Jeremy, jc-36): hand the view the column spans the tablespec asked for.
+ *
+ * QTableView::setSpan() takes VIEW coordinates, and a QSortFilterProxyModel sits in front of the
+ * model, so the row a span belongs to moves whenever the Find box filters the list. That is why
+ * this walks the proxy's rows rather than the model's, and why it is re-run on every filter change
+ * instead of once when the list is built.
+ *
+ * ⚠ CALL THIS AFTER resizeColumnsToContents(), never before. Column widths should be decided by
+ * the ordinary one-value-per-column rows -- Level sized to level numbers, Base to a level's base
+ * score. Span first and the widest merged string reaches the width calculation and shoves its
+ * starting column out (Level as wide as "Total Score", Name as wide as an entire unsolved-level
+ * row). Widths first, then spans, keeps the table looking exactly as it did and simply stops the
+ * long cells from being clipped.
+ *
+ * Row HEIGHTS are a separate matter, and this ordering does not decide them: the grand-total row
+ * measured 32px against every other row's 20 with this call on EITHER side of
+ * resizeRowsToContents(). Do not generalize that into "Qt ignores spans when sizing rows" -- it
+ * does consult them (measured separately on Qt 5.15.19: a spanned row went 33px -> 23px in a
+ * stripped-down table). Whatever defeats it in THIS table was not pinned down. The over-tall row
+ * is pre-existing -- jc-35 renders it identically -- and is deliberately left alone; see the
+ * "known and NOT fixed" note in FORK.md for the cure that was tried and rejected.
+ *
+ * Cheap enough to redo per keystroke: one QVariant per cell over a list that is already fully in
+ * memory, and Qt keeps its spans in an indexed collection.
+ *
+ * ⚠ THE SEAM TO WATCH: the two call sites are hand-placed, which is correct only while the Find
+ * box is the sole thing that renumbers view rows. Sorting is not enabled on this table (nothing
+ * calls setSortingEnabled). Turn it on, add a second filter, or swap the source model, and the
+ * spans must be re-applied there too or the "Total Score" merge stays anchored to whatever row
+ * inherits its old index. Reacting to the proxy's layoutChanged/modelReset would make that
+ * self-maintaining, but modelReset fires from inside setModel() -- before either resize pass --
+ * and would reinstate exactly the width bug the ordering above exists to avoid. */
+void TileWorldMainWnd::ApplyTableSpans()
+{
+	m_pTblList->clearSpans();
+	if (!m_pSortFilterProxyModel)
+		return;
+
+	int const nRows = m_pSortFilterProxyModel->rowCount();
+	int const nCols = m_pSortFilterProxyModel->columnCount();
+
+	for (int r = 0; r < nRows; ++r)
+	{
+		for (int c = 0; c < nCols; ++c)
+		{
+			QModelIndex const idx = m_pSortFilterProxyModel->index(r, c);
+			int const nSpan = m_pSortFilterProxyModel->data(idx, TWSpanRole).toInt();
+			/* Clamp FIRST, then test. A span of 0 or 1 is the ordinary case and needs no call,
+			 * and a span clamped down to a single column is the same ordinary case -- calling
+			 * setSpan() with a width of 1 makes Qt log "single cell span won't be added", which
+			 * on this list would mean one warning per stray cell per Find-box keystroke. */
+			int const nWidth = qMin(nSpan, nCols - c);
+			if (nWidth > 1)
+				m_pTblList->setSpan(r, c, 1, nWidth);
+		}
+	}
+}
+
 int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSpec, int* pnIndex,
 		DisplayListType eListType, int (*pfnInputCallback)(int*))
 {
@@ -1385,6 +1489,7 @@ int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSp
 	QModelIndex index = proxyModel.mapFromSource(model.index(*pnIndex, 0));
 	m_pTblList->setCurrentIndex(index);
 	m_pTblList->resizeColumnsToContents();
+	ApplyTableSpans();   // MOD (Jeremy, jc-36): after the widths are settled, never before
 	// MOD (Jeremy, jc-33): legacy rows are a fixed, roomier height (2.2 drew ~25px rows where
 	// resizeRowsToContents gives ~20). Setting it via the vertical header rather than per row so
 	// a later resizeRowsToContents cannot quietly undo it.
@@ -1408,6 +1513,7 @@ int TileWorldMainWnd::DisplayList(const char* szTitle, const tablespec* pTableSp
 	SetCurrentPage(PAGE_GAME);
 	m_pTblList->setModel(nullptr);
 	m_pSortFilterProxyModel = nullptr;
+	m_pTblList->clearSpans();     // MOD (Jeremy, jc-36): ...and unspanned
 	ApplyScoreListStyle(false);   // MOD (Jeremy, jc-33): hand the shared widget back unstyled
   }
 	
@@ -1429,6 +1535,10 @@ void TileWorldMainWnd::OnFindTextChanged(const QString& sText)
 	if (!sText.isEmpty())
 		sWildcard += sText + QLatin1Char('*');
 	m_pSortFilterProxyModel->setFilterWildcard(sWildcard);
+
+	/* MOD (Jeremy, jc-36): filtering renumbers the view's rows, and spans are held in view
+	 * coordinates, so they have to be laid down again against the rows that survived. */
+	ApplyTableSpans();
 }
 
 void TileWorldMainWnd::OnFindReturnPressed()

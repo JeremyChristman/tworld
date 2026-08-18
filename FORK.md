@@ -146,6 +146,72 @@ exactly what's mine:
    on *Bombs Away* (confirmed against `-p -s`). Toggling the menu item mid-session unlocked the set
    with no restart, and the save directory stayed free of solution files throughout.
 
+10. **Multi-column table cells actually span** (`oshw-qt/TWMainWnd.{h,cpp}`).
+   The score screen's last line was clipped: `Total Score` rendered as `Total S` and Joshie's
+   grand total `443,476,450` as `443,47` plus half a digit. Both are `tablespec` items that
+   declare a column span — `"2-Total Score"` covers Level+Name, `"3+<total>"` covers
+   Base+Bonus+Score — and `TWTableModel::SetTableSpec()` had always *parsed* that leading digit
+   only to throw it away, filling the covered columns with empty cells and never calling
+   `QTableView::setSpan()`. A level's own base score fits inside the Base column; a whole set's
+   does not. The SDL/`-s` text renderer honors the spans, which is why `tworld2 -s` printed the
+   total in full while the GUI cut it off.
+
+   The span now travels as a data role (`TWSpanRole = Qt::UserRole + 1`) rather than as a method
+   on the model, because the view is wired to a `QSortFilterProxyModel`, and a proxy forwards
+   arbitrary roles untouched — so `ApplyTableSpans()` reads spans through the proxy with no
+   downcast and no second pointer to keep alive. Two ordering constraints, both load-bearing:
+
+   - **Spans are applied AFTER `resizeColumnsToContents()`, never before.** Widths must come
+     from the ordinary one-value-per-column rows — let the widest merged string into that
+     calculation and it shoves its starting column out (Level as wide as `Total Score`, Name as
+     wide as an entire unsolved-level row). Widths first, then spans, leaves the table looking
+     exactly as it did and merely stops the long cells being clipped. Row *heights* are not
+     decided by this ordering: Qt's height hint takes no notice of spans, and the call measured
+     identically on either side of `resizeRowsToContents()`.
+   - **Spans live in VIEW coordinates**, so filtering with the Find box renumbers the rows out
+     from under them. `ApplyTableSpans()` therefore re-runs on every filter change, walking the
+     proxy's surviving rows. Sorting is not enabled on this table; if it ever is, that path needs
+     the same treatment.
+
+   Scope, audited rather than assumed. The score list is the only table whose spanned body cells
+   were ever too narrow for their text, but it is **not** the only table with spans:
+   `generic/in.c`'s `keyhelp_twplusplus` carries four span-2 body items — two blank spacers and
+   the headings `Before level playing starts:` and `During solution playback:` — shown by the Keys
+   command through `LIST_HELP`. Those now merge across both columns, which is what their `"2-"`
+   prefix was asking for all along — and because the Key column was already wide enough to hold
+   them, the screen does not actually move: Help > Keys rendered on jc-35 and jc-36 differs by
+   **0 of 561,925 pixels**. Two more
+   spanned items — the help topic list's `"2-"` and the solution list's
+   `"2-Select a solution file"` — are row 0, which `headerData()` serves and `ApplyTableSpans()`
+   never reaches. The level-set picker and `createtimelist()` are span-1 throughout. Alongside the
+   total, the fix also un-clips `*BAD*` markers and the names of unsolved levels.
+
+   **KNOWN AND DELIBERATELY NOT FIXED: the grand-total row is 32px tall where every other row is
+   20** (non-legacy style only — the 2.2 style's fixed 25px row hides it). It is pre-existing:
+   jc-35 measures 32px too. Cause: `QAbstractItemView::wordWrap` defaults to true and
+   `resizeRowsToContents()` measures each cell against its own column's width, so the eleven
+   characters of `Total Score` count as two lines inside the narrow Level column.
+
+   The obvious cure, `setWordWrap(false)` on the score list, was built, measured (20px, correct)
+   and then **backed out**, because it trades a cosmetic win for a legibility loss:
+   `resizeColumnsToContents()` honors `QHeaderView::resizeContentsPrecision()`, which defaults to
+   sampling **1000 rows** — the same sampling limit that caused the clipped total in the first
+   place. On a set past 1000 levels, a solved level whose name is wider than anything in rows
+   1–1000 currently *wraps* and stays fully readable; with wrapping off it would be elided to
+   `A Very Long Lev…` instead. Joshie is 1,325 levels, so this is not hypothetical. A too-tall
+   row is a worse-looking screen; a truncated level name is a screen that lies.
+
+   Note also that applying the spans before `resizeRowsToContents()` does **not** help: measured
+   32px with the call on either side. Do not generalize that into "Qt ignores spans when sizing
+   rows" — it does consult them (33px → 23px in a stripped-down table on Qt 5.15.19). What defeats
+   it in this particular table was not pinned down.
+
+   Measured on Joshie (1,325 levels): GUI total now reads `443,476,450`, byte-identical to
+   `tworld2 -s`, with `legacyscores` both on and off; the total row is 20px like its neighbors;
+   filtering to `ota` moves the total to row 4 and it keeps its full width. Help > Keys, the only
+   other list whose body cells span, is pixel-identical to jc-35. Every other row keeps the height
+   and the column widths it had. `-b -r` batch verify over the set: 1,325 valid, 0 invalid.
+
 ## Building (Windows, MSYS2)
 
 The deployed flavor is a single self-contained exe via **static Qt**. From the MSYS2 MINGW64 shell:
