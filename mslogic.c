@@ -12,6 +12,7 @@
 #include    "random.h"
 #include    "logic.h"
 #include    "encoding.h"	/* MOD (Jeremy): fileidtotileid(), for the row-32 cloner glitch */
+#include    "fork.h"	/* MOD (Jeremy, jc-34): FORK_ISSUES_URL, for the _assert message below */
 
 /* MOD (Jeremy): the MSCC row-32 cloner glitch is ON by default. It went in as an
  * opt-in flag purely so the same tree could be built both ways for an A/B run;
@@ -345,10 +346,14 @@
 #define	FIX_TELEPORT_EXIT_CHIP_TILE	1
 #endif
 
+/* MOD (Jeremy, jc-34): a failed sanity check sends the user to THIS fork's tracker, not upstream's.
+ * Of all the places to inherit an upstream URL, this was the worst one: nearly every engine change
+ * in this fork is in this file, so the crash most likely to fire this assert is one of ours -- and
+ * the message was handing it to maintainers who did not write it and cannot reproduce it. */
 #ifdef NDEBUG
 #define	_assert(test)	((void)0)
 #else
-#define _assert(test) ((test) || (die("internal error: failed sanity check (%s)\nPlease report this error to https://github.com/SicklySilverMoon/tworld/issues", #test), 0))
+#define _assert(test) ((test) || (die("internal error: failed sanity check (%s)\nPlease report this error to " FORK_ISSUES_URL, #test), 0))
 #endif
 
 /* A list of ways for Chip to lose.
@@ -3355,7 +3360,7 @@ static void endmovement(creature* cr, int dir) {
          * newTileFG was not a Teleporter -- i.e. whenever this teleport was only reached
          * because a push exposed it. poptile(oldpos) above already did the first.
          *
-         *     POPD 20  from=11,4 to=10,4 CHIP_SLIDING newTileFG=Teleporter -> cancelled
+         *     POPD 20  from=11,4 to=10,4 CHIP_SLIDING newTileFG=Teleporter -> canceled
          *     POPD 47  from=17,6 to=18,6 CHIP         newTileFG=Block      -> POPPED
          *
          * Measured with shadow_poplayer.ps1. Only reachable now that step 1 lets this branch
@@ -4386,11 +4391,11 @@ static int initgame(gamelogic* logic) {
          * SuperCC's loader filters the same list with isMonster() rather than
          * isCreature (io/LevelFactory.getMSMonsterList), so it simply skips them.
          * Found on Jacques#1 "Welcome" -- the oldest unexplained desync in the
-         * catalogue. Its monster list is four entries, 31,0 / 20,2 / 31,0 / 20,2:
+         * catalog. Its monster list is four entries, 31,0 / 20,2 / 31,0 / 20,2:
          * 20,2 is plain water (already skipped above, with the warning), and 31,0
          * holds a SWIMMING CHIP tile. SuperCC ignores all four; Tile World wakes a
          * Swimming_Chip creature and the replay falls apart three ticks in.
-         * Only this one level in the current catalogue has such a list, but the
+         * Only this one level in the current catalog has such a list, but the
          * check costs nothing and matches the reference engine. */
         if (creatureid(cell->top.id) == Chip
                 || creatureid(cell->top.id) == Swimming_Chip
@@ -4427,7 +4432,7 @@ static int initgame(gamelogic* logic) {
              * tick 1.
              *
              * Scope measured before changing anything: of 21,838 levels, 10 have a
-             * buried Chip and NO foreground Chip (behaviour definitely changes), 89
+             * buried Chip and NO foreground Chip (behavior definitely changes), 89
              * have both (changes only if the buried one was winning), and 215 have no
              * Chip tile at all (both engines already fall back to 0,0). */
 #endif

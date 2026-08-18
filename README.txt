@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-33
+  Tile World  --  Jeremy Christman's fork                    build jc-34
 ==============================================================================
 
   1. What this is
@@ -41,7 +41,8 @@ each engine applied and making Tile World match the reference.
   replayed before.
 
 Most of the revision history below is that project. The rest is quality of life:
-a build tag, a choosable background color, and now a settings file of its own.
+a build tag, a choosable background color, a settings file of its own, and an
+About box that says whose build this actually is.
 
 The engine fixes are ALL ON BY DEFAULT and each has a compile-time escape hatch
 (-DNO_FIX_*) for anyone who wants the old behavior back.
@@ -346,6 +347,38 @@ means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
 
 
+jc-34  --  An About box that tells the truth about this build
+-------------------------------------------------------------
+
+  * HELP > ABOUT NOW IDENTIFIES THIS AS A FORK, names the build it is running,
+    and sends bug reports to this fork's issue tracker.
+    Accomplishes: the previous text was the upstream project's, unchanged. It
+    credited only the original authors and pointed bug reports at their tracker
+    -- so a problem caused by a change made HERE went to people who did not
+    write it, could not reproduce it, and had to work out that the binary was
+    not theirs. They keep the credit; this fork now takes the blame.
+
+  * The About box states that these changes were written with AI assistance
+    (Claude, by Anthropic). Nobody has to guess how the work was done.
+
+  * All three URLs in the About box are clickable -- this fork, the upstream
+    project, and the issue tracker.
+
+  * The last hardcoded upstream URL left in the source -- the one in the
+    "internal error: failed sanity check" crash message -- now points here too.
+    That message is compiled out of this release build (it only exists in debug
+    builds), so it changes nothing you can see; it is fixed so that the rule
+    "this fork's problems come to this fork" has no exceptions left.
+
+  * The build tag now lives in one place, fork.h, instead of being typed
+    separately into the program and the packaging script.
+    Accomplishes: a release can no longer ship a binary whose About box or
+    title bar names a different build than the download it came in.
+
+  * The clock no longer loses time while the About box is open -- the same
+    modal-dialog fix jc-32 made for the color picker.
+
+
 jc-33  --  Its own settings file, and the 2.2 score list back
 ------------------------------------------------------------
 
@@ -601,6 +634,11 @@ Schmidt, Michael Hansen, David Stolp, A Sickly Silver Moon, G lander, ChosenID
 and others. This fork is a set of changes on top of their work, and none of the
 above are responsible for it. Chip's Challenge is the property of its
 respective owners; no game data is included in this download.
+
+The changes in this fork were developed by Jeremy Christman together with
+Claude, Anthropic's AI coding assistant. Jeremy owned the vision, direction,
+and final decisions and the code was developed by Claude. That is said plainly
+here, and in Help > About, so that nobody has to guess how the work was done.
 
 Bug reports about THIS FORK belong at
 https://github.com/JeremyChristman/tworld/issues -- please do not take them

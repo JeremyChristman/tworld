@@ -10,7 +10,7 @@
 #include	"state.h"
 #include	"oshw.h"
 #include	"ver.h"
-#include	"comptime.h"
+#include	"fork.h"
 #include	"help.h"
 
 #define COUNTOF(a)	(sizeof(a) / sizeof(*a))
@@ -30,7 +30,7 @@ static char const* yowzitch_items[] = {
     "1-   -q", "1!Run quietly.",
     "1-   -r", "1!Run in read-only mode; solutions will not be saved.",
     "1-   -P", "1!Put Lynx ruleset emulation in pedantic mode.",
-    "1-   -c", "1!Make repeat inputs more strict for better boosting behaviour.",
+    "1-   -c", "1!Make repeat inputs more strict for better boosting behavior.",
     "1-   -n", "1!Set initial volume level to N.",
     "1-   -a", "1!Double the size of the sound buffer (can be repeated).",
     "1-   -l", "1!Display the list of available data files and exit.",
@@ -49,13 +49,53 @@ static tablespec const yowzitch_table = {23, 2, 2, -1, yowzitch_items};
 tablespec const* yowzitch = &yowzitch_table;
 
 /* Version and license information.
- */
+ *
+ * MOD (Jeremy, jc-34): this is a FORK, and the About box now says so.
+ *
+ * What was wrong with the upstream text is not that it was inaccurate about Tile World -- it is
+ * that it was accurate about the WRONG PROGRAM. It named only the original authors and sent bug
+ * reports to their issue tracker, so anyone running this build who hit a problem caused by a change
+ * made HERE would have reported it to people who never wrote it, cannot reproduce it, and would
+ * have to spend their time working out that the binary is not theirs. Crediting them is right;
+ * billing them for this fork's mistakes is not. Both halves are fixed below: they keep the credit,
+ * and the fork takes the blame.
+ *
+ * The AI-assistance line is deliberate and is not to be trimmed as boilerplate. Jeremy asked for it
+ * unprompted, on the grounds that letting a reader assume he wrote these changes unaided would be
+ * dishonest. It stays.
+ *
+ * This table feeds BOTH the GUI's Help > About dialog (TileWorldMainWnd::ShowAbout, which reads
+ * column 2 and strips the two formatting characters) and the console's -V output, so it is written
+ * as plain text with no markup. ShowAbout() turns the bare URLs into clickable links at display
+ * time rather than storing any HTML here, which would print as tag soup on a terminal.
+ *
+ * The "compiled <timestamp>" line upstream printed here is deliberately GONE (Jeremy's call): the
+ * build tag on the line above identifies the build, and a timestamp told a user nothing they could
+ * act on. COMPILE_TIME now has no consumer anywhere in the program, so comptime.h is no longer
+ * included below -- CMakeLists still generates it, which is harmless and not worth disturbing the
+ * upstream build plumbing over.
+ *
+ * ⚠ ROWS. tablespec's first field is a COUNT, and nothing checks it against the array: set it too
+ * high and printtable() walks off the end of vourzhon_items. Adding or removing a paragraph means
+ * changing the 7 below. */
 static char const* vourzhon_items[] = {
-    "1+*", "1-Tile World: version " VERSION,
-    "1+", "1-Copyright (c) 2001-2025 by Brian Raiter, Madhav Shanbhag, "
-    "Eric Schmidt, Michael Hansen, ChosenID, David Stolp, "
-    "A Sickly Silver Moon, G lander, and Eevee",
-    "1+", "1-compiled " COMPILE_TIME,
+    "1+*", "1-Tile World: version " VERSION " -- " FORK_AUTHOR "'s fork, "
+    "build " FORK_BUILD_TAG,
+    "1+*", "1!This is a personal fork of Tile World, maintained by "
+    FORK_AUTHOR ". It corrects a number of cases where the MS ruleset did not"
+    " reproduce the behavior of the original Chip's Challenge, and adds some"
+    " display and convenience options. What each build changed is listed in"
+    " the README included with this download, and at " FORK_REPO_URL ".",
+    "1+*", "1!The changes in this fork were developed by " FORK_AUTHOR
+    " together with Claude, Anthropic's AI coding assistant. Jeremy owned the"
+    " vision, direction, and final decisions and the code was developed by"
+    " Claude.",
+    "1+*", "1!Tile World itself is Copyright (c) 2001-2025 by Brian Raiter,"
+    " Madhav Shanbhag, Eric Schmidt, Michael Hansen, ChosenID, David Stolp,"
+    " A Sickly Silver Moon, G lander, and Eevee. This fork is a set of changes"
+    " on top of their work, and the credit for Tile World belongs to them."
+    " They did not write these changes, have not reviewed them, and are not"
+    " responsible for them. The original project is at " FORK_UPSTREAM_URL ".",
     "1+*", "1!This program is free software; you can redistribute it and/or"
     " modify it under the terms of the GNU General Public License as"
     " published by the Free Software Foundation; either version 2 of"
@@ -64,10 +104,11 @@ static char const* vourzhon_items[] = {
     " useful, but WITHOUT ANY WARRANTY; without even the implied"
     " warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR"
     " PURPOSE. See the GNU General Public License for more details.",
-    "1+*", "1!Bug reports are appreciated, and can be submitted at "
-    "https://github.com/SicklySilverMoon/tworld/issues."
+    "1+*", "1!Bug reports are appreciated. Please report anything you find in"
+    " THIS build at " FORK_ISSUES_URL " -- not to the upstream project, whose"
+    " maintainers did not make these changes."
 };
-static tablespec const vourzhon_table = {6, 2, 1, -1, vourzhon_items};
+static tablespec const vourzhon_table = {7, 2, 1, -1, vourzhon_items};
 tablespec const* vourzhon = &vourzhon_table;
 
 /* Descriptions of the different surfaces of the levels.

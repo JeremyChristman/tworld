@@ -98,6 +98,7 @@ target_sources(${TWORLD_EXE} PRIVATE
     err.c
     fileio.h
     fileio.c
+    fork.h
     gen.h
     help.h
     help.c
