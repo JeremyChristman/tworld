@@ -112,6 +112,40 @@ exactly what's mine:
    `TWApp.cpp` builds its tag as `"[" FORK_BUILD_TAG "]"` and the packaging script reads the
    `#define`. **Bump `FORK_BUILD_TAG` and nothing else.**
 
+9. **Ignore Passwords** (`tworld.c`, `settings.cpp`, `oshw-qt/TWMainWnd.{cpp,ui}`, `package.ps1`).
+   `Options > Ignore Passwords` makes every level in a set reachable and turns Ctrl+G into a
+   level-NUMBER prompt. Saved as `ignorepasswords` in `tw_settings.ini`, written the moment it is
+   clicked, read in the window constructor.
+
+   The engine already had the concept — `usepasswds` (the `-p` flag) and the `.dac`
+   ignore-passwords line — so this is mostly *exposing* it, not new access-control logic. Two
+   things made it more than a checkbox:
+
+   - **`gs->usepasswds` is a SNAPSHOT** taken in `initgamestate()`, so writing to it would not take
+     effect until the next set was opened. A new global `ignorepasswds` (defined in `tworld.c`,
+     `extern`-declared in `TWMainWnd.cpp` exactly as `pedanticmode` already is) plus a
+     `passwdsactive(gs)` helper — `gs->usepasswds && !ignorepasswds` — moves the decision to the
+     moment of each check. Six gates call it: `setcurrentgame`, `changecurrentgame`,
+     `melindawatching`, the score list, `findlevelfromhistory` and the `defaultlevel` startup path.
+   - **`passwordseen()` returns early while the option is on.** That flag is persistent — setting
+     it writes `SGF_HASPASSWD` into the solution file and nothing can unset it from inside the
+     program. Without the guard, switching the option on and browsing would permanently record the
+     password of every level visited, and switching it back off would NOT re-lock the set: the
+     option would have silently rewritten his save files as a side effect of being turned on.
+     Upstream's `-p` does record; that is defensible for a per-launch flag, not for a saved setting.
+
+   `selectlevelbynumber()` reuses `INPUT_ALPHA` rather than adding an `INPUT_NUMBER` prompt type —
+   that enum is switched on by every oshw backend, including the SDL one this fork does not build
+   and cannot test, and upper-casing does nothing to digits. It parses with `strtol` (`atoi` cannot
+   tell `0` from `banana`), looks the level up by its own number via `findlevelinseries()`, and
+   falls back to 1-based position when that fails — which covers sets with numbering gaps and sets
+   with duplicate numbers, where `findlevelinseries` deliberately returns -1 rather than guess.
+
+   Measured on CCLP1 with a virgin save directory: **off** → `n` stays on level 1 and Ctrl+G says
+   "Enter Password"; **on** → `n` reaches level 2, Ctrl+G says "Enter Level Number" and `47` lands
+   on *Bombs Away* (confirmed against `-p -s`). Toggling the menu item mid-session unlocked the set
+   with no restart, and the save directory stayed free of solution files throughout.
+
 ## Building (Windows, MSYS2)
 
 The deployed flavor is a single self-contained exe via **static Qt**. From the MSYS2 MINGW64 shell:

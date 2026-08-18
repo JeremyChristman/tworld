@@ -61,7 +61,7 @@ namespace
     SectionSpec const SECTIONS[] = {
         { "Display", { "bgcolor", "displayccx", "forceshowtimer", "legacyscores",
                        "showbuildtag", "showinitstate", nullptr } },
-        { "Game",    { "selectedruleset", "selectedseries", nullptr } },
+        { "Game",    { "ignorepasswords", "selectedruleset", "selectedseries", nullptr } },
         { "Sound",   { "volume", nullptr } },
     };
 }

@@ -8,6 +8,7 @@
 #include	<stdlib.h>
 #include	<string.h>
 #include	<ctype.h>
+#include	<limits.h>	/* MOD (Jeremy, jc-35): INT_MAX, for the level-number prompt */
 #include	"defs.h"
 #include	"err.h"
 #include	"series.h"
@@ -79,6 +80,21 @@ static int fullscreen = FALSE;
 /* FALSE suppresses all password checking.
  */
 static int usepasswds = TRUE;
+
+/* MOD (Jeremy, jc-35): TRUE while the "Ignore Passwords" option is on.
+ *
+ * This is the runtime, user-togglable twin of the -p command-line flag. It is deliberately a
+ * SEPARATE variable rather than a way of writing to usepasswds, for two reasons: -p is a startup
+ * decision that the user cannot see or undo from inside the program, and gs->usepasswds is a
+ * SNAPSHOT taken when a series is loaded (see initgamestate), so writing to either one would not
+ * take effect until the next level set was opened. Every gate now asks passwdsactive() instead,
+ * which consults this at the moment of the check -- so ticking the menu item frees the whole set
+ * immediately, and un-ticking it locks it again, with no restart and no set reload.
+ *
+ * Not static: the Qt layer owns the menu item and writes this directly. It is declared there with
+ * a bare "extern int", which is exactly how this codebase already crosses that boundary --
+ * see pedanticmode (defined in lxlogic.c, redeclared in generic/tile.c and TWMainWnd.cpp). */
+int ignorepasswds = FALSE;
 
 /* TRUE if the user requested an idle-time histogram.
  */
@@ -469,9 +485,35 @@ static void replaceablesolution(gamespec* gs, int change) {
         gs->series.games[gs->currentgame].sgflags &= ~SGF_REPLACEABLE;
 }
 
+/* MOD (Jeremy, jc-35): are passwords being enforced right now?
+ *
+ * gs->usepasswds is the per-series answer fixed at load time (the -p flag and the .dac file's
+ * "ignore-passwords" line); ignorepasswds is the live menu option. Passwords apply only when
+ * neither says otherwise. Every gate calls this rather than reading gs->usepasswds, so the option
+ * takes effect the instant it is toggled.
+ */
+static int passwdsactive(gamespec const* gs) {
+    return gs->usepasswds && !ignorepasswds;
+}
+
 /* Mark the current level's password as known to the user.
  */
 static void passwordseen(gamespec* gs, int number) {
+    /* MOD (Jeremy, jc-35): record nothing while passwords are being ignored.
+     *
+     * This flag is PERSISTENT -- setting it writes SGF_HASPASSWD into the solution file (note the
+     * savesolutions() below), and there is no way to unset it from inside the program. Without
+     * this guard, switching the option on and browsing a set would permanently record that the
+     * player knows the password to every level visited, and switching the option back off would
+     * NOT undo it: the set would stay unlocked forever, and the option would have quietly rewritten
+     * his save files as a side effect of being turned on. An option whose damage outlives it is a
+     * trap, so while it is on the save file is left exactly as it was.
+     *
+     * Note this differs from upstream's -p, which does record. That is defensible for a flag you
+     * must opt into on every launch; it is not defensible for a saved setting. */
+    if (ignorepasswds)
+        return;
+
     if (!(gs->series.games[number].sgflags & SGF_HASPASSWD)) {
         gs->series.games[number].sgflags |= SGF_HASPASSWD;
         savesolutions(&gs->series);
@@ -488,7 +530,7 @@ static int setcurrentgame(gamespec* gs, int n) {
     if (n < 0 || n >= gs->series.count)
         return FALSE;
 
-    if (gs->usepasswds)
+    if (passwdsactive(gs))
         if (n > 0 && !(gs->series.games[n].sgflags & SGF_HASPASSWD)
             && !issolved(gs, n - 1))
             return FALSE;
@@ -515,7 +557,7 @@ static int changecurrentgame(gamespec* gs, int offset) {
     else if (n >= gs->series.count)
         n = gs->series.count - 1;
 
-    if (gs->usepasswds && n > 0) {
+    if (passwdsactive(gs) && n > 0) {
         sign = offset < 0 ? -1 : +1;
         for (; n >= 0 && n < gs->series.count; n += sign) {
             if (!n || (gs->series.games[n].sgflags & SGF_HASPASSWD)
@@ -549,7 +591,10 @@ static int changecurrentgame(gamespec* gs, int offset) {
  * i.e., if it is possible to earn a pass to the next level.
  */
 static int melindawatching(gamespec const* gs) {
-    if (!gs->usepasswds)
+    /* MOD (Jeremy, jc-35): passwdsactive() rather than gs->usepasswds, so Melinda's free pass also
+     * goes away while passwords are ignored. Offering to skip a level you could already jump past
+     * from the menu would be pointless, and upstream's -p suppresses it for the same reason. */
+    if (!passwdsactive(gs))
         return FALSE;
     if (islastinseries(gs, gs->currentgame))
         return FALSE;
@@ -707,7 +752,9 @@ static int showscores(gamespec* gs) {
     int count, f, n;
 
 restart:
-    if (!createscorelist(&gs->series, gs->usepasswds, CHAR_MZERO,
+    /* MOD (Jeremy, jc-35): with passwords ignored the score list shows every level's name, not
+     * just the ones reached -- the same list the player can now actually visit. */
+    if (!createscorelist(&gs->series, passwdsactive(gs), CHAR_MZERO,
                          &levellist, &count, &table)) {
         bell();
         return ret;
@@ -766,6 +813,63 @@ static int selectlevelbypassword(gamespec* gs) {
     }
     passwordseen(gs, n);
     return setcurrentgame(gs, n);
+}
+
+/* MOD (Jeremy, jc-35): the Ignore Passwords version of Ctrl+G -- ask for a level NUMBER.
+ *
+ * With passwords ignored, "Enter Password" is a question with no useful answer: there is nothing
+ * to unlock, and the player has no reason to know or type the four letters. The number is what he
+ * actually has in mind ("take me to 47").
+ *
+ * INPUT_ALPHA is reused rather than adding an INPUT_NUMBER prompt type. That enum is part of the
+ * oshw interface and is switched on by every backend, so a new member would mean touching the SDL
+ * layer this fork does not build and cannot test. The only thing INPUT_ALPHA does to the text is
+ * upper-case it, which does nothing to digits, and validation belongs here anyway -- the prompt
+ * cannot know what a valid level number is for this set.
+ *
+ * Lookup is by the level's OWN number via findlevelinseries(), not by position, because those are
+ * not always the same thing. It falls back to treating the input as a 1-based position when the
+ * number lookup fails, which covers the two real cases: a set whose numbering has gaps, and one
+ * with duplicate numbers (findlevelinseries deliberately reports -1 rather than guess between
+ * them). If both fail the input was simply out of range, and the bell says so.
+ */
+static int selectlevelbynumber(gamespec* gs) {
+    char buf[8] = "";
+    char *end;
+    long num;
+    int n;
+
+    setkeyboardinputmode(TRUE);
+    n = displayinputprompt("Enter Level Number", buf, 4,
+                           INPUT_ALPHA, keyinputcallback);
+    setkeyboardinputmode(FALSE);
+    if (!n)
+        return FALSE;
+
+    /* strtol, not atoi: atoi cannot tell "0" from "banana", and both need rejecting. */
+    num = strtol(buf, &end, 10);
+    if (end == buf || *end != '\0' || num <= 0 || num > INT_MAX) {
+        bell();
+        return FALSE;
+    }
+
+    n = findlevelinseries(&gs->series, (int)num, NULL);
+    if (n < 0 && num <= gs->series.count)
+        n = (int)num - 1;                       /* fall back to position in the set */
+    if (n < 0 || n >= gs->series.count) {
+        bell();
+        return FALSE;
+    }
+
+    /* No passwordseen() here on purpose -- see the note in that function. Nothing was unlocked,
+     * so nothing is recorded. */
+    return setcurrentgame(gs, n);
+}
+
+/* MOD (Jeremy, jc-35): what Ctrl+G does, decided when it is pressed.
+ */
+static int gotolevel(gamespec* gs) {
+    return ignorepasswds ? selectlevelbynumber(gs) : selectlevelbypassword(gs);
 }
 
 /*
@@ -989,7 +1093,7 @@ static int startinput(gamespec* gs) {
                 copytoclipboard(leveltimes(&gs->series));
                 break;
             case CmdGotoLevel:
-                if (selectlevelbypassword(gs))
+                if (gotolevel(gs))          /* MOD (Jeremy, jc-35) */
                     return CmdNone;
                 break;
             case CmdKeys:
@@ -1055,7 +1159,7 @@ static int endinput(gamespec* gs) {
                 return TRUE;
             case CmdNext10: changecurrentgame(gs, +10);
                 return TRUE;
-            case CmdGotoLevel: selectlevelbypassword(gs);
+            case CmdGotoLevel: gotolevel(gs);   /* MOD (Jeremy, jc-35) */
                 return TRUE;
             case CmdPlayback: return TRUE;
             case CmdSeeScores: showscores(gs);
@@ -1611,7 +1715,7 @@ static void findlevelfromhistory(gamespec* gs, char const* name) {
                 n = findlevelinseries(&gs->series, 0, h->passwd);
             if (n >= 0) {
                 gs->currentgame = n;
-                if (gs->usepasswds &&
+                if (passwdsactive(gs) &&
                     !(gs->series.games[n].sgflags & SGF_HASPASSWD))
                     changecurrentgame(gs, -1);
             }
@@ -1799,7 +1903,7 @@ static int selectseriesandlevel(gamespec* gs, seriesdata* series, int autosel,
         n = findlevelinseries(&gs->series, defaultlevel, NULL);
         if (n >= 0) {
             gs->currentgame = n;
-            if (gs->usepasswds &&
+            if (passwdsactive(gs) &&
                 !(gs->series.games[n].sgflags & SGF_HASPASSWD))
                 changecurrentgame(gs, -1);
         }
