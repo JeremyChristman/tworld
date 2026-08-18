@@ -56,6 +56,8 @@ extern int pedanticmode;
 
 #include <QString>
 #include <QTextStream>
+#include <QLabel>              // MOD (Jeremy, jc-34): the About box's link handling
+#include <QRegularExpression>  // MOD (Jeremy, jc-34): finding URLs in the About text
 
 #include <vector>
 
@@ -1782,6 +1784,23 @@ void TileWorldMainWnd::Narrate(CCX::Text CCX::Level::*pmTxt, bool bForce)
 	setWindowTitle(sWindowTitle);
 }
 
+/* MOD (Jeremy, jc-34): the About box is where a user finds out whose program this is and where to
+ * complain about it, so all three of its URLs are made clickable -- this fork, upstream, and the
+ * issue tracker.
+ *
+ * The text itself stays PLAIN in help.c, because the same table is printed to a terminal by -V,
+ * where HTML would be tag soup. The markup is added here, at display time, and in this order:
+ * escape first, THEN linkify -- doing it the other way round would escape the <a> tags that were
+ * just inserted and show them as literal text.
+ *
+ * The URL pattern stops before trailing punctuation so that a sentence-ending period does not
+ * become part of the link. It assumes the URLs in fork.h contain no '&' -- one would survive
+ * escaping as "&amp;" and land in the href in that form. None do; if one ever does, linkify before
+ * escaping and escape the pieces separately.
+ *
+ * QMessageBox::about() is not used any more because it gives no way to set the text format or the
+ * interaction flags. The icon line reproduces what about() does internally, so the dialog still
+ * looks the way it did. */
 void TileWorldMainWnd::ShowAbout()
 {
 	QString text;
@@ -1793,7 +1812,53 @@ void TileWorldMainWnd::ShowAbout()
 		char const *item = vourzhon->items[2*i + 1];
 		text += TWTextCoder::decode(item + 2);  // skip over formatting chars
 	}
-	QMessageBox::about(this, tr("About"), text);
+
+	QString html = text.toHtmlEscaped();
+	html.replace(QRegularExpression(QStringLiteral("(https?://[^\\s<]*[^\\s<.,;:!?)])")),
+	             QStringLiteral("<a href=\"\\1\">\\1</a>"));
+	html.replace(QStringLiteral("\n\n"), QStringLiteral("<br><br>"));
+
+	QMessageBox box(this);
+	box.setWindowTitle(tr("About"));
+	box.setTextFormat(Qt::RichText);
+	box.setText(html);
+	box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+	box.setStandardButtons(QMessageBox::Ok);
+
+	QIcon const icon = box.windowIcon();
+	if (!icon.isNull())
+		box.setIconPixmap(icon.pixmap(icon.actualSize(QSize(64, 64))));
+
+	/* Clicking a link only opens a browser if the message box's label is willing to, and that is
+	 * not documented behavior -- so it is set explicitly rather than assumed. Finding the label by
+	 * Qt's own object name is an internal detail, hence the guard: if a future Qt renames it the
+	 * dialog still shows correctly, it just stops opening the browser on a click. */
+	if (QLabel *pLabel = box.findChild<QLabel*>(QStringLiteral("qt_msgbox_label")))
+		pLabel->setOpenExternalLinks(true);
+
+	box.exec();
+
+	/* ReleaseAllKeys() matches what the other three exec() sites in this file do, and it is here
+	 * for CONSISTENCY and defense in depth -- deliberately NOT on the theory that keys typed into a
+	 * modal fire as game commands afterwards. That theory is recorded elsewhere in this file and it
+	 * is wrong: input() calls resetkeystates() before its command scan, and that table maps
+	 * KS_STRUCK to KS_OFF (generic/in.c), so a key pressed AND released while the dialog was up is
+	 * discarded. What this call actually covers is the leftover case the X11 comment above
+	 * describes -- a key the app still believes is HELD when the dialog closes.
+	 *
+	 * Honest note for whoever reads this next: while playtesting jc-34 the level was observed
+	 * exiting to the level-set picker once after Escape dismissed this dialog, and that could not
+	 * be reproduced in six later attempts. The code path does not explain it. This line is cheap
+	 * and cannot make it worse, so it stays -- but it is not a proven fix for a proven bug, and it
+	 * should not be cited as one.
+	 *
+	 * settimer(+1) is the jc-32 fix, for the same reason as the color picker: a modal blocks the
+	 * game loop, so waitfortick() was not called while this was open and generic/timer.c has no
+	 * clamp on how far behind nexttickat may fall. Without it, closing the dialog burns every
+	 * missed tick back-to-back with no input sampled -- Chip stands still while the clock and the
+	 * monsters run. Safe in every state; a paused game never reaches waitfortick() at all. */
+	ReleaseAllKeys();
+	settimer(+1);
 }
 
 void TileWorldMainWnd::OnTextNext()

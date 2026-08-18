@@ -13,24 +13,27 @@ The exe must already be built (see FORK.md -- MSYS2 + static Qt). Point -Exe at
 it; the default is the usual build directory.
 
     powershell -ExecutionPolicy Bypass -File package.ps1
-    powershell -ExecutionPolicy Bypass -File package.ps1 -Exe build-jc33\tworld2.exe
+    powershell -ExecutionPolicy Bypass -File package.ps1 -Exe build-jc34\tworld2.exe
 
-The tag comes from s_sBuildTag in oshw-qt\TWApp.cpp, so the zip cannot be named
-for a build it does not contain, and packaging FAILS if README.txt's header does
-not name that same tag.
+The tag comes from FORK_BUILD_TAG in fork.h -- the same #define the program itself
+compiles in -- so the zip cannot be named for a build it does not contain, and
+packaging FAILS if README.txt's header does not name that same tag.
 #>
 param(
-    [string]$Exe = "build-jc33\tworld2.exe",
+    [string]$Exe = "build-jc34\tworld2.exe",
     [string]$Dlls = "C:\msys64\mingw64\bin",
     [string]$Strip = "C:\msys64\mingw64\bin\strip.exe"
 )
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 
-# The build tag is the single source of truth for the release name.
-$appSrc = Get-Content (Join-Path $root "oshw-qt\TWApp.cpp") -Raw
-if ($appSrc -notmatch 's_sBuildTag\s*=\s*QStringLiteral\("\[(?<tag>[^\]]+)\]"\)') {
-    throw "Could not read s_sBuildTag out of oshw-qt\TWApp.cpp"
+# The build tag is the single source of truth for the release name. Read from fork.h as of jc-34:
+# that header is what help.c and TWApp.cpp both compile in, so this script and the binary cannot
+# disagree about which build this is. (Before jc-34 it was parsed out of the C++ literal in
+# oshw-qt\TWApp.cpp, which stopped being the definition when the tag moved.)
+$forkSrc = Get-Content (Join-Path $root "fork.h") -Raw
+if ($forkSrc -notmatch '(?m)^\s*#\s*define\s+FORK_BUILD_TAG\s+"(?<tag>[^"]+)"') {
+    throw "Could not read FORK_BUILD_TAG out of fork.h"
 }
 $tag = $Matches['tag']
 

@@ -10,6 +10,7 @@
 
 #include "../gen.h"
 #include "../defs.h"
+#include "../fork.h"
 #include "../oshw.h"
 #include "../settings.h"
 #include "TWTextCoder.h"
@@ -33,10 +34,15 @@ TileWorldApp* g_pApp = nullptr;
 TileWorldMainWnd* g_pMainWnd = nullptr;
 
 
-// MOD (Jeremy): fork build tag shown in the window/dialog title. Bump s_sBuildTag
-// on each production deploy (jc-1, jc-2, ...) so the running build is identifiable.
+// MOD (Jeremy): fork build tag shown in the window/dialog title. Bump it on each production
+// deploy (jc-1, jc-2, ...) so the running build is identifiable.
 // Combined with the pack + level subtitle set in tworld.c, the title reads
 // "Tile World [jc-N] - <pack> - <level>".
+//
+// ⚠ THE TAG ITSELF NOW LIVES IN ../fork.h (jc-34), not here. help.c needs the same string for the
+// About box and cannot see a C++ QString, and two independently-edited copies of a version number
+// is a bug waiting for the release where only one gets bumped. Bump FORK_BUILD_TAG; this line
+// follows automatically. package.ps1 reads that header too.
 //
 // TOGGLEABLE AT RUNTIME (jc-30). The tag is useful while the engine is under active
 // modification and just noise the rest of the time, so it is switched by a setting
@@ -58,7 +64,7 @@ TileWorldMainWnd* g_pMainWnd = nullptr;
 // so `strings` / a UTF-16LE search still names the release even with the tag off.
 // Turning it off never makes a deployed exe unidentifiable.
 const QString TileWorldApp::s_sTitle    = QStringLiteral("Tile World");
-const QString TileWorldApp::s_sBuildTag = QStringLiteral("[jc-33]");
+const QString TileWorldApp::s_sBuildTag = QStringLiteral("[" FORK_BUILD_TAG "]");
 
 /* MOD (Jeremy, jc-33): ONE definition of "this switch is on", shared by every opt-in setting in
  * tw_settings.ini. Strictly opt-in: only "1" or "true" (any casing). Absent, blank, "0", garbage,

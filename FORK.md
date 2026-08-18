@@ -85,6 +85,33 @@ exactly what's mine:
    `generic/timer.c` (which has no clamp) replayed every missed tick in a burst with no input
    sampled. Measured with a ~10 s dialog: **13 seconds of clock lost before that fix, 3 after**.
 
+8. **Fork identity in Help > About** (`fork.h` (new), `help.c`, `oshw-qt/TWApp.cpp`, `oshw-qt/TWMainWnd.cpp`, `package.ps1`).
+   Upstream's About text names only the original authors and points bug reports at their tracker.
+   Shipping that unchanged from a fork sends this fork's bugs to people who did not write them, so
+   the `vourzhon` table now says plainly that this is an unofficial fork, names the build
+   (`2.3.1 -- Jeremy Christman's fork, build jc-N`), keeps the original credit intact while stating
+   that the upstream maintainers neither wrote nor reviewed these changes, discloses that the fork's
+   code was written with AI assistance (Claude), and routes bug reports to
+   `JeremyChristman/tworld/issues`.
+
+   The table stays **plain text** because `-V` prints it to a terminal; `ShowAbout()` escapes it and
+   linkifies the URLs at display time, so the dialog gets clickable links and the console does not
+   get tag soup. That meant replacing `QMessageBox::about()` (which exposes neither the text format
+   nor the interaction flags) with a configured `QMessageBox`, reproducing its icon behavior.
+   `settimer(+1)` on close, for the same reason as mod 7 — About is reachable mid-level too.
+
+   `mslogic.c`'s `_assert` message carried the last hardcoded upstream tracker URL in the tree and
+   now uses `FORK_ISSUES_URL`. It is invisible in a release build — `NDEBUG` reduces `_assert` to
+   `((void)0)`, and `grep -a "failed sanity check"` finds nothing in the shipped exe — but this is
+   the file nearly every engine change lives in, so a debug build tripping it must not blame
+   upstream.
+
+   **`fork.h` is now the one definition of the build tag.** It was previously a C++ `QStringLiteral`
+   in `TWApp.cpp`, which `help.c` (C) cannot see and which `package.ps1` parsed with its own regular
+   expression — three places to keep in step, and a stale one looks exactly like a correct one.
+   `TWApp.cpp` builds its tag as `"[" FORK_BUILD_TAG "]"` and the packaging script reads the
+   `#define`. **Bump `FORK_BUILD_TAG` and nothing else.**
+
 ## Building (Windows, MSYS2)
 
 The deployed flavor is a single self-contained exe via **static Qt**. From the MSYS2 MINGW64 shell:
