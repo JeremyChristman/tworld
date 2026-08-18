@@ -2318,6 +2318,7 @@ p, li { white-space: pre-wrap; }
     </property>
     <addaction name="action_displayCCX"/>
     <addaction name="action_forceShowTimer"/>
+    <addaction name="action_ignorePasswords"/>
     <addaction name="separator"/>
     <addaction name="action_BackgroundColor"/>
     <addaction name="action_RestoreBackground"/>
@@ -2432,6 +2433,17 @@ p, li { white-space: pre-wrap; }
    </property>
    <property name="text">
     <string>&amp;Show Timer on Untimed Levels</string>
+   </property>
+  </action>
+  <action name="action_ignorePasswords">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>&amp;Ignore Passwords</string>
+   </property>
+   <property name="toolTip">
+    <string>Visit any level without its password, and make Ctrl+G ask for a level number</string>
    </property>
   </action>
   <action name="action_TimesClipboard">

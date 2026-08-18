@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-34
+  Tile World  --  Jeremy Christman's fork                    build jc-35
 ==============================================================================
 
   1. What this is
@@ -227,6 +227,7 @@ This is the complete stock file:
     showinitstate=0
 
     [Game]
+    ignorepasswords=false
     selectedruleset=2
     selectedseries=
 
@@ -301,6 +302,29 @@ showinitstate   Whether to show the initial random state of a level, a detail
 [Game]
 --------
 
+ignorepasswords Whether passwords are ignored, letting you open any level in a
+                set without its password and without having beaten the one
+                before it.
+                Values:  true or 1 turns it on. ANYTHING ELSE IS OFF.
+                Default: false
+                Toggled in the game with Options > Ignore Passwords, which
+                writes this line for you the moment you click it. The change
+                takes effect immediately -- no restart, no reopening the set.
+                Two things change while it is on:
+                  * Every level in the set is reachable. Next/previous level,
+                    the score list and the level list stop hiding what you have
+                    not unlocked.
+                  * Ctrl+G asks for a LEVEL NUMBER instead of a password, and
+                    jumps straight there.
+                Melinda's offer to skip a level you keep dying on does not
+                appear while this is on -- with every level already reachable
+                there is nothing for it to grant.
+                It does NOT touch your solution files. In particular it does
+                not record the passwords of levels you visit this way, so
+                turning it back off really does lock the set again rather than
+                leaving everything permanently unlocked. Your solved levels,
+                times and scores are untouched either way.
+
 selectedruleset Which ruleset the game starts in.
                 Values:  1 = Lynx, 2 = MS.
                 Default: 2
@@ -345,6 +369,34 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-35  --  Ignore Passwords
+----------------------------
+
+  * NEW SETTING AND MENU ITEM: Options > Ignore Passwords. Turn it on and every
+    level in a set is reachable -- no password, no need to have beaten the
+    level before it.
+    Accomplishes: browsing, testing and revisiting sets stops being a chore.
+    Tile World could already do this, but only as a command-line flag (-p) that
+    you had to remember on every launch and could not see or change from inside
+    the program. Now it is a checkbox that remembers itself.
+
+  * WHILE IT IS ON, Ctrl+G ASKS FOR A LEVEL NUMBER instead of a password, and
+    jumps straight to that level. Asking for a password would be a question
+    with no useful answer when nothing is locked.
+
+  * It takes effect the instant you click it -- no restart, no reopening the
+    set -- and it is saved to tw_settings.ini as ignorepasswords immediately.
+
+  * It does NOT write to your solution files. Levels you visit this way are not
+    recorded as "password known", so turning the option back off genuinely
+    re-locks the set instead of leaving it permanently open. Solved levels,
+    times and scores are untouched. (This is deliberately unlike -p, which does
+    record -- acceptable for a flag you opt into each launch, not for a saved
+    setting.)
+
+  * See section 6 for the full description.
 
 
 jc-34  --  An About box that tells the truth about this build

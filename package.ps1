@@ -13,14 +13,14 @@ The exe must already be built (see FORK.md -- MSYS2 + static Qt). Point -Exe at
 it; the default is the usual build directory.
 
     powershell -ExecutionPolicy Bypass -File package.ps1
-    powershell -ExecutionPolicy Bypass -File package.ps1 -Exe build-jc34\tworld2.exe
+    powershell -ExecutionPolicy Bypass -File package.ps1 -Exe build-jc35\tworld2.exe
 
 The tag comes from FORK_BUILD_TAG in fork.h -- the same #define the program itself
 compiles in -- so the zip cannot be named for a build it does not contain, and
 packaging FAILS if README.txt's header does not name that same tag.
 #>
 param(
-    [string]$Exe = "build-jc34\tworld2.exe",
+    [string]$Exe = "build-jc35\tworld2.exe",
     [string]$Dlls = "C:\msys64\mingw64\bin",
     [string]$Strip = "C:\msys64\mingw64\bin\strip.exe"
 )
@@ -73,6 +73,7 @@ foreach ($dll in "zlib1.dll", "libzstd.dll") {
 #   displayccx=1    absent -> getintsetting returns -1 -> setChecked(-1) is ON
 #   forceshowtimer  absent -> "-1 > 0" is false -> off
 #   showinitstate   absent -> same, off
+#   ignorepasswords absent -> SettingOptedIn is false -> off (passwords enforced)
 #   selectedruleset absent -> not Ruleset_Lynx(1) -> MS(2)
 #   volume=10       sdlsfx.c starts at SDL_MIX_MAXVOLUME, i.e. level 10. It was written as 8 here
 #                   at first, which would have quietly turned every fresh install's sound DOWN.
@@ -87,6 +88,7 @@ showbuildtag=false
 showinitstate=0
 
 [Game]
+ignorepasswords=false
 selectedruleset=2
 selectedseries=
 

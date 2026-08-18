@@ -21,6 +21,7 @@
 #include "TWTheme.h"
 
 extern int pedanticmode;
+extern int ignorepasswds;   // MOD (Jeremy, jc-35): defined in tworld.c; see the note there
 
 #include <QApplication>
 #include <QClipboard>
@@ -291,6 +292,14 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 
 	action_displayCCX->setChecked(getintsetting("displayccx"));
 	action_forceShowTimer->setChecked(getintsetting("forceshowtimer") > 0);
+
+	/* MOD (Jeremy, jc-35): restore Ignore Passwords, and push it into the game's own global here
+	 * rather than waiting for the menu item to be clicked -- the setting has to be in force before
+	 * the first level is chosen. Read through SettingOptedIn() so a hand-edited "true" works and so
+	 * absent means OFF: passwords are the default state of the game, and a setting file that says
+	 * nothing must never unlock somebody's level sets. */
+	action_ignorePasswords->setChecked(TileWorldApp::SettingOptedIn("ignorepasswords"));
+	ignorepasswds = action_ignorePasswords->isChecked() ? TRUE : FALSE;
 	if (getintsetting("selectedruleset") == Ruleset_Lynx)
 		m_pRadioLynx->setChecked(true);
 	else
@@ -1903,6 +1912,23 @@ void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 	    setintsetting("forceshowtimer", pAction->isChecked() ? 1 : 0);
 		drawscreen(TRUE);
 	    return;
+	}
+
+	/* MOD (Jeremy, jc-35): Ignore Passwords. Takes effect immediately -- every access check calls
+	 * passwdsactive() at the moment it runs (see tworld.c), so there is nothing to reload.
+	 *
+	 * Written to the settings file the instant it is chosen rather than only at exit, matching
+	 * bgcolor (jc-31): a setting the user can see the effect of should not be lost because the
+	 * program later died, and savesettings() runs from an atexit handler that a crash skips. */
+	if (pAction == action_ignorePasswords)
+	{
+		ignorepasswds = pAction->isChecked() ? TRUE : FALSE;
+		/* "true"/"false" rather than 1/0: SettingOptedIn() reads either, but this is the form the
+		 * shipped stock file and the README use for opt-in switches (legacyscores, showbuildtag),
+		 * and the file is meant to be read and hand-edited. */
+		setstringsetting("ignorepasswords", pAction->isChecked() ? "true" : "false");
+		savesettings();
+		return;
 	}
 
 	/* MOD (Jeremy): user-selectable background color. */
