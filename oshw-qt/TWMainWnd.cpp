@@ -346,6 +346,21 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	 * nothing must never unlock somebody's level sets. */
 	action_ignorePasswords->setChecked(TileWorldApp::SettingOptedIn("ignorepasswords"));
 	ignorepasswds = action_ignorePasswords->isChecked() ? TRUE : FALSE;
+
+	/* MOD (Jeremy, jc-37): restore the death counter's checked state AND the visibility of its two
+	 * sub-items here, not only when the menu item is clicked -- otherwise Reset/Set are visible on
+	 * a fresh launch with the feature off. deathcounteractive() also answers FALSE when the
+	 * settings file could not be read, so the counter stays hidden rather than showing a confident
+	 * "Deaths: 0" that would then be discarded at exit. */
+	action_DeathCounter->setChecked(deathcounteractive());
+	UpdateDeathCounterMenu();
+	/* ⚠ SetDeathCount() directly, NOT refreshdeathcount(). We are inside the constructor, and
+	 * g_pMainWnd is not assigned until `new TileWorldMainWnd` RETURNS (TWApp.cpp) -- so the
+	 * deathcountchanged() hook that refreshdeathcount() goes through would hit its null guard and
+	 * silently do nothing, leaving the bar blank until the player's first death. Caught by
+	 * playtest, not by review. The settings themselves are safe to read here: tworld() calls
+	 * loadsettings() before the window is built. */
+	SetDeathCount(deathcounteractive() ? getdeathcount() : -1);
 	if (getintsetting("selectedruleset") == Ruleset_Lynx)
 		m_pRadioLynx->setChecked(true);
 	else
@@ -378,38 +393,90 @@ void TileWorldMainWnd::closeEvent(QCloseEvent* pCloseEvent)
 
 void TileWorldMainWnd::timerEvent(QTimerEvent*)
 {
+	/* MOD (Jeremy, jc-37): expiry only. What the label actually SHOWS is decided in one place, by
+	 * RefreshShortMsgLabel(); this function no longer paints.
+	 *
+	 * The early return stays. It is safe because the pop path below refreshes on the transition to
+	 * empty, so the steady state is already correct by the time we start skipping -- and the death
+	 * counter reaches the label through deathcountchanged(), not by being re-polled 40x/second. */
 	if (m_shortMessages.empty())
 		return;
 
 	uint32_t nCurTime = TW_GetTicks();
-	QPalette::ColorRole style = QPalette::BrightText;
-	bool switchMessage = false;
 	while (!m_shortMessages.empty())
 	{
-		auto & mData = m_shortMessages.back();
-		if (nCurTime <= mData.nMsgUntil)
-		{
-			if (nCurTime > mData.nMsgBoldUntil)
-				style = QPalette::Text;
+		if (nCurTime <= m_shortMessages.back().nMsgUntil)
 			break;
-		}
-		else
-		{
-			m_shortMessages.pop_back();
-			switchMessage = true;
-		}
+		m_shortMessages.pop_back();
 	}
-	if (switchMessage)
+
+	/* Unconditional: a pop changes the text, and a bold window lapsing changes the color without
+	 * popping anything. RefreshShortMsgLabel() is idempotent and compares before assigning. */
+	RefreshShortMsgLabel();
+}
+
+/* MOD (Jeremy, jc-37): decide the short-message bar's contents and color. THE only writer of
+ * m_pLblShortMsg.
+ *
+ * Precedence, highest first:
+ *   1. a sticky message ("(paused)", "Verifying ...") -- a state indicator; the counter yields
+ *      entirely, which is what keeps "(paused)" readable in Lynx, where the board is NOT
+ *      shuttered and that word is the only sign the game is stopped
+ *   2. the death counter, when active -- overrides every transient message
+ *   3. the message stack as it always behaved
+ *
+ * The color decision lives here rather than in timerEvent() on purpose. It used to be computed
+ * from the stack top and applied unconditionally, which would have flipped the counter between
+ * bright and dark red as suppressed messages underneath aged out. The counter gets a fixed role:
+ * dark red, because bright red reads as "something just happened" and a standing total has not. */
+void TileWorldMainWnd::RefreshShortMsgLabel()
+{
+	uint32_t const nCurTime = TW_GetTicks();
+
+	/* The topmost message that is still live. Walked from the top down rather than just testing
+	 * back(), so that an expired transient sitting on top of a live "(paused)" cannot hide it: this
+	 * runs from SetDisplayMsg too, which can fire between timer ticks, before timerEvent has popped
+	 * the dead entry. Same result timerEvent would leave, without mutating the stack.
+	 *
+	 * An empty text counts as nothing to show rather than as a message that blanks the bar --
+	 * SetDisplayMsg pushes unconditionally, so setdisplaymsg(NULL,0,0) leaves one empty entry. */
+	MessageData const * pTop = nullptr;
+	for (int i = m_shortMessages.size() - 1; i >= 0; --i)
 	{
-		if (m_shortMessages.empty())
-			m_pLblShortMsg->clear();
-		else
-		{
-			m_pLblShortMsg->setText(m_shortMessages.back().sMsg);
-		}
+		MessageData const & m = m_shortMessages.at(i);
+		if (nCurTime > m.nMsgUntil)
+			continue;
+		if (!m.sMsg.isEmpty())
+			pTop = &m;
+		break;
 	}
+
+	/* A message wins if it is sticky, or if there is no counter to displace it. */
+	bool const bShowMessage =
+		(pTop != nullptr) && (pTop->bSticky || m_nDeathCount < 0);
+
+	QPalette::ColorRole style;
+	QString sText;
+	if (bShowMessage)
+	{
+		style = (nCurTime > pTop->nMsgBoldUntil) ? QPalette::Text : QPalette::BrightText;
+		sText = pTop->sMsg;
+	}
+	else if (m_nDeathCount >= 0)
+	{
+		/* Fixed role: bright red reads as "something just happened", and a standing total has not. */
+		style = QPalette::Text;
+		sText = tr("Deaths: %1").arg(m_nDeathCount);
+	}
+	else
+	{
+		m_pLblShortMsg->clear();
+		return;
+	}
+
 	if (style != m_pLblShortMsg->foregroundRole())
 		m_pLblShortMsg->setForegroundRole(style);
+	m_pLblShortMsg->setText(sText);
 }
 
 bool TileWorldMainWnd::eventFilter(QObject* pObject, QEvent* pEvent)
@@ -1267,7 +1334,6 @@ bool TileWorldMainWnd::SetDisplayMsg(const char* szMsg, int nMSecs, int nBoldMSe
 {
 	if (szMsg == nullptr || *szMsg == '\0')
 	{
-		m_pLblShortMsg->clear();
 		m_shortMessages.clear();
 	}
 
@@ -1276,11 +1342,39 @@ bool TileWorldMainWnd::SetDisplayMsg(const char* szMsg, int nMSecs, int nBoldMSe
 	uint32_t boldUntil = nCurTime + nBoldMSecs;
 	const QString sMsg = TWTextCoder::decode(szMsg);
 
-	m_pLblShortMsg->setForegroundRole(QPalette::BrightText);
-	m_pLblShortMsg->setText(sMsg);
+	/* MOD (Jeremy, jc-37): sticky == pushed with FOREVER. Only "(paused)" and "Verifying ..." are.
+	 * Captured now because nMSecs is not stored on the message. */
+	m_shortMessages.push_back({sMsg, msgUntil, boldUntil, nMSecs >= FOREVER});
 
-	m_shortMessages.push_back({sMsg, msgUntil, boldUntil});
+	/* MOD (Jeremy, jc-37): this used to paint the label right here, before anything could decide
+	 * whether it was allowed to. That is why it now REPLACES those two lines rather than being
+	 * added after them -- with the volume at zero, every sound effect becomes a message
+	 * (sdlsfx.c), so painting first would strobe the death counter on essentially every tick. */
+	RefreshShortMsgLabel();
 	return true;
+}
+
+/* MOD (Jeremy, jc-37): the core telling us the death total changed, or that the feature was
+ * switched off (count < 0). See oshw.h. */
+void deathcountchanged(int count)
+{
+	if (g_pMainWnd)
+		g_pMainWnd->SetDeathCount(count);
+}
+
+void TileWorldMainWnd::SetDeathCount(int nCount)
+{
+	m_nDeathCount = (nCount < 0) ? -1 : nCount;
+	RefreshShortMsgLabel();
+}
+
+/* MOD (Jeremy, jc-37): Reset and Set are only meaningful when the counter is on, so they appear
+ * with it and vanish with it rather than sitting there grayed out. */
+void TileWorldMainWnd::UpdateDeathCounterMenu()
+{
+	bool const bOn = action_DeathCounter->isChecked();
+	action_ResetDeathCounter->setVisible(bOn);
+	action_SetDeathCounter->setVisible(bOn);
 }
 
 
@@ -2042,6 +2136,47 @@ void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 	}
 
 	/* MOD (Jeremy): user-selectable background color. */
+	/* MOD (Jeremy, jc-37): the death counter. Written to the settings file the instant it is
+	 * chosen, matching bgcolor and ignorePasswords -- savesettings() otherwise runs only from an
+	 * atexit handler, which a crash skips.
+	 *
+	 * The value itself is NOT written here. play.c owns the number; these handlers ask it to
+	 * change and it does the clamping, persisting and notifying. Two writers of one counter is how
+	 * the clamp gets applied on one path and not the other. */
+	if (pAction == action_DeathCounter)
+	{
+		setstringsetting("showdeathcounter", pAction->isChecked() ? "true" : "false");
+		savesettings();
+		UpdateDeathCounterMenu();
+		/* Start or stop showing it immediately rather than at the next death. */
+		refreshdeathcount();
+		return;
+	}
+
+	if (pAction == action_ResetDeathCounter)
+	{
+		setdeathcount(0);
+		return;
+	}
+
+	if (pAction == action_SetDeathCounter)
+	{
+		/* Integers only, and the range is enforced by the widget rather than by parsing text --
+		 * QInputDialog::getInt cannot return anything outside [min, max] or anything non-numeric.
+		 *
+		 * DEATHCOUNT_MAX (play.h) is the one definition of the ceiling -- the dialog, the read
+		 * clamp and the saturation all use it, so the number you can type is exactly the number
+		 * the counter can hold. "Deaths: 999999999" is 17 characters and the bar already ships
+		 * strings of 19 ("crackle crackle ...", sdlsfx.c), so it fits with room to spare. */
+		bool bOk = false;
+		int const nNew = QInputDialog::getInt(this, tr("Set Death Counter"),
+						      tr("Deaths:"), getdeathcount(),
+						      0, DEATHCOUNT_MAX, 1, &bOk);
+		if (bOk)
+			setdeathcount(nNew);
+		return;
+	}
+
 	if (pAction == action_BackgroundColor)
 	{
 		ChooseBackgroundColor();

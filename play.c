@@ -273,6 +273,65 @@ void advanceinitrandomff(int display) {
     }
 }
 
+/*
+ * MOD (Jeremy, jc-37): the death counter. See play.h for the contract.
+ */
+
+/* The setting names. "showdeathcounter" follows the house naming for display switches
+ * (showbuildtag, showinitstate, forceshowtimer) and is deliberately NOT two characters away from
+ * "deathcount": the two sit on adjacent lines in a file meant to be hand-edited, and typing
+ * "deathcounter=500" when you meant "deathcount=500" would silently switch the feature off (it is
+ * not "true" or "1") AND discard the number, with no diagnostic anywhere. */
+#define DEATHCOUNT_KEY      "deathcount"
+#define DEATHCOUNTER_KEY    "showdeathcounter"
+
+int deathcounteractive(void) {
+    /* Not readable => the stored total is unavailable, not zero. Suppress rather than lie. */
+    if (!settingsarereadable())
+        return FALSE;
+    return settingoptedin(DEATHCOUNTER_KEY) ? TRUE : FALSE;
+}
+
+int getdeathcount(void) {
+    /* getintsetting() answers -1 for absent, unparsable AND out-of-range alike, so a clean install
+     * and a hand-edited "deathcount=-5" both arrive here negative. Clamping on READ (not only on
+     * write) is what stops the first death of a fresh install from displaying "Deaths: 0". */
+    int n = getintsetting(DEATHCOUNT_KEY);
+    if (n < 0)
+        n = 0;
+    else if (n > DEATHCOUNT_MAX)
+        n = DEATHCOUNT_MAX;      /* a hand-edited value above the ceiling reads as the ceiling */
+    return n;
+}
+
+void refreshdeathcount(void) {
+    deathcountchanged(deathcounteractive() ? getdeathcount() : -1);
+}
+
+void setdeathcount(int count) {
+    if (count < 0)
+        count = 0;
+    else if (count > DEATHCOUNT_MAX)
+        count = DEATHCOUNT_MAX;
+    setintsetting(DEATHCOUNT_KEY, count);
+    /* Written the instant it changes rather than only at exit, matching bgcolor and
+     * ignorepasswords: savesettings() runs from an atexit handler that a crash skips, and a number
+     * the user watched tick up should not evaporate. */
+    savesettings();
+    refreshdeathcount();
+}
+
+void recorddeath(void) {
+    int n;
+
+    if (!deathcounteractive())
+        return;
+    n = getdeathcount();
+    if (n < DEATHCOUNT_MAX)   /* saturate; a wrap to negative would be worse than a stuck maximum */
+        ++n;
+    setdeathcount(n);
+}
+
 char const* getinitstatestring(void) {
     static char buf[64];
     char* p = buf;

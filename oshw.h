@@ -194,6 +194,15 @@ OSHW_EXTERN int displayendmessage(int basescore, int timescore,
  */
 OSHW_EXTERN int setdisplaymsg(char const *msg, int msecs, int bold);
 
+/* MOD (Jeremy, jc-37): the death counter's value changed, or the feature was switched on or off.
+ * count is the lifetime total to display, or -1 to stop displaying it.
+ *
+ * This exists because there is otherwise NO path from the core to the message bar at the moment a
+ * death is recorded: play ends, and nothing on the way out calls setdisplaymsg(), so the label
+ * would keep whatever it last showed until some unrelated message happened along. Same shape as
+ * setdisplaymsg() above -- the core states a fact, the platform layer decides how to paint it. */
+OSHW_EXTERN void deathcountchanged(int count);
+
 /* Types of lists that can be displayed.
  */
 typedef enum {

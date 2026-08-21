@@ -2322,6 +2322,10 @@ p, li { white-space: pre-wrap; }
     <addaction name="separator"/>
     <addaction name="action_BackgroundColor"/>
     <addaction name="action_RestoreBackground"/>
+    <addaction name="separator"/>
+    <addaction name="action_DeathCounter"/>
+    <addaction name="action_ResetDeathCounter"/>
+    <addaction name="action_SetDeathCounter"/>
    </widget>
    <widget class="QMenu" name="menu_Help">
     <property name="title">
@@ -2459,6 +2463,33 @@ p, li { white-space: pre-wrap; }
   <action name="action_RestoreBackground">
    <property name="text">
     <string>&amp;Restore Default Background</string>
+   </property>
+  </action>
+  <action name="action_DeathCounter">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>&amp;Death Counter</string>
+   </property>
+   <property name="toolTip">
+    <string>Show a running lifetime death total in the message bar</string>
+   </property>
+  </action>
+  <action name="action_ResetDeathCounter">
+   <property name="text">
+    <string>Reset Death Counter</string>
+   </property>
+   <property name="toolTip">
+    <string>Set the death counter back to zero</string>
+   </property>
+  </action>
+  <action name="action_SetDeathCounter">
+   <property name="text">
+    <string>Set Death Counter...</string>
+   </property>
+   <property name="toolTip">
+    <string>Set the death counter to a specific number</string>
    </property>
   </action>
   <action name="action_About">

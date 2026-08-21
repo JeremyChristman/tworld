@@ -75,12 +75,11 @@ const QString TileWorldApp::s_sBuildTag = QStringLiteral("[" FORK_BUILD_TAG "]")
  * cannot parse that and would silently report -1. Mirrors SuperCC's optedIn(). */
 bool TileWorldApp::SettingOptedIn(char const *name)
 {
-	char const *raw = getstringsetting(name);
-	if (raw == nullptr)
-		return false;
-	QString const s = QString::fromLatin1(raw).trimmed();
-	return s.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0
-	    || s == QLatin1String("1");
+	/* MOD (Jeremy, jc-37): the parse itself moved DOWN into settings.cpp so portable code can ask
+	 * the same question -- tworld.c counts deaths and cannot see Qt. This is now a delegation on
+	 * purpose: the comment above promises ONE definition, and two implementations that merely
+	 * agree today is exactly how that promise gets broken later. */
+	return settingoptedin(name) != 0;
 }
 
 bool TileWorldApp::ShowBuildTag()
