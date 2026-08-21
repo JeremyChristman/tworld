@@ -11,6 +11,7 @@
 
 #include <sys/stat.h>   /* MOD (Jeremy): tell "absent" apart from "exists but will not open" */
 
+#include <cctype>       /* MOD (Jeremy, jc-37): tolower(), for settingoptedin() */
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -54,13 +55,20 @@ namespace
      * a final [Other] heading, so a setting added by a future upstream release survives a
      * round trip through this fork untouched. */
     /* The keys array is BOTH sentinel-terminated and length-bounded when walked (see the loop in
-     * savesettings()). A trailing nullptr alone is a trap: fill all eight slots with real keys and
-     * the terminator quietly disappears, and the loop walks into the next SectionSpec. [Display]
-     * already uses six. */
-    struct SectionSpec { char const *name; char const *keys[8]; };
+     * savesettings()). A trailing nullptr alone is a trap: fill every slot with real keys and the
+     * terminator quietly disappears, and the loop walks into the next SectionSpec.
+     *
+     * MOD (Jeremy, jc-37): the bound is now the named constant SECTION_MAXKEYS rather than a bare
+     * 8, because the prose above and the literal below had already drifted apart once. [Display]
+     * uses EIGHT of the twelve slots as of jc-37 (the death counter added two). Raising this
+     * constant is the ONLY edit needed to make room -- savesettings() derives its loop bound from
+     * sizeof(), and the "unknown keys survive a round trip" guarantee comes from the [Other] pass,
+     * not from this table, so growing it cannot lose a setting. */
+    int const SECTION_MAXKEYS = 12;
+    struct SectionSpec { char const *name; char const *keys[SECTION_MAXKEYS]; };
     SectionSpec const SECTIONS[] = {
-        { "Display", { "bgcolor", "displayccx", "forceshowtimer", "legacyscores",
-                       "showbuildtag", "showinitstate", nullptr } },
+        { "Display", { "bgcolor", "deathcount", "displayccx", "forceshowtimer", "legacyscores",
+                       "showbuildtag", "showdeathcounter", "showinitstate", nullptr } },
         { "Game",    { "ignorepasswords", "selectedruleset", "selectedseries", nullptr } },
         { "Sound",   { "volume", nullptr } },
     };
@@ -296,4 +304,59 @@ char const * getstringsetting(char const * name)
 void setstringsetting(char const * name, char const * val)
 {
     settings[name] = val;
+}
+
+/* MOD (Jeremy, jc-37): ONE definition of "this opt-in switch is on", callable from portable C.
+ *
+ * This used to live only in TileWorldApp::SettingOptedIn(), whose comment promised it was the
+ * single shared definition -- true only for as long as nothing outside Qt needed to ask. The death
+ * counter is counted in tworld.c, which cannot see Qt at all, so the parse moved DOWN here and
+ * TWApp.cpp now delegates. Writing a second parser up there instead would have made that promise
+ * a lie the first time the two disagreed about, say, " TRUE ".
+ *
+ * Strictly opt-in: only "1" or "true" (any casing, surrounding whitespace ignored). Absent, blank,
+ * "0", garbage and a missing settings file all mean OFF, so a setting can never switch itself on
+ * by accident. Mirrors SuperCC's optedIn().
+ *
+ * A STRING read, not getintsetting(), on purpose: the file is meant to be hand-edited and
+ * "showdeathcounter=true" is what someone reading the README will naturally type.
+ * getintsetting() cannot parse that and would silently report -1. */
+int settingoptedin(char const * name)
+{
+    map<string, string>::const_iterator loc(settings.find(name));
+    if (loc == settings.end())
+        return 0;
+
+    /* The whitespace set is QChar::isSpace()'s, matching the QString::trimmed() this replaced --
+     * vertical tab and form feed included, not because an ini file will ever contain them but so
+     * that "equivalent to the old Qt implementation" is true without an asterisk. */
+    static char const WS[] = " \t\n\v\f\r";
+    string s(loc->second);
+    string::size_type const first = s.find_first_not_of(WS);
+    if (first == string::npos)
+        return 0;
+    string::size_type const last = s.find_last_not_of(WS);
+    s = s.substr(first, last - first + 1);
+
+    if (s == "1")
+        return 1;
+    if (s.size() != 4)
+        return 0;
+    for (string::size_type i = 0; i < 4; ++i)
+        s[i] = static_cast<char>(tolower(static_cast<unsigned char>(s[i])));
+    return s == "true" ? 1 : 0;
+}
+
+/* MOD (Jeremy, jc-37): FALSE when the settings file exists but could not be read, i.e. when the map
+ * is empty for a reason other than "there are no settings yet".
+ *
+ * Callers that merely read a setting do not need this -- a defaulted value is fine. It exists for
+ * the death counter, whose whole point is a running total: in that state getintsetting("deathcount")
+ * returns "absent", the counter would show a confident "Deaths: 0", count up from there, and then
+ * discard it at exit because savesettings() refuses to write. Showing nothing is far better than
+ * showing a wrong lifetime total. This is not hypothetical -- see the note on settingsUnreadable
+ * above for the online-only-Dropbox case that produces it. */
+int settingsarereadable(void)
+{
+    return settingsUnreadable ? 0 : 1;
 }

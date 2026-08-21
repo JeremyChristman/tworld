@@ -53,6 +53,10 @@ public:
 	void ClearDisplay();
 	bool DisplayGame(const gamestate* pState, int nTimeLeft, int nBestTime, bool showinitgamestate);
 	bool SetDisplayMsg(const char* szMsg, int nMSecs, int nBoldMSecs);
+	/* MOD (Jeremy, jc-37): death total to display, or -1 to stop displaying it. */
+	void SetDeathCount(int nCount);
+	/* MOD (Jeremy, jc-37): show or hide Reset/Set to match the Death Counter checkbox. */
+	void UpdateDeathCounterMenu();
 	int DisplayEndMessage(int nBaseScore, int nTimeScore, long lTotalScore, int nCompleted);
 	int DisplayList(const char* szTitle, const tablespec* pTableSpec, int* pnIndex,
 			DisplayListType eListType, int (*pfnInputCallback)(int*));
@@ -123,8 +127,21 @@ private:
 	
 	uint8_t m_nKeyState[TWK_LAST];
 
-	struct MessageData{ QString sMsg; uint32_t nMsgUntil, nMsgBoldUntil; };
+	/* MOD (Jeremy, jc-37): bSticky marks a message pushed with FOREVER -- in practice only
+	 * "(paused)" (tworld.c) and "Verifying ..." (tworld.c). Those two are state indicators rather
+	 * than notifications, and the death counter yields to them; it overrides everything with a
+	 * finite timeout. The flag is captured at PUSH time because nMSecs is not retained, and
+	 * comparing nMsgUntil against a clock afterwards cannot tell the two apart. */
+	struct MessageData{ QString sMsg; uint32_t nMsgUntil, nMsgBoldUntil; bool bSticky; };
 	QVector<MessageData> m_shortMessages;
+
+	/* MOD (Jeremy, jc-37): the death counter, as the display layer sees it. m_nDeathCount is the
+	 * lifetime total pushed here by play.c via deathcountchanged(); -1 means "do not display".
+	 * The core owns the number -- this is a cache for painting, never the authority. */
+	int m_nDeathCount = -1;
+	/* The ONE place m_pLblShortMsg's text and color are decided. Every write of that label goes
+	 * through here so the precedence rule cannot be bypassed by a caller that paints first. */
+	void RefreshShortMsgLabel();
 	
 	bool m_bKbdRepeatEnabled;
 

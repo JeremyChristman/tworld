@@ -25,6 +25,17 @@ void setintsetting(char const * name, int val);
 char const * getstringsetting(char const * name);
 void setstringsetting(char const * name, char const * val);
 
+/* MOD (Jeremy, jc-37): TRUE when an opt-in switch is on. Strictly opt-in -- only "1" or "true"
+ * (any casing, surrounding whitespace ignored) count; absent, blank, "0", garbage and a missing
+ * settings file all mean off. This is the single shared definition, used by both the portable
+ * core and TileWorldApp::SettingOptedIn(). */
+int settingoptedin(char const * name);
+
+/* MOD (Jeremy, jc-37): FALSE when the settings file exists but could not be read, in which case
+ * the settings map is empty and savesettings() will refuse to write. Only callers that must tell
+ * "no value yet" apart from "value unavailable" need this -- see the death counter. */
+int settingsarereadable(void);
+
 #ifdef __cplusplus
 }
 #endif

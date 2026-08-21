@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-36
+  Tile World  --  Jeremy Christman's fork                    build jc-37
 ==============================================================================
 
   1. What this is
@@ -138,11 +138,13 @@ RUNNING IT
 Double-click Tile World.exe. Pick a level set and play. Useful keys:
 
     arrow keys      move
-    p               pause
+    backspace       pause
+    Ctrl+R          restart the level
+    tab             replay your saved solution
     s               the score list (Games > Scores)
-    backspace       restart the level
-    Ctrl+R          replay your saved solution
-    ? or F1         the full key list
+    p / n           previous / next level
+    escape          leave the level
+    Help > Keys     the full key list
 
 USEFUL COMMAND LINE OPTIONS
 
@@ -220,10 +222,12 @@ This is the complete stock file:
 
     [Display]
     bgcolor=#285080
+    deathcount=0
     displayccx=1
     forceshowtimer=0
     legacyscores=false
     showbuildtag=false
+    showdeathcounter=false
     showinitstate=0
 
     [Game]
@@ -253,6 +257,18 @@ bgcolor         The window background color.
                 highlight are deliberately left alone. Text automatically
                 flips between white and black for contrast. Garbage falls back
                 to the stock blue.
+
+deathcount      Your lifetime death total, the number the death counter shows.
+                Values:  any whole number from 0 to 999999999.
+                Default: 0
+                This is the counter's storage, not a switch -- it only appears
+                on screen when showdeathcounter is on. The game rewrites this
+                line every time it changes, so it survives closing the game.
+                Safe to edit by hand while the game is NOT running; if it is
+                running, your edit is overwritten the next time the number
+                changes. Garbage, a negative number and a missing line all read
+                as 0. Options > Set Death Counter... does the same thing from
+                inside the game, and Options > Reset Death Counter sets it to 0.
 
 displayccx      Whether to show the story text ("CCX") that some level sets
                 include between levels.
@@ -291,6 +307,37 @@ showbuildtag    Whether the title bar shows which build of this fork you are
                 being worked on and just noise otherwise. Turning it off does
                 not hide which build you have -- the tag is still a string
                 inside the executable.
+
+showdeathcounter  Whether the message bar shows a running lifetime death total.
+                Values:  true or 1 turns it on. ANYTHING ELSE IS OFF.
+                Default: false -- off, including when the key is absent or the
+                         file does not exist.
+                Toggled in the game under Options > Death Counter, which also
+                reveals Reset Death Counter and Set Death Counter... beneath it.
+                The total itself is the deathcount setting above.
+
+                It reads "Deaths: 12" in the small black bar under the hint box,
+                bottom right. That bar is shared with other messages, and the
+                counter takes priority over all of them EXCEPT "(paused)" and
+                "Verifying ...", which replace it until they are done. Note that
+                while the counter is on you will not see the volume readout, the
+                stepping readout, or -- if you play with the volume at 0 -- the
+                written-out sound effects ("Bummer", "Chack!", and the rest),
+                because those all share the same bar.
+
+                WHAT COUNTS AS A DEATH. Every way Chip can die: monsters, water,
+                fire, bombs, being squashed by a block, and running out of time.
+                Restarting a level that is IN PROGRESS also counts, whether you
+                use Ctrl+R or Level > Restart -- giving up on a run is a run you
+                lost. Restarting after you have already died does NOT count
+                again, and neither does replaying a level you just solved,
+                leaving a level with Escape, switching levels, or watching a
+                solution play back.
+
+                The total is shared across every level set, and it is kept in
+                this file, so it is per-installation: two copies of the game
+                keep two separate totals, and if this folder is synced between
+                two computers they will overwrite each other's number.
 
 showinitstate   Whether to show the initial random state of a level, a detail
                 that matters when hunting for the best possible solution.
@@ -369,6 +416,71 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-37  --  Death counter
+-------------------------
+
+  * NEW SETTING AND MENU ITEMS: Options > Death Counter. Turn it on and the
+    small black bar under the hint box, bottom right, shows a running lifetime
+    death total -- "Deaths: 12". Two more items appear beneath it while it is
+    on: Reset Death Counter, and Set Death Counter... for typing in a number.
+    Accomplishes: a count of how many times Chip has died, kept across sessions.
+    OFF BY DEFAULT, so nothing changes for anyone who does not turn it on.
+
+  * The total is stored in tw_settings.ini as deathcount, so it survives closing
+    the game and can be edited by hand. It is shared across all level sets and
+    belongs to the installation, not to a save file: two copies of the game keep
+    two separate totals, and a folder synced between two computers will have the
+    two machines overwrite each other's number.
+
+  * WHAT COUNTS. Every way Chip can die -- monsters, water, fire, bombs, being
+    squashed by a block, and running out of time -- under BOTH rulesets.
+    Restarting a level that is in progress counts too, by Ctrl+R or by
+    Level > Restart, on the reasoning that giving up on a run is a run you lost.
+
+  * WHAT DOES NOT COUNT, and this is the part that took the care: restarting
+    after you have ALREADY died. Every way out of the "Oops" prompt restarts the
+    level -- R, Ctrl+R, and Space alike -- so counting restarts naively would
+    have scored two deaths for every one. The counter is incremented only from
+    inside the live game loop, which the post-death prompt is not part of.
+    Replaying a level you just solved, leaving with Escape, changing levels, and
+    watching a solution play back all correctly count for nothing.
+
+  * DETECTION does not use the death SOUND, which looks like the obvious signal
+    and is not one: under Lynx, drowning and bombs play their own sound and a
+    timeout plays none, and under MS a timeout plays the time-out sound instead.
+    A counter built on that would have missed drownings in Lynx entirely. It
+    uses the game loop's own "this level ended badly" result, which every death
+    in both engines goes through.
+
+  * SHARING THE BAR. That bar already carried other messages, so the counter has
+    a priority rule: it replaces anything with a timeout -- the volume readout,
+    the stepping readout, and the written-out sound effects you see when the
+    volume is 0 -- but it steps aside for "(paused)" and "Verifying ...", which
+    stay until they are finished. That exception is not cosmetic: under Lynx the
+    board is not blanked when you pause, so "(paused)" in that bar is the ONLY
+    sign the game is stopped, and a counter that covered it would have made a
+    paused game look like a running one.
+
+  * The number is capped at 999999999. At 17 characters "Deaths: 999999999"
+    fits the bar comfortably -- it already displays 19-character strings. It
+    stops there rather than wrapping round to a negative number, and that same
+    ceiling applies to the Set Death Counter... box and to a value edited into
+    the file by hand. Nonsense in the file -- a negative number, letters, an
+    empty value, a missing line -- reads as 0.
+
+  * If tw_settings.ini exists but cannot be opened, the counter is hidden rather
+    than shown as 0. The stored total is unavailable in that state, and a
+    confident wrong zero that then gets thrown away at exit is worse than
+    showing nothing.
+
+  * ALSO FIXED, unrelated to the counter but next to it: the key list in section
+    4 of this README was wrong. It said "p" paused (it goes to the previous
+    level), that backspace restarted the level (it pauses), and that Ctrl+R
+    replayed your solution (it restarts the level; tab replays). It also pointed
+    at "? or F1" for the full key list, which are not bound in this build --
+    that list is under Help > Keys.
 
 
 jc-36  --  The grand total on the score screen stopped being cut off

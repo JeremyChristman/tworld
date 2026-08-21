@@ -77,14 +77,18 @@ foreach ($dll in "zlib1.dll", "libzstd.dll") {
 #   selectedruleset absent -> not Ruleset_Lynx(1) -> MS(2)
 #   volume=10       sdlsfx.c starts at SDL_MIX_MAXVOLUME, i.e. level 10. It was written as 8 here
 #                   at first, which would have quietly turned every fresh install's sound DOWN.
+#   showdeathcounter=false  jc-37. Opt-in like every other switch: a fresh install shows no
+#                   counter, and deathcount=0 is merely the honest starting total.
 # Re-check this list whenever a default changes.
 @"
 [Display]
 bgcolor=#285080
+deathcount=0
 displayccx=1
 forceshowtimer=0
 legacyscores=false
 showbuildtag=false
+showdeathcounter=false
 showinitstate=0
 
 [Game]

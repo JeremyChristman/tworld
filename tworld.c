@@ -1281,6 +1281,20 @@ static int playgame(gamespec* gs, int firstcmd) {
                 case CmdNextLevel: n = +1;
                     goto quitloop;
                 case CmdSameLevel: n = 0;
+                    /* MOD (Jeremy, jc-37): restarting a level that is in progress counts as a
+                     * death -- Ctrl+R, or Level > Restart. Giving up on a run is a run you lost.
+                     *
+                     * ONLY from here, inside playgame(), and that is what stops every death from
+                     * counting twice. After a real death this function has already returned and
+                     * endinput() is running, where EVERY way out restarts the level: R and Ctrl+R
+                     * return TRUE, and so does Space, because CmdProceed does not advance while
+                     * gs->status < 0. Counting restarts there would double every death.
+                     *
+                     * Consequences of the same rule, all intended: restarting a level you just
+                     * SOLVED is free (also endinput()); restarting from the pre-level screen is
+                     * free (startinput() has no CmdSameLevel case at all); and restarting a replay
+                     * is free (playbackgame() has its own switch). */
+                    recorddeath();
                     goto quitloop;
                 case CmdQuit: exit(0);
                 case CmdVolumeUp:
@@ -1326,6 +1340,26 @@ static int playgame(gamespec* gs, int firstcmd) {
             }
         }
     }
+    /* MOD (Jeremy, jc-37): Chip died. Count it.
+     *
+     * THIS BLOCK IS REACHABLE ONLY VIA break, WHICH IS THE WHOLE POINT. The quitloop: exit below
+     * also carries a negative n -- CmdPrevLevel sets n = -1 -- so a hook placed at a shared exit,
+     * or driven off gs->status, would score a death every time the player pressed Previous Level.
+     *
+     * n < 0 covers every death in both engines: monsters, water, fire, bombs, block squish and
+     * running out of time all arrive here through doturn()'s negative return. Deliberately NOT
+     * keyed on SND_CHIP_LOSES, which looks like the death signal and is not one -- Lynx raises a
+     * different sound for drowning and bombs and none at all for a timeout (lxlogic.c), and MS
+     * raises SND_TIME_OUT rather than SND_CHIP_LOSES on a timeout (mslogic.c).
+     *
+     * n == -2 is CmdQuitLevel (Escape), which is a decision to leave, not a death.
+     *
+     * KNOWN AND ACCEPTED: doturn() also returns -1 if the tick counter saturates (play.c), which
+     * takes about 9.3 hours on a single level. That scores one spurious death. Telling it apart
+     * would mean threading a new return code through advancegame() for a case nobody will hit. */
+    if (n < 0 && n != -2)
+        recorddeath();
+
     if (!lastrendered)
         drawscreen(TRUE);
     setgameplaymode(EndPlay);

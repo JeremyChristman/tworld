@@ -319,6 +319,18 @@ int setdisplaymsg(char const *msg, int msecs, int bold)
     return TRUE;
 }
 
+/* MOD (Jeremy, jc-37): the death counter is a Qt-backend feature; this backend does not draw it.
+ *
+ * NOT dead code and NOT optional -- oshw.h declares deathcountchanged() for every backend, and
+ * play.c calls it unconditionally, so without this definition the -DOSHW=sdl build fails to link.
+ * A no-op is the honest implementation: the SDL message bar is a single fixed-size slot with no
+ * precedence rule to hang a persistent counter on, and the deaths are still counted and persisted
+ * in tw_settings.ini either way. */
+void deathcountchanged(int count)
+{
+    (void)count;
+}
+
 /*
  * The main display functions.
  */

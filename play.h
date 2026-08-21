@@ -51,6 +51,44 @@ extern void advanceinitrandomff(int display);
  * force floor direction. */
 extern char const* getinitstatestring(void);
 
+/*
+ * MOD (Jeremy, jc-37): the death counter.
+ *
+ * A lifetime total, persisted in tw_settings.ini as "deathcount", displayed in the short-message
+ * bar as "Deaths: N" when "showdeathcounter" is on. This module is the SINGLE OWNER of the number:
+ * one place clamps it, one place persists it, one place notifies the display. Callers -- the game
+ * loop in tworld.c and the Options menu in oshw-qt -- go through these three functions and never
+ * touch setintsetting("deathcount") themselves.
+ *
+ * Modeled on setstepping()/changevolume(): mutate a value, persist it, poke the display.
+ */
+
+/* The largest total the counter will hold or accept. Nine digits: "Deaths: 999999999" is 17
+ * characters, comfortably inside the bar, which already ships 19-character strings. Chosen over
+ * INT_MAX because a readable round number beats squeezing in the last of the int range -- and the
+ * counter saturates here rather than wrapping, so the ceiling is a resting place, not an error. */
+#define DEATHCOUNT_MAX  999999999
+
+/* TRUE when the death counter should be displayed and counted. FALSE if the user has not opted in,
+ * or if the settings file exists but could not be read -- in the latter case the stored total is
+ * unavailable and would otherwise be shown, wrongly, as 0. */
+extern int deathcounteractive(void);
+
+/* The current lifetime death total, clamped to [0, INT_MAX]. */
+extern int getdeathcount(void);
+
+/* Set the lifetime total outright (Options > Set Death Counter..., and Reset, which passes 0).
+ * Values outside [0, INT_MAX] are clamped. Persists and updates the display. */
+extern void setdeathcount(int count);
+
+/* Add one death to the lifetime total, saturating at INT_MAX rather than wrapping. Does nothing
+ * when the counter is not active. Persists and updates the display. */
+extern void recorddeath(void);
+
+/* Push the current total at the display. Called when the feature is switched on or off, so the bar
+ * starts or stops showing it without waiting for the next death. */
+extern void refreshdeathcount(void);
+
 /* Return the amount of time passed in the current game, in seconds.
  */
 extern int secondsplayed(void);
