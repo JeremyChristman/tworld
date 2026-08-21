@@ -352,6 +352,24 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	 * a fresh launch with the feature off. deathcounteractive() also answers FALSE when the
 	 * settings file could not be read, so the counter stays hidden rather than showing a confident
 	 * "Deaths: 0" that would then be discarded at exit. */
+	/* MOD (Jeremy, jc-38): the death counter is WHITE, the messages stay red. The bar's palette
+	 * carries three text colors and the funnel picks between them by role:
+	 *     BrightText  bright red (255,0,0)  a message inside its bold window
+	 *     Text        dark red   (192,0,0)  a message after its bold window lapses
+	 *     WindowText  white                 the death counter
+	 * WindowText was previously unused -- the .ui sets it red, but RefreshShortMsgLabel() always
+	 * overrode it -- so it is free to carry the counter's color. Set here rather than in the .ui
+	 * because one line of code with this comment is easier to find than a color buried in three
+	 * palette groups of generated XML. The rest of the .ui palette (black background included) is
+	 * preserved: this modifies the label's existing palette rather than replacing it. */
+	{
+		QPalette palShortMsg = m_pLblShortMsg->palette();
+		palShortMsg.setColor(QPalette::Active,   QPalette::WindowText, Qt::white);
+		palShortMsg.setColor(QPalette::Inactive, QPalette::WindowText, Qt::white);
+		palShortMsg.setColor(QPalette::Disabled, QPalette::WindowText, Qt::white);
+		m_pLblShortMsg->setPalette(palShortMsg);
+	}
+
 	action_DeathCounter->setChecked(deathcounteractive());
 	UpdateDeathCounterMenu();
 	/* ⚠ SetDeathCount() directly, NOT refreshdeathcount(). We are inside the constructor, and
@@ -464,8 +482,10 @@ void TileWorldMainWnd::RefreshShortMsgLabel()
 	}
 	else if (m_nDeathCount >= 0)
 	{
-		/* Fixed role: bright red reads as "something just happened", and a standing total has not. */
-		style = QPalette::Text;
+		/* Fixed role, and a different COLOR from every message: the counter is a standing readout,
+		 * not a notification, so it is white while messages are red. See the palette note in the
+		 * constructor for what each of the three roles means. */
+		style = QPalette::WindowText;
 		sText = tr("Deaths: %1").arg(m_nDeathCount);
 	}
 	else

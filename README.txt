@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-37
+  Tile World  --  Jeremy Christman's fork                    build jc-38
 ==============================================================================
 
   1. What this is
@@ -416,6 +416,24 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-38  --  The death counter is white
+--------------------------------------
+
+  * The death counter now reads in WHITE, where it was previously the same dark
+    red as everything else in that bar. Accomplishes: the running total is told
+    apart at a glance from the messages that share the bar with it -- it is a
+    standing readout, not a notification, and it no longer looks like one.
+
+  * Messages are unchanged: still bright red while new, dark red as they age.
+    The bar's palette now carries three text colors instead of two, one of them
+    reserved for the counter.
+
+  * The counter was already centered in the bar and still is.
+
+  * No behavior change of any kind: nothing about what counts as a death, what
+    the counter does, or where it is stored is different from jc-37.
 
 
 jc-37  --  Death counter
