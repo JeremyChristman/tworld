@@ -212,6 +212,56 @@ exactly what's mine:
    other list whose body cells span, is pixel-identical to jc-35. Every other row keeps the height
    and the column widths it had. `-b -r` batch verify over the set: 1,325 valid, 0 invalid.
 
+11. **Level navigation wraps around the ends of a set** (`tworld.c`).
+   Previous Level on level 1 and Next Level on the last level both did nothing — `changecurrentgame()`
+   clamps to the ends and returns FALSE. (Only `startinput()`'s `leveldelta` macro looks at that
+   return value and bells; the other four navigation call sites discard it and fail silently, which
+   is why the key looked dead rather than refused.) They now wrap: off the front
+   of the set lands on the last level, off the back lands on level 1. PgUp/PgDn (skip ten) wrap too,
+   but only when they are already parked against an end and cannot move at all; PgUp on level 5 still
+   lands on level 1 rather than ten from the end.
+
+   The wrap is a **separate function, `changecurrentgamewrapped()`, called only from the navigation
+   commands** — not a change to `changecurrentgame()` itself, because three of that function's
+   callers are not the player navigating and wrapping would break each of them:
+   `findlevelfromhistory()` and the `-defaultlevel` path call it with `-1` purely to back down from a
+   level whose password is not known (wrap that and a locked start level flings the player to the far
+   end of the set); `endinput()` calls it with `+1` for Melinda's free pass and again for "Onward!"
+   after a win, where solving the LAST level must fall through to the end-of-series screen rather
+   than silently restarting at level 1; and `showsolutionfiles()` calls it with an arbitrary offset
+   just to restore the current level after switching solution files. The wrapped version is used by
+   `startinput()`'s `leveldelta` macro, by `endinput()`'s six navigation cases, by `playgame()`'s
+   quitloop (where `n` is only ever the −1/+1 the navigation keys set), and by `playbackgame()` and
+   `verifyplayback()`.
+
+   **Password protection is preserved by construction.** The wrap does not assign an index; it
+   expresses itself as an ordinary offset back through `changecurrentgame()`, so the existing
+   accessibility scan runs exactly as it would for the same offset typed by hand. With passwords
+   enforced, Previous on level 1 therefore lands on the furthest level legitimately unlocked — on a
+   fresh save that is level 1 again, i.e. nothing moves. It cannot reach a level that a direct jump
+   could not. Wrapping is also refused when the move failed for any reason other than being against
+   that end, so a password gate mid-set still refuses exactly as it did.
+
+   **"The last level" is `count - 1`, not `islastinseries()`**, and the difference is visible on the
+   stock upstream configurations: `sets/CCLP1-MS.dac` declares `lastlevel=144` over a 149-level
+   `.dat`, so `islastinseries()` answers TRUE at level 144 while the file runs to 149. `lastlevel`
+   decides only where the end-of-series screen fires; Previous and Next have always walked through
+   the levels past it as ordinary levels, and still do. Wrapping to 144 would drop the player into
+   the middle of the navigable range and make 145–149 unreachable by wrapping, so the two directions
+   would stop being inverses of each other. (Moot for Jeremy's own collection — none of the 528
+   `.dac` files in his `sets\` declare `lastlevel` at all, so there `islastinseries()` already
+   reduces to `index == count - 1`.)
+
+   Two navigation surfaces deliberately keep their old behavior. `finalinput()` — the screen shown
+   after the last level of a set is solved — still sends both Previous and Next to level 1; there is
+   no current level to step off, and both keys there mean "start the set over". And `endinput()`'s
+   `CmdProceed` ("Onward!" after a win) still ends the series on the last level rather than wrapping.
+
+   Measured with a harness that slices the two real functions out of `tworld.c` and stubs the
+   gamespec around them: 26 checks, 0 failures, covering both wrap directions at ±1 and ±10, sets of
+   1, 2, 10 and 1,325 levels, and the password matrix (fresh save, partially unlocked, fully solved).
+   GUI-playtested on CCLP1 and on Joshie (1,325 levels).
+
 ## Building (Windows, MSYS2)
 
 The deployed flavor is a single self-contained exe via **static Qt**. From the MSYS2 MINGW64 shell:

@@ -587,6 +587,64 @@ static int changecurrentgame(gamespec* gs, int offset) {
     return TRUE;
 }
 
+/* MOD (Jeremy, jc-39): the same thing, with the two ends of the set joined.
+ *
+ * changecurrentgame() CLAMPS: asked to leave the set at either end it stays put and returns FALSE,
+ * and the key did nothing at all -- with a bell on the pre-level screen, which is the one caller
+ * that looks at the return value (startinput()'s leveldelta macro), and in silence everywhere else.
+ * Previous on level 1 now lands on the last level of the set, Next on the last level lands on level
+ * 1, and the ten-level skips do the same once they are parked against an end they cannot move away
+ * from.
+ *
+ * WRAPPING IS DELIBERATELY NOT BUILT INTO changecurrentgame() ITSELF, because three of its callers
+ * are not the player navigating and would be actively broken by it:
+ *
+ *   - findlevelfromhistory() and the -defaultlevel path both call it with -1 purely to BACK DOWN
+ *     from a level whose password is not known yet. Wrap that and a locked start level would send
+ *     the player to the far end of the set instead of to a legal one.
+ *   - endinput() calls it with +1 as Melinda's free pass and again as "Onward!" after a win. A win
+ *     on the last level must fall through to the end-of-series screen, not silently restart at
+ *     level 1 -- islastinseries() guards that path and knows nothing about this.
+ *   - showsolutionfiles() calls it with an arbitrary offset to RESTORE the current level after
+ *     switching solution files. Wrapping is meaningless there.
+ *
+ * Only the keys and menu items that mean "take me to another level" call this.
+ *
+ * The wrap itself is expressed as an ordinary offset back through changecurrentgame(), so password
+ * protection keeps working exactly as it does anywhere else: with passwords enforced, going back off
+ * level 1 lands on the furthest level the player has legitimately unlocked (which on a fresh save is
+ * level 1 again -- unchanged, so nothing moves). It cannot open a level the same offset typed by
+ * hand would not have opened.
+ *
+ * "THE LAST LEVEL" HERE MEANS THE LAST LEVEL IN THE FILE, count - 1, and deliberately NOT
+ * islastinseries(), which also answers TRUE for the level whose number matches a .dac file's
+ * lastlevel= line. Those two differ on the stock upstream configurations (CCLP1-MS.dac says
+ * lastlevel=144 over a 149-level .dat), and count - 1 is the right one of the pair: lastlevel only
+ * decides where the end-of-series screen fires, while Previous and Next have always walked straight
+ * through the levels past it as ordinary levels. Wrapping to 144 instead would land the player in
+ * the MIDDLE of the navigable range -- Previous from level 1 would reach 144, Next from 144 would
+ * go to 145, and 145-149 could never be reached by wrapping at all. count - 1 keeps the two
+ * directions exact inverses of each other: whatever Next on the last level leaves you on, Previous
+ * on level 1 takes you back to.
+ */
+static int changecurrentgamewrapped(gamespec* gs, int offset) {
+    int end;
+
+    if (changecurrentgame(gs, offset))
+        return TRUE;
+
+    /* Nothing moved. Wrap only when that is because we are already against the end we were asked
+     * to move past -- not when a password gate refused a level in the middle of the set. */
+    if (offset < 0 && gs->currentgame == 0)
+        end = gs->series.count - 1;
+    else if (offset > 0 && gs->currentgame == gs->series.count - 1)
+        end = 0;
+    else
+        return FALSE;
+
+    return changecurrentgame(gs, end - gs->currentgame);
+}
+
 /* Return TRUE if Melinda is watching Chip's progress on this level --
  * i.e., if it is possible to earn a pass to the next level.
  */
@@ -989,7 +1047,9 @@ static void savehistory(void) {
  * The game-playing functions.
  */
 
-#define	leveldelta(n)	if (!changecurrentgame(gs, (n))) { bell(); continue; }
+/* MOD (Jeremy, jc-39): changecurrentgamewrapped(), so the ends of the set join up. The bell now
+ * rings only when there is genuinely nowhere to go -- a one-level set, or a password gate. */
+#define	leveldelta(n)	if (!changecurrentgamewrapped(gs, (n))) { bell(); continue; }
 
 /* Get a key command from the user at the start of the current level.
  */
@@ -1145,19 +1205,21 @@ static int endinput(gamespec* gs) {
         if (cmd == CmdNone)
             cmd = input(TRUE);
         switch (cmd) {
-            case CmdPrev10: changecurrentgame(gs, -10);
+            /* MOD (Jeremy, jc-39): wrapped, like every other navigation key. The CmdProceed case
+             * below is NOT -- winning the last level still ends the series. */
+            case CmdPrev10: changecurrentgamewrapped(gs, -10);
                 return TRUE;
-            case CmdPrevLevel: changecurrentgame(gs, -1);
+            case CmdPrevLevel: changecurrentgamewrapped(gs, -1);
                 return TRUE;
-            case CmdPrev: changecurrentgame(gs, -1);
+            case CmdPrev: changecurrentgamewrapped(gs, -1);
                 return TRUE;
             case CmdSameLevel: return TRUE;
             case CmdSame: return TRUE;
-            case CmdNextLevel: changecurrentgame(gs, +1);
+            case CmdNextLevel: changecurrentgamewrapped(gs, +1);
                 return TRUE;
-            case CmdNext: changecurrentgame(gs, +1);
+            case CmdNext: changecurrentgamewrapped(gs, +1);
                 return TRUE;
-            case CmdNext10: changecurrentgame(gs, +10);
+            case CmdNext10: changecurrentgamewrapped(gs, +10);
                 return TRUE;
             case CmdGotoLevel: gotolevel(gs);   /* MOD (Jeremy, jc-35) */
                 return TRUE;
@@ -1376,7 +1438,9 @@ quitloop:
     quitgamestate();
     setgameplaymode(EndPlay);
     if (n)
-        changecurrentgame(gs, n);
+        /* MOD (Jeremy, jc-39): wrapped -- n is only ever the -1/+1 the level-navigation keys set
+         * on their way to this label (CmdSameLevel's 0 never reaches here). */
+        changecurrentgamewrapped(gs, n);
     return FALSE;
 }
 
@@ -1487,9 +1551,10 @@ static int playbackgame(gamespec* gs, int initcmd) {
                 n = hideandseek(gs, secondstoskip);
                 lastrendered = TRUE;
                 break;
-            case CmdPrevLevel: changecurrentgame(gs, -1);
+            /* MOD (Jeremy, jc-39): wrapped, so leaving a replay by level works like anywhere else. */
+            case CmdPrevLevel: changecurrentgamewrapped(gs, -1);
                 goto quitloop;
-            case CmdNextLevel: changecurrentgame(gs, +1);
+            case CmdNextLevel: changecurrentgamewrapped(gs, +1);
                 goto quitloop;
             case CmdSameLevel: goto quitloop;
             case CmdPlayback: goto quitloop;
@@ -1563,9 +1628,10 @@ static int verifyplayback(gamespec* gs) {
             break;
         advancetick();
         switch (input(FALSE)) {
-            case CmdPrevLevel: changecurrentgame(gs, -1);
+            /* MOD (Jeremy, jc-39): wrapped, as in playbackgame() above. */
+            case CmdPrevLevel: changecurrentgamewrapped(gs, -1);
                 goto quitloop;
-            case CmdNextLevel: changecurrentgame(gs, +1);
+            case CmdNextLevel: changecurrentgamewrapped(gs, +1);
                 goto quitloop;
             case CmdSameLevel: goto quitloop;
             case CmdPlayback: goto quitloop;
