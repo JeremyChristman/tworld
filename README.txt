@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-38
+  Tile World  --  Jeremy Christman's fork                    build jc-39
 ==============================================================================
 
   1. What this is
@@ -142,7 +142,7 @@ Double-click Tile World.exe. Pick a level set and play. Useful keys:
     Ctrl+R          restart the level
     tab             replay your saved solution
     s               the score list (Games > Scores)
-    p / n           previous / next level
+    p / n           previous / next level (they wrap around the ends of a set)
     escape          leave the level
     Help > Keys     the full key list
 
@@ -416,6 +416,43 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-39  --  The ends of a level set join up
+-------------------------------------------
+
+  * Previous Level on level 1 now goes to the LAST level of the set, and Next
+    Level on the last level goes back to level 1. Both keys used to do nothing
+    at all there. Accomplishes: no dead key at either end of a set -- reaching
+    the far end of a 1,325-level set is one keystroke instead of a password.
+
+  * This is the Ctrl+P and Ctrl+N keys while playing, the plain P and N keys on
+    the screen between levels, and Level > Previous and Level > Next in the
+    menus, including while a solution is playing back. The one screen that is
+    unchanged is the one shown after you finish a set, where both keys have
+    always meant "start the set over" and still send you to level 1.
+
+  * PgUp and PgDn, which skip ten levels at a time, wrap the same way, but only
+    once they are already parked against an end they cannot move away from. PgUp
+    on level 5 still lands on level 1, as before; PgUp on level 1 now lands on
+    the last level instead of doing nothing.
+
+  * PASSWORDS ARE STILL ENFORCED. Wrapping cannot open a level you could not
+    already reach: with passwords on, Previous on level 1 lands on the furthest
+    level you have unlocked, which on a brand new save is level 1 again -- so
+    nothing happens, exactly as before. Turn on Options > Ignore Passwords and
+    it wraps to the true last level.
+
+  * WHAT DOES NOT WRAP, deliberately: finishing the last level of a set. Solving
+    it still ends the series and shows the end-of-series screen rather than
+    quietly dropping you back on level 1.
+
+  * "THE LAST LEVEL" MEANS THE LAST ONE IN THE FILE. A level set configured with
+    a lastlevel= line -- the stock CCLP1-MS.dac says 144, over a file holding
+    149 -- wraps to level 149, not 144. That line only decides where the
+    end-of-series screen appears; Previous and Next have always walked through
+    the levels beyond it, and wrapping to 144 would leave 145-149 unreachable by
+    wrapping and stop the two directions being opposites of each other.
 
 
 jc-38  --  The death counter is white
