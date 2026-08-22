@@ -35,6 +35,10 @@ extern int ignorepasswds;   // MOD (Jeremy, jc-35): defined in tworld.c; see the
 #include <QColorDialog>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QFontMetrics>     // MOD (Jeremy, jc-40): sizing the Set Death Counter dialog to its title
+#include <QLayout>          // MOD (Jeremy, jc-40): \  the hand-built Set Death Counter dialog --
+#include <QSpinBox>         // MOD (Jeremy, jc-40):  > QInputDialog cannot be sized or stripped of
+#include <QDialogButtonBox> // MOD (Jeremy, jc-40): /  its help button; see the note at the dialog
 #include <QPushButton>
 #include <QHeaderView>   // MOD (Jeremy, jc-33): legacy score-list header styling
 
@@ -445,8 +449,10 @@ void TileWorldMainWnd::timerEvent(QTimerEvent*)
  *
  * The color decision lives here rather than in timerEvent() on purpose. It used to be computed
  * from the stack top and applied unconditionally, which would have flipped the counter between
- * bright and dark red as suppressed messages underneath aged out. The counter gets a fixed role:
- * dark red, because bright red reads as "something just happened" and a standing total has not. */
+ * bright and dark red as suppressed messages underneath aged out. The counter gets a fixed role of
+ * its own instead -- WindowText, which jc-38 made white; the two reds are left to messages, where
+ * bright means "something just happened" and a standing total never does. (Written when that fixed
+ * role was dark red; corrected in jc-40, because the sentence outlived the color it named.) */
 void TileWorldMainWnd::RefreshShortMsgLabel()
 {
 	uint32_t const nCurTime = TW_GetTicks();
@@ -2181,19 +2187,73 @@ void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 
 	if (pAction == action_SetDeathCounter)
 	{
-		/* Integers only, and the range is enforced by the widget rather than by parsing text --
-		 * QInputDialog::getInt cannot return anything outside [min, max] or anything non-numeric.
+		/* Integers only, and the range is enforced by the spin box rather than by parsing text --
+		 * a QSpinBox cannot yield anything outside [min, max] or anything non-numeric.
 		 *
 		 * DEATHCOUNT_MAX (play.h) is the one definition of the ceiling -- the dialog, the read
 		 * clamp and the saturation all use it, so the number you can type is exactly the number
 		 * the counter can hold. "Deaths: 999999999" is 17 characters and the bar already ships
-		 * strings of 19 ("crackle crackle ...", sdlsfx.c), so it fits with room to spare. */
-		bool bOk = false;
-		int const nNew = QInputDialog::getInt(this, tr("Set Death Counter"),
-						      tr("Deaths:"), getdeathcount(),
-						      0, DEATHCOUNT_MAX, 1, &bOk);
-		if (bOk)
-			setdeathcount(nNew);
+		 * strings of 19 ("crackle crackle ...", sdlsfx.c), so it fits with room to spare.
+		 *
+		 * MOD (Jeremy, jc-40): ASSEMBLED BY HAND, where jc-37 used QInputDialog::getInt(). Two
+		 * complaints about that dialog, and neither is fixable through the convenience function:
+		 *
+		 *   - THE "?" IN THE TITLE BAR IS GONE. Qt puts WindowContextHelpButtonHint on dialogs by
+		 *     default, and it does nothing whatsoever here: nothing in this program installs
+		 *     What's-This text, so clicking it enters What's-This mode and the next click leaves
+		 *     again. A control that cannot do anything should not be offered.
+		 *   - IT OPENS WIDE ENOUGH TO SHOW ITS OWN TITLE. Qt sizes a dialog from its CONTENTS --
+		 *     here a short "Deaths:" label and a spin box -- and never consults the window title,
+		 *     so "Set Death Counter" arrived elided to "Set Death C...". The floor below is
+		 *     computed from the title's own measured width instead.
+		 *
+		 * ⚠ THE WIDTH HAS TO GO ON THE LAYOUT AS A SPACER. Three other ways to set it were built
+		 * and measured on this dialog, and all three are silent no-ops -- it opened at exactly
+		 * 216px, its natural content width, every time:
+		 *   - setMinimumWidth() on a QInputDialog. Measured at title+120 and again at title+400:
+		 *     216px both times. Activating its layout discards the widget's explicit minimum.
+		 *   - Adding the spacer to a QInputDialog's layout(). Never runs at all: QInputDialog
+		 *     builds its layout lazily when SHOWN, so layout() is still null while the dialog is
+		 *     being configured. Proved by a probe build that retitled the dialog when layout()
+		 *     was null -- it opened reading "NO LAYOUT YET".
+		 *   - setMinimumWidth() on this hand-built dialog, with the layout set to
+		 *     QLayout::SetMinimumSize. Still 216px where title+120 should have given ~248,
+		 *     because that constraint WRITES the layout's own computed minimum onto the widget,
+		 *     which is precisely the explicit minimum being asked for.
+		 * A zero-height spacer raises the LAYOUT's own minimum width, which is the number every
+		 * constraint mode then derives from. Measured: title+220 opens 348px wide against the
+		 * 216px baseline, so the mechanism demonstrably binds.
+		 *
+		 * The +120 covers what the title bar puts around the text and what QFontMetrics cannot
+		 * see: the window icon on the left, the close button on the right, the frame, and the gap
+		 * Windows keeps between the two. It is measured in the DIALOG's font rather than the title
+		 * bar's, which Qt does not expose -- both are Segoe UI 9pt in the default Windows theme,
+		 * and the padding absorbs the difference either way. */
+		QDialog dlg(this);
+		dlg.setWindowTitle(tr("Set Death Counter"));
+		dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+		QSpinBox* pSpin = new QSpinBox(&dlg);
+		pSpin->setRange(0, DEATHCOUNT_MAX);
+		pSpin->setSingleStep(1);
+		pSpin->setValue(getdeathcount());
+		pSpin->selectAll();   /* as QInputDialog opened: typing replaces the current total */
+
+		QDialogButtonBox* pButtons = new QDialogButtonBox(
+			QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dlg);
+		connect(pButtons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+		connect(pButtons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+		QVBoxLayout* pLayout = new QVBoxLayout(&dlg);
+		pLayout->addWidget(new QLabel(tr("Deaths:"), &dlg));
+		pLayout->addWidget(pSpin);
+		pLayout->addWidget(pButtons);
+		pLayout->addItem(new QSpacerItem(
+			QFontMetrics(dlg.font()).horizontalAdvance(dlg.windowTitle()) + 120,
+			0, QSizePolicy::Minimum, QSizePolicy::Minimum));
+
+		if (dlg.exec() == QDialog::Accepted)
+			setdeathcount(pSpin->value());
 		return;
 	}
 

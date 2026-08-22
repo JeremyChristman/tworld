@@ -212,7 +212,34 @@ exactly what's mine:
    other list whose body cells span, is pixel-identical to jc-35. Every other row keeps the height
    and the column widths it had. `-b -r` batch verify over the set: 1,325 valid, 0 invalid.
 
-11. **Level navigation wraps around the ends of a set** (`tworld.c`).
+11. **Death counter** (`play.{c,h}`, `settings.cpp`, `oshw.h`, `oshw-sdl/sdlout.c`,
+   `oshw-qt/TWMainWnd.{h,cpp,ui}`, `package.ps1`).
+   `Options > Death Counter` puts a lifetime death total in the short-message bar under the hint box.
+   **Off by default**, so a fresh install shows nothing; two further items, `Reset Death Counter` and
+   `Set Death Counter...`, appear beneath it only while it is on. The total is stored in
+   `tw_settings.ini` as `deathcount`, gated by the opt-in `showdeathcounter`, and is therefore shared
+   across every level set and owned by the installation rather than by a save file — two copies of the
+   game keep two totals, and a synced folder has the two machines overwrite each other's number.
+   `DEATHCOUNT_MAX` (`play.h`) is the one definition of the ceiling, used by the dialog, the read clamp
+   and the saturation alike.
+
+   **What counts:** every death in both rulesets — monsters, water, fire, bombs, block squish, and
+   running out of time — plus restarting a level that is still in progress, on the reasoning that
+   giving up on a run is a run you lost. **What does not:** restarting after you have *already* died.
+   That distinction is the whole difficulty, because every way out of the "Oops" prompt restarts the
+   level (`R`, `Ctrl+R` and Space alike), so counting restarts naively scores two deaths for every one.
+   The increment therefore lives only inside `playgame()`'s live loop, which the post-death prompt is
+   not part of. Deliberately **not** keyed on the death sound, which looks like the signal and is not
+   one: Lynx plays its own sounds for drowning and bombs and none at all for a timeout, and MS plays
+   the time-out sound rather than `SND_CHIP_LOSES`.
+
+   *jc-38* then recolored it: the counter reads **white**, where it had shared the bar's dark red with
+   ordinary messages. The bar's palette carries three text colors and `RefreshShortMsgLabel()` picks by
+   role — `BrightText` for a message inside its bold window, `Text` for one that has aged, `WindowText`
+   for the counter. `WindowText` was previously unused, so it was free to take. Appearance only:
+   nothing about what counts, what the counter does, or where it is stored changed.
+
+12. **Level navigation wraps around the ends of a set** (`tworld.c`).
    Previous Level on level 1 and Next Level on the last level both did nothing — `changecurrentgame()`
    clamps to the ends and returns FALSE. (Only `startinput()`'s `leveldelta` macro looks at that
    return value and bells; the other four navigation call sites discard it and fail silently, which
@@ -260,7 +287,77 @@ exactly what's mine:
    Measured with a harness that slices the two real functions out of `tworld.c` and stubs the
    gamespec around them: 26 checks, 0 failures, covering both wrap directions at ±1 and ±10, sets of
    1, 2, 10 and 1,325 levels, and the password matrix (fresh save, partially unlocked, fully solved).
-   GUI-playtested on CCLP1 and on Joshie (1,325 levels).
+   GUI-playtested on CCLP1 and on Joshie (1,325 levels). All five wrapped call sites were exercised in
+   the real GUI, `verifyplayback()` included: queueing `Ctrl+P` immediately behind the `Shift+Tab` that
+   starts a verification leaves it in the input queue for that function's own first `input()` poll, and
+   the abort is distinguishable from a completed verify because `runcurrentlevel()` runs `endinput()`
+   only when `verifyplayback()` returns TRUE — so the level changing with **no result dialog on screen**
+   can only have come from inside `verifyplayback()`.
+
+13. **The directory root is resolved unconditionally** (`tworld.c`, `initdirs()`).
+   `root` — `$TWORLDDIR`, or `ROOTDIR` on a system build, or `"."` for the portable Windows release —
+   used to be computed only inside `if (!res || !series || !seriesdat)`, on the reasoning that nothing
+   needs it once `-R`, `-L` and `-D` have each been given by hand. Two things needed it anyway:
+
+   - **`savedir`.** With no `-S` and no `$HOME` — the ordinary case for a Windows GUI launch, where
+     `HOME` is simply not in the environment — the fallback is `combinepath(savedir, root, "save")`,
+     and `combinepath()` calls `strlen(dir)` with no null check. **Measured on jc-39: exit
+     `0xC0000005`, no window, no output.** A crash on startup, not a misconfiguration.
+   - **`appdir`, and with it `tw_settings.ini`**, which fell back to `"."` with `$TWORLDDIR` never
+     consulted — so setting that variable moved the level and data directories but silently failed to
+     move the settings file with them. The comment above that line had claimed since jc-33 that this
+     case was handled.
+
+   Neither is a fork bug: `git blame` puts the guard and the `savedir` fallback in the upstream 2.3.1
+   import (`929d9c6`). jc-33 added only the `appdir` line, and that one was null-guarded.
+
+   ⚠ **Be precise about what did not change.** With `$TWORLDDIR` unset — the ordinary case — `root` is
+   `"."` before and after, so `tw_settings.ini` is still read and written in the **working directory**.
+   Nothing in the tree resolves the executable's own path (no `GetModuleFileName`, no
+   `applicationDirPath`, no `chdir`), so jc-33's "beside the executable" holds only because launching
+   by double-click makes the working directory the program's folder. The behavior that actually
+   changed is the `$TWORLDDIR` one.
+
+   Nothing else changes: res/sets/data still each prefer their own option and fall back to `root` only
+   when that option is absent, which is exactly when the old code computed it too. The one new outcome
+   is that `root` is never NULL. Measured after: the same command line exits 0 and reports
+   `Solution files saved in: .\save`; with `$TWORLDDIR` set and all three options given, the save
+   directory follows it and the GUI picks up that directory's `tw_settings.ini` (proved by launching
+   from a different working directory and watching the build tag appear, which only that file enables).
+
+   **Known and NOT fixed, one line below the repair:** in the `#ifdef SAVEDIR` branch, `save = SAVEDIR`
+   assigns a local that the `else` branch never reads, so `savedir` stays the empty string it was
+   allocated as. `CMakeLists.txt` defines `SAVEDIR` for non-Windows Debug builds only, so no Windows
+   build can reach it; there, `combinepath(dest, "", path)` would read `dest[-1]` and write solutions to
+   the filesystem root. Upstream's, untouched by this fork, and out of scope for jc-40.
+
+14. **The Set Death Counter dialog is sized and stripped of its help button**
+   (`oshw-qt/TWMainWnd.cpp`).
+   jc-37 raised that dialog through `QInputDialog::getInt()`, a static convenience function that
+   exposes neither the window flags nor the size, and it showed: a `?` in the title bar that does
+   nothing (nothing in this program installs What's-This text, so clicking it enters What's-This mode
+   and the next click leaves again), above a dialog too narrow to display its own title, which arrived
+   elided as `Set Death C...`. Qt sizes a dialog from its contents — here a short `Deaths:` label and a
+   spin box — and never consults the window title. It is now assembled by hand from a `QSpinBox` and a
+   `QDialogButtonBox`, with the help hint cleared and a minimum width computed from the title's own
+   measured width plus 120px for the icon, close button, frame and gaps.
+
+   ⚠ **The width has to go on the layout as a spacer.** Three other ways to set it were built and
+   measured on this dialog, and all three are silent no-ops — it opened at exactly its natural 216px
+   every time: `setMinimumWidth()` on a `QInputDialog` (measured at title+120 *and* title+400, 216px
+   both times — activating its layout discards the widget's explicit minimum); adding the spacer to a
+   `QInputDialog`'s `layout()`, which never runs at all because that class builds its layout lazily
+   when shown, so `layout()` is still null while the dialog is being configured (proved by a probe
+   build that retitled the dialog when `layout()` was null — it opened reading `NO LAYOUT YET`); and
+   `setMinimumWidth()` on the hand-built dialog with `QLayout::SetMinimumSize`, which is worse than
+   useless because that constraint *writes the layout's own computed minimum onto the widget*,
+   overwriting the explicit minimum being asked for. A zero-height `QSpacerItem` raises the layout's
+   own minimum width, which is the number every constraint mode then derives from. Measured:
+   title+220 opens 348px against the 216px baseline, so the mechanism binds; the shipped title+120
+   opens **248px**, with the full title shown and the `?` gone. Behavior is otherwise identical —
+   integers only, clamped to `[0, DEATHCOUNT_MAX]`, opening with the current total selected, OK stores
+   and Cancel does not (both verified: setting 7 wrote `deathcount=7` and showed `Deaths: 7`;
+   cancelling out of 99 left it at 7).
 
 ## Building (Windows, MSYS2)
 
