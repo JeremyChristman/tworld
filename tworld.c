@@ -2090,29 +2090,55 @@ static void initdirs(char const* series, char const* seriesdat,
             warn("Value of environment variable TWORLDSAVEDIR is too long");
     }
 
-    if (!res || !series || !seriesdat) {
-        if ((dir = getenv("TWORLDDIR")) && *dir) {
-            if (strlen(dir) < maxpath - 8)
-                root = dir;
-            else
-                warn("Value of environment variable TWORLDDIR is too long");
-        }
-        if (!root) {
+    /* MOD (Jeremy, jc-40): root is resolved UNCONDITIONALLY. It used to be computed only inside
+     * `if (!res || !series || !seriesdat)`, on the reasoning that nothing needs it once -R, -L and
+     * -D have each been given by hand. Two things did need it anyway, and both were broken by that
+     * guard when all three options were passed together:
+     *
+     *   - savedir. With no -S and no $HOME -- the ordinary case for a Windows GUI launch, where
+     *     HOME is simply not part of the environment -- the fallback is
+     *     combinepath(savedir, root, "save"), and combinepath() does strlen(dir) with no null
+     *     check. root was NULL, so the program died with an access violation before it drew a
+     *     window. Measured on jc-39: exit 0xC0000005, no output, no window. NOT a fork bug --
+     *     git blame puts both the guard and this fallback in the upstream 2.3.1 import. jc-33
+     *     only added the appdir line below, and that one was null-guarded.
+     *   - appdir, and with it tw_settings.ini, which fell back to "." with $TWORLDDIR never
+     *     consulted. Setting that variable therefore moved the level and data directories while
+     *     silently failing to move the settings file with them.
+     *
+     * ⚠ BE PRECISE ABOUT WHAT THIS DOES NOT CHANGE. With $TWORLDDIR unset -- the ordinary case --
+     * root is "." both before and after, so the settings file is read and written in the WORKING
+     * DIRECTORY exactly as it was. Nothing in this program resolves the executable's own path
+     * (there is no GetModuleFileName, no applicationDirPath, no chdir anywhere in the tree), so
+     * "beside the executable" holds only because launching by double-click makes the working
+     * directory the program's folder. The behavior that actually changed is the $TWORLDDIR one.
+     *
+     * Nothing else changes: res/sets/data still each prefer their own option and only fall back to
+     * root when that option is absent, which is exactly when the old code computed root too. The
+     * only new outcome is that root is now never NULL. */
+    if ((dir = getenv("TWORLDDIR")) && *dir) {
+        if (strlen(dir) < maxpath - 8)
+            root = dir;
+        else
+            warn("Value of environment variable TWORLDDIR is too long");
+    }
+    if (!root) {
 #ifdef ROOTDIR
-	    root = ROOTDIR;
+	root = ROOTDIR;
 #else
-            root = ".";
+        root = ".";
 #endif
-        }
     }
 
-    /* MOD (Jeremy): the program's own directory, published so settings.cpp can put
-     * tw_settings.ini beside the executable instead of inside the save directory. It is the same
-     * "root" the res/sets/data directories hang off -- $TWORLDDIR, or ROOTDIR on a system build,
-     * or "." for the portable Windows release, which is the case that matters here. Resolved even
-     * when -R/-L/-D were all given, because those override the subdirectories, not the root. */
+    /* MOD (Jeremy): where settings.cpp puts tw_settings.ini, instead of inside the save directory.
+     * It is the same "root" the res/sets/data directories hang off -- $TWORLDDIR, or ROOTDIR on a
+     * system build, or "." for the portable Windows release, which is the case that matters here.
+     * "." means the WORKING directory, which is the program's own folder when the program was
+     * started by double-clicking it, and is not when it was not. Resolved even when -R/-L/-D were
+     * all given, because those override the subdirectories rather than the root -- true as of
+     * jc-40; before it, that combination skipped this resolution entirely. */
     appdir = getpathbuffer();
-    strcpy(appdir, root ? root : ".");
+    strcpy(appdir, root);
 
     resdir = getpathbuffer();
     if (res)

@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-39
+  Tile World  --  Jeremy Christman's fork                    build jc-40
 ==============================================================================
 
   1. What this is
@@ -416,6 +416,39 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-40  --  A startup crash, and the Set Death Counter box
+---------------------------------------------------------
+
+  * FIXED A CRASH ON STARTUP. Starting the game with -R, -L and -D all given
+    at once, but without -S, killed it instantly -- no window, no message, just
+    a Windows access violation -- unless a HOME variable happened to be set,
+    which it normally is not. The program was working out where to put the save
+    folder from a location it had skipped calculating. This one is not a fork
+    bug: it is in Tile World 2.3.1 as released. Accomplishes: the three
+    directory options can be combined freely, which is mostly of interest if
+    you script or test with this game.
+
+  * TWORLDDIR IS HONORED IN THAT SAME CASE. If you set a TWORLDDIR environment
+    variable AND pass all three of those options, the save folder and
+    tw_settings.ini now follow it, where before they ignored it.
+
+    To be clear about what has NOT changed, since it would be easy to read more
+    into the above: with no TWORLDDIR set, tw_settings.ini is read and written
+    in the folder the game is started FROM, exactly as in every build since
+    jc-33. That is the same folder as the executable when you launch it by
+    double-clicking, which is how essentially everyone runs it -- but if you
+    start it from a shortcut or a script with a different working directory,
+    that is where the settings file lives, and always has been.
+
+  * OPTIONS > SET DEATH COUNTER... OPENS WIDER, and the "?" button is gone from
+    its title bar. The box used to be too narrow to show its own name, which
+    arrived cut off as "Set Death C...", and the "?" beside it did nothing at
+    all when clicked. It now opens 248 pixels wide instead of 216, with the full
+    "Set Death Counter" title displayed. What the box DOES is unchanged: whole
+    numbers only, 0 to 999999999, opening with the current total selected, OK
+    to store and Cancel to leave it alone.
 
 
 jc-39  --  The ends of a level set join up
