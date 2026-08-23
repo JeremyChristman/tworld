@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-41
+  Tile World  --  Jeremy Christman's fork                    build jc-42
 ==============================================================================
 
   1. What this is
@@ -436,6 +436,32 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-42  --  Hardening the tileset picker
+-----------------------------------------
+
+  * A TILESET THAT FAILS TO LOAD IS NO LONGER REMEMBERED AS YOUR CHOICE. Picking
+    an image that is not a valid tileset used to fall back to the default tiles --
+    correct -- but then save the name anyway, so the menu showed a checkmark next
+    to something you were not looking at, on every launch afterwards. The pick is
+    now only written once it has actually loaded, and you get a message when it
+    has not.
+
+  * FIXED A FREEZE ON A MALFORMED IMAGE. An image whose separator layout implied
+    a tile height of zero sent the loader into a spin that pinned a CPU core and
+    locked the window for several seconds. Such an image is now rejected the way
+    any other wrongly-shaped one is.
+
+  * A FAILED TILESET CAN NO LONGER TAKE THE GAME DOWN SILENTLY. In the rare case
+    where the chosen tileset AND the default tiles both fail at once, the game had
+    no tiles left and closed a frame later with no message at all. It now says what
+    happened and which files to check before it exits.
+
+  * Names containing a colon, and Windows device names such as NUL or LPT1, are
+    rejected. Names that merely contain two dots -- "my..tileset.bmp" -- are no
+    longer rejected, which was too strict. The tileset list is also matched without
+    regard to letter case, so TILES.BMP is found on every system.
 
 
 jc-41  --  Choose your own tileset

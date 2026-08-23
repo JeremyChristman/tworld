@@ -1929,23 +1929,33 @@ void TileWorldMainWnd::BuildTilesetMenu()
 	QDir dir(bHaveDir ? QString::fromLocal8Bit(szDir) : QString());
 	free(szDir);
 
-	QStringList const filters = { "*.bmp", "*.png", "*.gif", "*.jpg", "*.jpeg", "*.xpm" };
+	/* MOD (Jeremy, jc-42): matched case-insensitively rather than through QDir's name
+	 * filters, which are case-SENSITIVE off Windows -- there "TILES.BMP" would be
+	 * absent from the menu while loadtileset() would have opened it happily. That is
+	 * the menu and the loader disagreeing again, which is the thing this list exists
+	 * not to do. */
+	static char const *const exts[] = { "bmp", "png", "gif", "jpg", "jpeg", "xpm" };
 	QFileInfoList const files = bHaveDir
-		? dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name)
+		? dir.entryInfoList(QDir::Files | QDir::Readable, QDir::Name)
 		: QFileInfoList();
 
 	int nListed = 0;
+	char* szProbe = getpathbuffer();   /* one buffer for the whole loop, not one per file */
 	for (const QFileInfo& fi : files)
 	{
+		QString const sExt = fi.suffix();
+		bool bWanted = false;
+		for (size_t e = 0; e < sizeof exts / sizeof *exts && !bWanted; ++e)
+			bWanted = (sExt.compare(QLatin1String(exts[e]), Qt::CaseInsensitive) == 0);
+		if (!bWanted)
+			continue;
+
 		/* Offer only names the loader will actually accept. gettilesetpath() applies the
 		 * same rules res.c uses at load time, so a file whose name it rejects is skipped
 		 * here rather than listed and then silently falling back when clicked. The menu
 		 * and the loader must agree about what is loadable, or the symptom is "I picked
 		 * it and nothing happened". */
-		char* szProbe = getpathbuffer();
-		bool const bUsable = gettilesetpath(szProbe, fi.fileName().toLocal8Bit().constData());
-		free(szProbe);
-		if (!bUsable)
+		if (!gettilesetpath(szProbe, fi.fileName().toLocal8Bit().constData()))
 			continue;
 
 		/* Separator added on the first accepted entry, not before the loop: every file
@@ -1964,6 +1974,7 @@ void TileWorldMainWnd::BuildTilesetMenu()
 		m_pTilesetGroup->addAction(pAction);
 		++nListed;
 	}
+	free(szProbe);
 
 	if (nListed == 0)
 	{
@@ -2009,16 +2020,33 @@ bool TileWorldMainWnd::ApplyTileset(const QString& sFilename)
 		return true;
 	}
 
-	/* Put back what was working. res.c's fallbacks mean this is very hard to reach -- it needs
-	 * the chosen sheet AND the rc tiles to both fail -- but if it happens the game must not be
-	 * left with no tiles, because the display surfaces and the map hit-testing both divide by
-	 * the tile size. */
+	/* Put back what was working. Note reloadtileset() now insists the restored choice
+	 * actually loaded, so this is a real restoration and not just "something loaded". */
 	settilesetoverride(nRuleset, prev.constData());
-	if (reloadtileset())
+	if (reloadtileset() || istilesetloaded())
 	{
 		CreateGameDisplay();
 		drawscreen(TRUE);
+		return false;
 	}
+
+	/* MOD (Jeremy, jc-42): no tiles at all -- the revert failed too.
+	 *
+	 * Returning here used to look harmless and was not. The game loop carries on with
+	 * a tile size of zero, and the next frame reaches getcellimage()'s die() for a tile
+	 * it cannot find -- whose message goes to stderr, which is INVISIBLE in this build.
+	 * The window vanished with no explanation, losing the level in progress.
+	 *
+	 * Getting here needs the chosen sheet AND the rc tiles to fail together, which
+	 * realistically means the resource folder went away underneath us. That is not
+	 * recoverable, and setrulesetbehavior() already treats the identical condition as
+	 * fatal. So say it in a box the user can actually read, THEN exit: an explained
+	 * exit now beats an unexplained one a frame later. */
+	QMessageBox::critical(this, tr("Tile World"),
+		tr("No tileset could be loaded, including the default one.\n\n"
+		   "Check that tiles.bmp and atiles.bmp are present and readable "
+		   "in the res folder.\n\nTile World has to close."));
+	die("no valid tileset could be loaded");
 	return false;
 }
 

@@ -237,6 +237,23 @@ static void freerememberedsurfaces(void)
  */
 static int settilesize(int w, int h)
 {
+    /* MOD (Jeremy, jc-42): reject a non-positive tile size BEFORE the %4 test.
+     *
+     * initlargetileset() derives the tile height by scanning column 0 and then
+     * decrementing unconditionally, so a malformed odd-width image yields h == 0 --
+     * and 0 % 4 == 0, so the check below waved it through. A zero tile height then
+     * makes that function's row-advance loop unable to terminate: the step becomes
+     * += 0, the bounds test collapses to a loop invariant, and the while condition
+     * re-reads one fixed pixel forever, hanging the program on the GUI thread.
+     *
+     * This is the chokepoint all three formats pass through, so guarding it here
+     * covers every one of them. It matters more since jc-41: dropping third-party
+     * images into res\tilesets is now the feature, so a wrongly-exported sheet is
+     * expected input and must produce the "invalid dimensions" error, not a hang. */
+    if (w <= 0 || h <= 0) {
+	warn("tile dimensions must be positive");
+	return FALSE;
+    }
     if (w % 4 || h % 4) {
 	warn("tile dimensions must be divisible by four");
 	return FALSE;
@@ -660,8 +677,16 @@ static int initsmalltileset(TW_Surface *tiles)
 	    s = extractkeyedtile(tiles, tileidmap[n].xopaque * geng.wtile,
 					tileidmap[n].yopaque * geng.htile,
 					geng.wtile, geng.htile, magenta);
-	    if (!s)
+	    if (!s) {
+		/* MOD (Jeremy, jc-42): free before failing. These two loaders used to
+		 * return with settilesize() already done and tileptr only partly
+		 * filled, which left a nonzero tile size describing a tileset that
+		 * would die() on the first missing image. initlargetileset() already
+		 * frees on its failure path; these now match it, which is what makes
+		 * istilesetloaded() answerable. */
+		freetileset();
 		return FALSE;
+	    }
 	    remembersurface(s);
 	    tileptr[id].celcount = 1;
 	    tileptr[id].opaque[0] = NULL;
@@ -670,8 +695,16 @@ static int initsmalltileset(TW_Surface *tiles)
 	    s = extractopaquetile(tiles, tileidmap[n].xopaque * geng.wtile,
 					 tileidmap[n].yopaque * geng.htile,
 					 geng.wtile, geng.htile);
-	    if (!s)
+	    if (!s) {
+		/* MOD (Jeremy, jc-42): free before failing. These two loaders used to
+		 * return with settilesize() already done and tileptr only partly
+		 * filled, which left a nonzero tile size describing a tileset that
+		 * would die() on the first missing image. initlargetileset() already
+		 * frees on its failure path; these now match it, which is what makes
+		 * istilesetloaded() answerable. */
+		freetileset();
 		return FALSE;
+	    }
 	    remembersurface(s);
 	    tileptr[id].celcount = 1;
 	    tileptr[id].opaque[0] = s;
@@ -706,8 +739,16 @@ static int initmaskedtileset(TW_Surface *tiles)
 	    s = extractopaquetile(tiles, tileidmap[n].xopaque * geng.wtile,
 					 tileidmap[n].yopaque * geng.htile,
 					 geng.wtile, geng.htile);
-	    if (!s)
+	    if (!s) {
+		/* MOD (Jeremy, jc-42): free before failing. These two loaders used to
+		 * return with settilesize() already done and tileptr only partly
+		 * filled, which left a nonzero tile size describing a tileset that
+		 * would die() on the first missing image. initlargetileset() already
+		 * frees on its failure path; these now match it, which is what makes
+		 * istilesetloaded() answerable. */
+		freetileset();
 		return FALSE;
+	    }
 	    remembersurface(s);
 	    tileptr[id].celcount = 1;
 	    tileptr[id].opaque[0] = s;
@@ -720,8 +761,16 @@ static int initmaskedtileset(TW_Surface *tiles)
 				  geng.htile,
 				  (tileidmap[n].xtransp + 3) * geng.wtile,
 				  tileidmap[n].ytransp * geng.htile);
-	    if (!s)
+	    if (!s) {
+		/* MOD (Jeremy, jc-42): free before failing. These two loaders used to
+		 * return with settilesize() already done and tileptr only partly
+		 * filled, which left a nonzero tile size describing a tileset that
+		 * would die() on the first missing image. initlargetileset() already
+		 * frees on its failure path; these now match it, which is what makes
+		 * istilesetloaded() answerable. */
+		freetileset();
 		return FALSE;
+	    }
 	    remembersurface(s);
 	    tileptr[id].celcount = 1;
 	    tileptr[id].transp[0] = s;
@@ -1138,7 +1187,11 @@ void freetileset(void)
  */
 int istilesetloaded(void)
 {
-    return geng.wtile > 0 && geng.htile > 0;
+    /* MOD (Jeremy, jc-42): the tile size alone was not enough. A half-built tileset
+     * has a valid size and an empty tileptr, and would die() at getcellimage() on the
+     * first tile it could not find. Empty is the tile every map has, so its cel count
+     * is the cheapest honest test that the directory was actually filled in. */
+    return geng.wtile > 0 && geng.htile > 0 && tileptr[Empty].celcount != 0;
 }
 
 /* Load the set of tile images stored in the given bitmap. Error

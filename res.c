@@ -153,6 +153,12 @@ char		       *resdir = NULL;
  * which is the reverse of how everyone says it, and a positional literal here
  * would read as correct while being exactly backwards.
  */
+/* MOD (Jeremy, jc-42): TRUE when the tiles now loaded came from the user's chosen
+ * tileset rather than from the rc file's fallback. Set by loadimages(), read by
+ * reloadtileset() -- see the note there for why the distinction matters.
+ */
+static int overrideloaded = FALSE;
+
 static char const *const tilesetkey[Ruleset_Count] = {
     [Ruleset_None] = NULL,
     [Ruleset_Lynx] = "lynxtileset",
@@ -171,6 +177,39 @@ static char const *const tilesetkey[Ruleset_Count] = {
  * separator differs. Also rejected: a drive-letter prefix, any "..", control
  * characters, and a name that is empty or nothing but whitespace.
  */
+/* MOD (Jeremy, jc-42): FALSE if name is a Windows reserved device name.
+ *
+ * Win32 resolves CON, NUL, COM1, LPT1 and friends to the DEVICE no matter what
+ * directory prefix they are given, so "<resdir>\tilesets\LPT1" opens a parallel port
+ * rather than a file. NUL and CON merely fail to load and fall back harmlessly, but
+ * opening a serial or parallel device can block the GUI thread on a machine that has
+ * the driver. Only reachable by hand-editing the ini -- the menu cannot list such a
+ * file -- which is exactly why it is worth a few lines rather than a shrug.
+ *
+ * The comparison ignores any extension, because "COM1.bmp" resolves to the device too.
+ */
+static int isreservedname(char const *name)
+{
+    static char const *const reserved[] = {
+	"CON", "PRN", "AUX", "NUL",
+	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    char	base[16];
+    int		n, i;
+
+    for (n = 0 ; name[n] && name[n] != '.' ; ++n) {
+	if (n >= (int)(sizeof base - 1))
+	    return TRUE;			/* too long to be a device name */
+	base[n] = (char)toupper((unsigned char)name[n]);
+    }
+    base[n] = '\0';
+    for (i = 0 ; i < (int)(sizeof reserved / sizeof *reserved) ; ++i)
+	if (!strcmp(base, reserved[i]))
+	    return FALSE;
+    return TRUE;
+}
+
 static int istilesetname(char const *name)
 {
     char const *p;
@@ -182,28 +221,46 @@ static int istilesetname(char const *name)
 	    break;
     if (!*p)
 	return FALSE;
-    if (name[0] && name[1] == ':')
+    /* MOD (Jeremy, jc-42): ".." only means "parent" when it is the WHOLE name.
+     * Separators are rejected below, so the value is always a single path component,
+     * and a substring test therefore rejected ordinary filenames -- "x..y.bmp" is
+     * legal, and since the menu now filters through this predicate such a file would
+     * simply vanish from the list with no explanation. */
+    if (!strcmp(name, ".."))
 	return FALSE;
     for (p = name ; *p ; ++p) {
 	if (*p == '/' || *p == '\\')
 	    return FALSE;
+	/* A colon ANYWHERE, not just a drive letter at position 1: on Windows
+	 * "tiles.bmp:hidden" names an alternate data stream of a file in this
+	 * directory. Contained rather than dangerous, but there is no reason for a
+	 * tileset name to contain one. */
+	if (*p == ':')
+	    return FALSE;
 	if ((unsigned char)*p < ' ')
 	    return FALSE;
-	if (p[0] == '.' && p[1] == '.')
-	    return FALSE;
     }
-    return TRUE;
+    return isreservedname(name);
 }
 
 int gettilesetpath(char *dest, char const *name)
 {
-    if (!combinepath(dest, resdir, TILESETDIR))
+    /* MOD (Jeremy, jc-42): dest really is cleared on every failure now. It used to be
+     * left holding whatever combinepath() had already written -- the tileset directory,
+     * or a path with a trailing separator on the ENAMETOOLONG path, since combinepath()
+     * appends before it length-checks. Every caller checks the return value, so nothing
+     * was broken; the header promised otherwise, and the next caller reads the header. */
+    if (!combinepath(dest, resdir, TILESETDIR)) {
+	dest[0] = '\0';
 	return FALSE;
+    }
     if (!name)
 	return TRUE;
-    if (!istilesetname(name))
+    if (!istilesetname(name) || !combinepath(dest, dest, name)) {
+	dest[0] = '\0';
 	return FALSE;
-    return combinepath(dest, dest, name);
+    }
+    return TRUE;
 }
 
 int getcurrentruleset(void)
@@ -353,6 +410,7 @@ static int loadimages(void)
 
     f = FALSE;
     path = getpathbuffer();
+    overrideloaded = FALSE;
 
     /* MOD (Jeremy, jc-41): the user's chosen tileset, tried FIRST and in
      * silence. complain is FALSE because none of the ways this can fail are
@@ -365,8 +423,10 @@ static int loadimages(void)
      */
     {
 	char const *sel = gettilesetoverride(currentruleset);
-	if (sel && *sel && gettilesetpath(path, sel))
+	if (sel && *sel && gettilesetpath(path, sel)) {
 	    f = loadtileset(path, FALSE);
+	    overrideloaded = f;
+	}
     }
 
     /* combinepath() can fail with ENAMETOOLONG, and leaves path stale when it
@@ -405,11 +465,28 @@ static int loadimages(void)
  */
 int reloadtileset(void)
 {
+    char const *sel;
+
     if (currentruleset == Ruleset_None)
 	return FALSE;
-    if (!loadimages())
+    if (!loadimages() || !istilesetloaded())
 	return FALSE;
-    return istilesetloaded();
+
+    /* MOD (Jeremy, jc-42): "some tileset loaded" is not "YOUR tileset loaded".
+     *
+     * loadimages() is a fallback chain, so a chosen tileset that fails still leaves
+     * it returning TRUE off the rc tiers. Reporting that as success let the caller
+     * write a name that never loaded into tw_settings.ini -- the default tiles on
+     * screen, no warning, and a menu checkmark pointing at something the user was
+     * not looking at, permanently and on both PCs.
+     *
+     * Startup must keep tolerating the fallback, or a stale name would stop the game
+     * from launching. Only this reload path, which exists to serve a deliberate pick,
+     * insists on getting what it asked for. */
+    sel = gettilesetoverride(currentruleset);
+    if (sel && *sel && !overrideloaded)
+	return FALSE;
+    return TRUE;
 }
 
 /* Load the font resource.
