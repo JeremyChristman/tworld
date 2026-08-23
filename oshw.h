@@ -141,6 +141,18 @@ OSHW_EXTERN int loadtileset(char const *filename, int complain);
  */
 OSHW_EXTERN void freetileset(void);
 
+/* MOD (Jeremy, jc-41): TRUE if a usable tileset is loaded, i.e. one with a
+ * nonzero tile size.
+ *
+ * loadtileset() frees the old tiles once it has chosen a format branch, and
+ * settilesize() can reject the sheet after that point, so a failed load can
+ * leave no tiles and a tile size of zero. Anything that is about to size a
+ * surface or convert pixels to map coordinates must be able to ask, because
+ * both divide by the tile size. Lives here rather than in res.h because the
+ * tile size belongs to generic/tile.c, which implements it.
+ */
+OSHW_EXTERN int istilesetloaded(void);
+
 /* The font provides special monospaced digit characters at 144-153.
  */
 #ifndef TWPLUSPLUS

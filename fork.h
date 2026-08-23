@@ -23,7 +23,7 @@
 
 /* Bumped on every production deploy. Shown in the About box always, and in the window title only
  * when tw_settings.ini opts in with showbuildtag (see TWApp.cpp). */
-#define	FORK_BUILD_TAG		"jc-40"
+#define	FORK_BUILD_TAG		"jc-41"
 
 /* Credited in the About box and in README.txt. */
 #define	FORK_AUTHOR		"Jeremy Christman"

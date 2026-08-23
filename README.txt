@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-40
+  Tile World  --  Jeremy Christman's fork                    build jc-41
 ==============================================================================
 
   1. What this is
@@ -226,6 +226,8 @@ This is the complete stock file:
     displayccx=1
     forceshowtimer=0
     legacyscores=false
+    lynxtileset=
+    mstileset=
     showbuildtag=false
     showdeathcounter=false
     showinitstate=0
@@ -295,6 +297,24 @@ legacyscores    Whether the score list (Games > Scores) uses the appearance
                 solution-file list and the help pages keep today's appearance.
                 An honest caveat: this reproduces the 2.2 look, it does not
                 resurrect Qt 4. It is a close match, not a pixel-for-pixel one.
+
+lynxtileset     Which tileset to draw with, named separately for each ruleset.
+mstileset       Values:  the FILENAME of an image in res\tilesets, including
+                         its extension, e.g. "MSCC Tileset.bmp". Not a path.
+                Default: empty, meaning the tiles named in res\rc -- tiles.bmp
+                         for MS and atiles.bmp for Lynx, exactly as before.
+                You do not normally edit these by hand. Pick a tileset under
+                Options > Tileset while a level is open and the choice is
+                written here for you, for whichever ruleset you are playing.
+                Anything that goes wrong falls back to the tiles in res\rc and
+                the game keeps running: an empty value, a missing line, a file
+                that has been deleted or renamed, a name containing a path, or
+                an image Tile World cannot read as a tileset. There is no way
+                to break the game from this setting.
+                A NOTE ON SPACES: a filename with spaces is fine here. It is
+                NOT fine in res\rc, whose parser stops reading at the first
+                space -- so point rc at simple names only, and let these two
+                settings carry the descriptive ones.
 
 showbuildtag    Whether the title bar shows which build of this fork you are
                 running.
@@ -416,6 +436,35 @@ replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
+
+
+jc-41  --  Choose your own tileset
+-----------------------------------
+
+  * PICK A TILESET FROM THE OPTIONS MENU, per ruleset, without restarting.
+    Options > Tileset lists every image in a new res\tilesets folder and
+    switches to the one you choose immediately -- mid-level, with the game
+    where you left it. The choice is remembered separately for MS and for
+    Lynx, so each ruleset keeps its own look.
+
+    To add a tileset, put the image file in res\tilesets. That is the whole
+    installation procedure: no editing, no restart. Drop one in while the
+    game is running and it appears the next time you open the menu. Name the
+    files descriptively, because the menu shows those names.
+
+    Tile World has always chosen its tiles through res\rc, which is why the
+    MS and Lynx rulesets look different. Nothing about that changed. The new
+    setting sits in front of it as a preference, and res\rc remains the
+    fallback underneath: an empty setting, a deleted file, a name containing
+    a path, or an image that is not a valid tileset all simply fall through
+    to tiles.bmp and atiles.bmp, silently, with the game still running. The
+    old behavior is what you get whenever the new setting has nothing useful
+    to say, which means this feature cannot leave you unable to play.
+
+    A tileset can be any size Tile World understands -- the format and the
+    tile size are read from the image's own dimensions. The window resizes to
+    match, so a set with larger tiles gives you a larger board. Mixing sizes
+    is allowed but is smoothest when the sets you switch between agree.
 
 
 jc-40  --  A startup crash, and the Set Death Counter box

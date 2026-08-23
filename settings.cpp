@@ -67,7 +67,12 @@ namespace
     int const SECTION_MAXKEYS = 12;
     struct SectionSpec { char const *name; char const *keys[SECTION_MAXKEYS]; };
     SectionSpec const SECTIONS[] = {
+        /* MOD (Jeremy, jc-41): lynxtileset/mstileset name the user's chosen tileset per ruleset.
+         * ⚠ This row now holds TEN keys plus the terminator = 11 of SECTION_MAXKEYS (12). It fits,
+         * but the margin is one slot: the NEXT [Display] setting must raise SECTION_MAXKEYS. That
+         * is exactly the drift the comment above warns about, so it is called out here too. */
         { "Display", { "bgcolor", "deathcount", "displayccx", "forceshowtimer", "legacyscores",
+                       "lynxtileset", "mstileset",
                        "showbuildtag", "showdeathcounter", "showinitstate", nullptr } },
         { "Game",    { "ignorepasswords", "selectedruleset", "selectedseries", nullptr } },
         { "Sound",   { "volume", nullptr } },

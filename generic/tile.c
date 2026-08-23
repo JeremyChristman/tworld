@@ -1134,6 +1134,13 @@ void freetileset(void)
     freerememberedsurfaces();
 }
 
+/* MOD (Jeremy, jc-41): TRUE if a usable tileset is loaded. See oshw.h.
+ */
+int istilesetloaded(void)
+{
+    return geng.wtile > 0 && geng.htile > 0;
+}
+
 /* Load the set of tile images stored in the given bitmap. Error
  * messages will be displayed if complain is TRUE. The return value is
  * TRUE if the tiles were successfully identified and loaded into

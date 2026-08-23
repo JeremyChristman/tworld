@@ -25,6 +25,8 @@
 #include <QPalette>
 
 class QSortFilterProxyModel;
+class QMenu;
+class QActionGroup;
 
 class TileWorldMainWnd : public QMainWindow, protected Ui::TWMainWnd
 {
@@ -86,6 +88,10 @@ private slots:
 	void OnMenuActionTriggered(QAction* pAction);
 	void OnBackgroundColorPreview(const QColor& color);
 
+	/* MOD (Jeremy, jc-41): user-selectable tileset. */
+	void OnTilesetMenuAboutToShow();
+	void OnTilesetChosen(QAction* pAction);
+
 private:
 	bool HandleEvent(QObject* pObject, QEvent* pEvent);
 	void SetCurrentPage(Page ePage);
@@ -101,6 +107,14 @@ private:
 	QColor StockBackground() const;
 	void SetBackgroundColor(const QColor& color, bool bSave);
 	void ChooseBackgroundColor();
+
+	/* MOD (Jeremy, jc-41): user-selectable tileset. The submenu is rebuilt every time it
+	 * opens, so a file dropped into res\tilesets while the game is running appears without
+	 * a restart. m_pTilesetMenu is owned by the Options menu; the group by the menu. */
+	void BuildTilesetMenu();
+	bool ApplyTileset(const QString& sFilename);
+	QMenu* m_pTilesetMenu;
+	QActionGroup* m_pTilesetGroup;
 	
 	enum HintMode { HINT_EMPTY, HINT_TEXT, HINT_INITSTATE };
 	bool SetHintMode(HintMode newmode);

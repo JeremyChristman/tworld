@@ -17,6 +17,8 @@
 #include "../oshw.h"
 #include "../err.h"
 #include "../help.h"
+#include "../res.h"      // MOD (Jeremy, jc-41): the tileset directory, override and reload
+#include "../fileio.h"   // MOD (Jeremy, jc-41): getpathbuffer() for the tileset directory
 #include "TWTextCoder.h"
 #include "TWTheme.h"
 
@@ -58,6 +60,8 @@ extern int ignorepasswds;   // MOD (Jeremy, jc-35): defined in tworld.c; see the
 
 #include <QDir>
 #include <QFileInfo>
+#include <QMenu>          // MOD (Jeremy, jc-41): the Options > Tileset submenu
+#include <QActionGroup>   // MOD (Jeremy, jc-41): radio semantics for the tileset list
 
 #include <QString>
 #include <QTextStream>
@@ -285,6 +289,8 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
     m_author(""),
 	m_stockPalette(),
 	m_bgColor(),
+	m_pTilesetMenu(nullptr),
+	m_pTilesetGroup(nullptr),
 	m_pSortFilterProxyModel()
 {
 	setupUi(this);
@@ -339,6 +345,18 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	connect(new QShortcut(Qt::Key_P, m_pTextPage), &QShortcut::activated, this, &TileWorldMainWnd::OnTextPrev);
 	
 	connect(m_pMenuBar, &QMenuBar::triggered, this, &TileWorldMainWnd::OnMenuActionTriggered);
+
+	/* MOD (Jeremy, jc-41): Options > Tileset. Built in code rather than in the .ui because its
+	 * contents are whatever files are sitting in res\tilesets, which is not knowable until the
+	 * menu opens. Inserted before the background-color separator so the three appearance items
+	 * read as a group. */
+	m_pTilesetMenu = new QMenu(tr("&Tileset"), menu_Options);
+	m_pTilesetGroup = new QActionGroup(m_pTilesetMenu);
+	m_pTilesetGroup->setExclusive(true);
+	menu_Options->insertMenu(action_BackgroundColor, m_pTilesetMenu);
+	menu_Options->insertSeparator(action_BackgroundColor);
+	connect(m_pTilesetMenu, &QMenu::aboutToShow, this, &TileWorldMainWnd::OnTilesetMenuAboutToShow);
+	connect(m_pTilesetMenu, &QMenu::triggered, this, &TileWorldMainWnd::OnTilesetChosen);
 
 	action_displayCCX->setChecked(getintsetting("displayccx"));
 	action_forceShowTimer->setChecked(getintsetting("forceshowtimer") > 0);
@@ -1856,6 +1874,179 @@ void TileWorldMainWnd::OnBackgroundColorPreview(const QColor& color)
 }
 
 
+/*
+ * MOD (Jeremy, jc-41): the user-selectable tileset.
+ *
+ * The choice is per ruleset and is stored in tw_settings.ini by res.c, which also owns the
+ * fallback rules. Everything here is presentation: enumerate the directory, show what is
+ * chosen, and ask res.c to apply a new pick.
+ */
+
+/* Rebuild the submenu from whatever is in the tileset directory right now.
+ *
+ * Rebuilt on every open rather than once at startup so a tileset copied into the folder while
+ * the game is running is simply there the next time the menu is pulled down.
+ */
+void TileWorldMainWnd::BuildTilesetMenu()
+{
+	for (QAction* pOld : m_pTilesetMenu->actions())
+	{
+		m_pTilesetGroup->removeAction(pOld);
+		delete pOld;
+	}
+
+	/* The ruleset whose tiles are on screen, which a .dac can force to disagree with the
+	 * MS/Lynx radio button -- so this must not use GetSelectedRuleset(). Before any level has
+	 * been played there is no ruleset to set a tileset for, and the menu says so rather than
+	 * writing a preference against Ruleset_None. */
+	int const nRuleset = getcurrentruleset();
+	if (nRuleset == Ruleset_None)
+	{
+		/* The submenu itself stays ENABLED and shows a disabled explanation instead.
+		 * Disabling the submenu would be a one-way door: this function is driven by
+		 * aboutToShow, a disabled menu never shows, so nothing would ever run to switch
+		 * it back on. Enabled-with-nothing-in-it is recoverable; disabled is not. */
+		QAction* pNone = m_pTilesetMenu->addAction(tr("(start a level first)"));
+		pNone->setEnabled(false);
+		return;
+	}
+
+	char const* szCurrent = gettilesetoverride(nRuleset);
+	QString const sCurrent = (szCurrent != nullptr)
+		? QString::fromLocal8Bit(szCurrent) : QString();
+
+	/* The way back to the rc file's tiles. The fallbacks in res.c cover the error cases on
+	 * their own; this covers changing your mind. */
+	QAction* pDefault = m_pTilesetMenu->addAction(
+		tr("&Default (%1)").arg(nRuleset == Ruleset_MS ? "tiles.bmp" : "atiles.bmp"));
+	pDefault->setCheckable(true);
+	pDefault->setChecked(sCurrent.isEmpty());
+	pDefault->setData(QString());
+	m_pTilesetGroup->addAction(pDefault);
+
+	char* szDir = getpathbuffer();
+	bool const bHaveDir = gettilesetpath(szDir, nullptr);
+	QDir dir(bHaveDir ? QString::fromLocal8Bit(szDir) : QString());
+	free(szDir);
+
+	QStringList const filters = { "*.bmp", "*.png", "*.gif", "*.jpg", "*.jpeg", "*.xpm" };
+	QFileInfoList const files = bHaveDir
+		? dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name)
+		: QFileInfoList();
+
+	int nListed = 0;
+	for (const QFileInfo& fi : files)
+	{
+		/* Offer only names the loader will actually accept. gettilesetpath() applies the
+		 * same rules res.c uses at load time, so a file whose name it rejects is skipped
+		 * here rather than listed and then silently falling back when clicked. The menu
+		 * and the loader must agree about what is loadable, or the symptom is "I picked
+		 * it and nothing happened". */
+		char* szProbe = getpathbuffer();
+		bool const bUsable = gettilesetpath(szProbe, fi.fileName().toLocal8Bit().constData());
+		free(szProbe);
+		if (!bUsable)
+			continue;
+
+		/* Separator added on the first accepted entry, not before the loop: every file
+		 * present could be filtered out above, and a separator with nothing under it
+		 * followed by the "no tilesets" line would read as two empty groups. */
+		if (nListed == 0)
+			m_pTilesetMenu->addSeparator();
+
+		/* Shown without its extension: the files are named to be read by a person, and
+		 * "MSCC Tileset" is what that person named it. The extension is still what gets
+		 * stored, because that is the actual filename. */
+		QAction* pAction = m_pTilesetMenu->addAction(fi.completeBaseName());
+		pAction->setCheckable(true);
+		pAction->setChecked(fi.fileName() == sCurrent);
+		pAction->setData(fi.fileName());
+		m_pTilesetGroup->addAction(pAction);
+		++nListed;
+	}
+
+	if (nListed == 0)
+	{
+		m_pTilesetMenu->addSeparator();
+		QAction* pEmpty = m_pTilesetMenu->addAction(
+			tr("No tilesets in res\\%1").arg(TILESETDIR));
+		pEmpty->setEnabled(false);
+	}
+}
+
+void TileWorldMainWnd::OnTilesetMenuAboutToShow()
+{
+	BuildTilesetMenu();
+}
+
+/* Try a tileset, keeping the old one if it will not load.
+ *
+ * Order matters here: the choice is applied and only WRITTEN once it has proved loadable. The
+ * reverse order would leave a bad name on disk if the program stopped between the write and the
+ * revert -- which is the one outcome the whole fallback design exists to prevent.
+ */
+bool TileWorldMainWnd::ApplyTileset(const QString& sFilename)
+{
+	int const nRuleset = getcurrentruleset();
+	if (nRuleset == Ruleset_None)
+		return false;
+
+	char const* szPrev = gettilesetoverride(nRuleset);
+	QByteArray const prev = (szPrev != nullptr) ? QByteArray(szPrev) : QByteArray();
+	QByteArray const want = sFilename.toLocal8Bit();
+
+	settilesetoverride(nRuleset, want.constData());
+	if (reloadtileset())
+	{
+		/* Written now rather than at exit, matching bgcolor: a visible deliberate choice
+		 * should survive a crash. Note savesettings() is a no-op while the settings file
+		 * exists but cannot be opened (the Dropbox online-only case settings.cpp
+		 * documents) -- the pick still applies for this session, it just will not be
+		 * remembered, and that is the same bargain bgcolor already makes. */
+		savesettings();
+		CreateGameDisplay();
+		drawscreen(TRUE);
+		return true;
+	}
+
+	/* Put back what was working. res.c's fallbacks mean this is very hard to reach -- it needs
+	 * the chosen sheet AND the rc tiles to both fail -- but if it happens the game must not be
+	 * left with no tiles, because the display surfaces and the map hit-testing both divide by
+	 * the tile size. */
+	settilesetoverride(nRuleset, prev.constData());
+	if (reloadtileset())
+	{
+		CreateGameDisplay();
+		drawscreen(TRUE);
+	}
+	return false;
+}
+
+void TileWorldMainWnd::OnTilesetChosen(QAction* pAction)
+{
+	if (pAction == nullptr || !pAction->isCheckable())
+		return;
+
+	/* Both strings are copied out of the action BEFORE ApplyTileset runs. That call rebuilds
+	 * the display and repaints, and BuildTilesetMenu() deletes every action it created, so
+	 * pAction must be treated as potentially dangling from here on -- reading its text in the
+	 * message below would be a use-after-free. */
+	QString const sFilename = pAction->data().toString();
+	QString const sLabel = pAction->text();
+
+	if (ApplyTileset(sFilename))
+		return;
+
+	/* The menu is rebuilt from the stored value every time it opens, so the radio marks put
+	 * themselves right; all that is needed here is to say what happened. */
+	QMessageBox::warning(this, tr("Tileset"),
+		sFilename.isEmpty()
+			? tr("The default tileset could not be loaded.")
+			: tr("\"%1\" could not be loaded as a tileset, so the previous one was kept.")
+				.arg(sLabel));
+}
+
+
 /* Display a message to the user. cfile and lineno can be NULL and 0
  * respectively; otherwise, they identify the source code location
  * where this function was called from. prefix is an optional string
@@ -2126,6 +2317,18 @@ void TileWorldMainWnd::OnCopyText()
 
 void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 {
+	/* MOD (Jeremy, jc-41): QMenuBar::triggered fires for EVERY action under the menubar,
+	 * including the tileset entries built at runtime. They are handled by the submenu's own
+	 * triggered signal, so they leave here immediately.
+	 *
+	 * They would fall through the comparison chain below harmlessly today -- but only by
+	 * accident, because they happen to match nothing. Saying so explicitly means the next
+	 * comparison added to that chain cannot quietly start catching them. The chain is a list
+	 * of fixed actions and must not be extended to cover a variable-length list. */
+	if (pAction != nullptr && m_pTilesetMenu != nullptr
+	    && m_pTilesetMenu->actions().contains(pAction))
+		return;
+
 	if (pAction == action_Prologue)
 	    { Narrate(&CCX::Level::txtPrologue, true); return; }
 	if (pAction == action_Epilogue)

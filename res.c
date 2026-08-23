@@ -13,6 +13,7 @@
 #include	"oshw.h"
 #include	"messages.h"
 #include	"unslist.h"
+#include	"settings.h"
 #include	"res.h"
 
 /*
@@ -139,6 +140,90 @@ static int		currentruleset = Ruleset_None;
 /* The directory containing all the resource files.
  */
 char		       *resdir = NULL;
+
+/*
+ * MOD (Jeremy, jc-41): the user-selectable tileset. See res.h.
+ */
+
+/* The settings key naming each ruleset's chosen tileset.
+ *
+ * Indexed by the ruleset enum, the way allresources is, so a third ruleset
+ * would need nothing here but a third entry. Designated initializers rather
+ * than positional ones ON PURPOSE: defs.h orders the enum Lynx BEFORE MS,
+ * which is the reverse of how everyone says it, and a positional literal here
+ * would read as correct while being exactly backwards.
+ */
+static char const *const tilesetkey[Ruleset_Count] = {
+    [Ruleset_None] = NULL,
+    [Ruleset_Lynx] = "lynxtileset",
+    [Ruleset_MS]   = "mstileset"
+};
+
+/* TRUE if name is safe to append to the tileset directory.
+ *
+ * The value reaches us from tw_settings.ini, which the user is invited to edit
+ * by hand, so it is untrusted input. combinepath() treats a path beginning
+ * with a separator as ABSOLUTE and discards the directory it was given, so
+ * without this an ini could point the loader anywhere on the disk.
+ *
+ * Both separators are rejected whatever DIRSEP_CHAR happens to be: the file is
+ * normally written on Windows and may be carried to a build where the native
+ * separator differs. Also rejected: a drive-letter prefix, any "..", control
+ * characters, and a name that is empty or nothing but whitespace.
+ */
+static int istilesetname(char const *name)
+{
+    char const *p;
+
+    if (!name || !*name)
+	return FALSE;
+    for (p = name ; *p ; ++p)
+	if (!isspace((unsigned char)*p))
+	    break;
+    if (!*p)
+	return FALSE;
+    if (name[0] && name[1] == ':')
+	return FALSE;
+    for (p = name ; *p ; ++p) {
+	if (*p == '/' || *p == '\\')
+	    return FALSE;
+	if ((unsigned char)*p < ' ')
+	    return FALSE;
+	if (p[0] == '.' && p[1] == '.')
+	    return FALSE;
+    }
+    return TRUE;
+}
+
+int gettilesetpath(char *dest, char const *name)
+{
+    if (!combinepath(dest, resdir, TILESETDIR))
+	return FALSE;
+    if (!name)
+	return TRUE;
+    if (!istilesetname(name))
+	return FALSE;
+    return combinepath(dest, dest, name);
+}
+
+int getcurrentruleset(void)
+{
+    return currentruleset;
+}
+
+char const *gettilesetoverride(int ruleset)
+{
+    if (ruleset < 0 || ruleset >= Ruleset_Count || !tilesetkey[ruleset])
+	return NULL;
+    return getstringsetting(tilesetkey[ruleset]);
+}
+
+void settilesetoverride(int ruleset, char const *name)
+{
+    if (ruleset < 0 || ruleset >= Ruleset_Count || !tilesetkey[ruleset])
+	return;
+    setstringsetting(tilesetkey[ruleset], name ? name : "");
+}
 
 /* A few resources have non-empty default values.
  */
@@ -268,20 +353,63 @@ static int loadimages(void)
 
     f = FALSE;
     path = getpathbuffer();
-    if (*resources[RES_IMG_TILES].str) {
-	combinepath(path, resdir, resources[RES_IMG_TILES].str);
-	f = loadtileset(path, TRUE);
+
+    /* MOD (Jeremy, jc-41): the user's chosen tileset, tried FIRST and in
+     * silence. complain is FALSE because none of the ways this can fail are
+     * errors -- an unset key, a file the user deleted, a JPEG they dropped in
+     * by mistake -- and every one of them is answered by falling through to
+     * the rc file's tiles below. That fall-through IS the failsafe; the rc
+     * tiers are reached exactly as they were before this block existed.
+     *
+     * Reading the settings table from here is why res.c includes settings.h.
+     */
+    {
+	char const *sel = gettilesetoverride(currentruleset);
+	if (sel && *sel && gettilesetpath(path, sel))
+	    f = loadtileset(path, FALSE);
+    }
+
+    /* combinepath() can fail with ENAMETOOLONG, and leaves path stale when it
+     * does -- harmless while the only inputs were the short literals in rc,
+     * but a tileset name is now user-supplied and can be long. Handing a stale
+     * buffer to loadtileset() would load whatever the previous tier built.
+     */
+    if (!f && *resources[RES_IMG_TILES].str) {
+	if (combinepath(path, resdir, resources[RES_IMG_TILES].str))
+	    f = loadtileset(path, TRUE);
     }
     if (!f && resources != globalresources
 	   && *globalresources[RES_IMG_TILES].str) {
-	combinepath(path, resdir, globalresources[RES_IMG_TILES].str);
-	f = loadtileset(path, TRUE);
+	if (combinepath(path, resdir, globalresources[RES_IMG_TILES].str))
+	    f = loadtileset(path, TRUE);
     }
     free(path);
 
     if (!f)
 	errmsg(resdir, "no valid tilesets found");
     return f;
+}
+
+/* MOD (Jeremy, jc-41): reload just the tiles for the ruleset already in play.
+ *
+ * setrulesetbehavior() cannot serve here: it returns early when the ruleset is
+ * unchanged, which is every menu-driven swap.
+ *
+ * The geng.wtile check is the one guard this needs. loadtileset() frees the
+ * old tiles once a format branch is chosen, and settilesize() can THEN reject
+ * the sheet (its dimensions must divide by four), so a sheet that passes the
+ * dimension sniff but fails that rule leaves no tiles and a tile size of zero.
+ * If the rc tiers also failed to recover, returning TRUE here would let the
+ * caller build a zero-sized display and _windowmappos() would divide by zero
+ * on the next mouse movement over the map.
+ */
+int reloadtileset(void)
+{
+    if (currentruleset == Ruleset_None)
+	return FALSE;
+    if (!loadimages())
+	return FALSE;
+    return istilesetloaded();
 }
 
 /* Load the font resource.
