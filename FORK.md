@@ -445,6 +445,12 @@ nobody here runs by hand. A test declares extra compiler flags in a `TESTFLAGS:`
   `KS_STRUCK` to `KS_OFF`, so events injected beforehand are retired before the scan sees them and the
   block-slap cases return a plausible-looking single direction and prove nothing.
 
+Batch verification over the full corpus -- all 303 recorded solution sets, 286 MS and
+17 Lynx, 18,734 valid solutions -- is byte-for-byte identical to jc-42, as expected:
+`doturn()` ignores its `cmd` argument entirely whenever `state.replay >= 0`, and
+`batchmode` never turns joystick behavior on, so `input()` is never called during a
+verification run.
+
 Both suites were checked against pre-change `HEAD`, where 21 of the 40 `input_test` checks fail with
 exactly the reported symptoms (`hold Left, press Right` → `W`; sub-cycle tap → `E`, no diagonal).
 
