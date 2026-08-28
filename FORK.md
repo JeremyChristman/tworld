@@ -359,6 +359,95 @@ exactly what's mine:
    and Cancel does not (both verified: setting 7 wrote `deathcount=7` and showed `Deaths: 7`;
    cancelling out of 99 left it at 7).
 
+15. **Direction keys follow the player, not the table** (`generic/in.c`, `generic/dirinput.c` (new),
+   `test/` (new)).
+   Two defects in the keyboard layer, reported by a player who found that pressing a new direction
+   while still holding the old one sometimes cost him a move in the direction he was leaving.
+
+   **The table-order defect.** When two direction keys were down, `input()` returned whichever came
+   first in the `keycmds` table — order `UP, LEFT, DOWN, RIGHT` — so North always beat South and West
+   always beat East no matter which the player had pressed more recently. Two of the four reversals
+   turned at once and two were ignored until the older key was released. Direction keys are now
+   collected one **axis** at a time (vertical = North/South, horizontal = West/East) and each axis goes
+   to its most recently pressed key, stamped by a counter in `keypressorder[]`. This applies to both
+   rulesets; MS settled *every* pair by table position, including perpendicular ones, because it
+   returned at the first match.
+
+   **The discarded-tap defect.** A direction pressed *and released* inside one 50ms polling cycle
+   becomes `KS_STRUCK`, which was routed to a fallback that lost to any held key — so tapping a
+   perpendicular direction while running was thrown away entirely, forming no diagonal and firing no
+   block slap. Such a key can now fill an **empty** axis when the other axis is held. Deliberately no
+   further than that: it never displaces a key still held on its own axis (that would flicker Chip
+   backwards for a move), and a *lone* struck arrow is still left to the ordinary fallback, because
+   promoting it would let a tapped arrow outrank a virtual menu command arriving in the same cycle —
+   `PulseKey()` delivers those as `KS_STRUCK` too.
+
+   ⚠ **Block slapping is the reason this is delicate, and it is unchanged.** Two perpendicular arrows
+   held at once produce a diagonal, and `choosechipmove()` turns that into a sideways block push whose
+   `f2 = canmakemove(cr, cr->dir ^ dir, CMM_PUSHBLOCKS)` probe *is* the slap. CCLP3 #16 *Two Sets of
+   Rules*, CCLP5 #84 *Piston It Away* and several Lynx-only CCLXP2 levels are unsolvable without it.
+   The diagonal-formation predicate is provably identical to the old `mergeable[]` logic — both reduce
+   to "at least one vertical and at least one horizontal direction qualified" — so no diagonal that
+   used to form can stop forming. Only *which key represents an axis* changed.
+
+   ⚠ **A muted key still claims its axis.** Under keyboard behavior a freshly pressed key spends a
+   cycle or two in `KS_DOWNBUTOFF1/2` — physically down, deliberately silenced so one tap yields one
+   move. First-match-wins never noticed, because table position does not care whether a key is muted;
+   recency does. Left alone, the axis fell back to the older key and the player got exactly the wrong
+   move this change exists to prevent — measured as `E, N, E, E` where it should read `E, ·, E, E`.
+   A muted key therefore occupies its axis, and when a muted key *wins*, the cycle yields no direction
+   at all rather than the runner-up: `input()` then reaches its `lingerflag` and returns `CmdPreserve`,
+   which is precisely what that command has always been for.
+
+   `mergeable[]` is deleted — the change orphans it completely. `casualinputs` now assigns
+   `keyboard_trans[KS_DOWNBUTOFF1]` both ways; it previously only ever wrote the casual value into a
+   static table and never put it back.
+
+   **Scope, stated rather than discovered.** Three behavior changes fall outside the two defects and
+   were accepted deliberately: MS perpendicular pairs now follow recency; with three or more
+   directions held the diagonal's composition follows the newer key, so a `N+S+perpendicular`
+   combination can move from slap-while-straight to turn-with-push (it needs Chip facing *along* the
+   doubled axis, which needs two opposite keys held while moving that way); and in a text prompt
+   Backspace and Space, which map to `CmdWest`/`CmdEast`, now resolve by recency instead of table
+   order.
+
+   **Known limits, not fixed here.** A tap is visible for one polling cycle and Chip consumes input
+   only when `cr->moving <= 0`, about one cycle in four, so the struck-key fix takes a sub-50ms tap
+   from never slapping to roughly one time in four — and to *always*, when Chip is standing still.
+   Taps longer than a cycle already worked through the held path. Adding an input latch would fix that
+   properly and is explicitly out of scope, since it would change Lynx move selection far beyond these
+   two defects. A key pressed *twice* inside one cycle lands in `KS_REPEATING` and reaches neither
+   survivor slot, so its diagonal is a cycle late; pre-existing. And a lost key-up (Alt-Tab away
+   mid-move) leaves a phantom held key that now wins on recency — a net improvement, since the common
+   single-arrow case recovers where it used to stick forever, but a phantom on the *same axis* as a
+   real key is worse than before. There is no focus-loss handler in `oshw-qt` at all; adding one is
+   the real fix and belongs in its own change.
+
+   Nothing here can affect a `.tws`, the batch verifier, or the desync catalog: `doturn()` ignores its
+   `cmd` argument entirely whenever `state.replay >= 0` and drives `currentinput` from the solution
+   move list, and `batchmode` never even turns joystick behavior on.
+
+## Testing
+
+`test/run-tests.ps1` runs the unit tests; `package.ps1` runs it first and refuses to package if it
+fails (`-SkipTests` overrides). Every test is built **twice**, as C and as C++, because `generic/in.c`
+is compiled as C by the SDL build and as C++ by the shipped Qt build (through `generic/_in.cpp`,
+which is nothing but `#include "in.c"`), and a construct valid in only one of them would break a build
+nobody here runs by hand. A test declares extra compiler flags in a `TESTFLAGS:` comment.
+
+- `test/dirinput_test.c` — the pure arbitration in `generic/dirinput.c`, compiled directly against the
+  real `defs.h` so it sees the same `Cmd*` values the game does.
+- `test/input_test.c` — the real `input()`, driven end to end against `test/stub/oshwbind.h`. This is
+  the only place the scan loop, the `KS_*` classification and the press stamping are covered; the pure
+  tests cannot reach them, because two keys on one axis have already been collapsed by the time
+  `resolvedirections()` runs. ⚠ Deliver synthetic key events from **inside** the `eventupdate` stub,
+  never before calling `input()` — `input()` runs `resetkeystates()` first, and `joystick_trans` maps
+  `KS_STRUCK` to `KS_OFF`, so events injected beforehand are retired before the scan sees them and the
+  block-slap cases return a plausible-looking single direction and prove nothing.
+
+Both suites were checked against pre-change `HEAD`, where 21 of the 40 `input_test` checks fail with
+exactly the reported symptoms (`hold Left, press Right` → `W`; sub-cycle tap → `E`, no diagonal).
+
 ## Building (Windows, MSYS2)
 
 The deployed flavor is a single self-contained exe via **static Qt**. From the MSYS2 MINGW64 shell:

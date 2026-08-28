@@ -1,7 +1,14 @@
 /* in.c: Reading the keyboard and mouse.
- * 
+ *
  * Copyright (C) 2001-2010 by Brian Raiter and Madhav Shanbhag,
  * under the GNU General Public License. No warranty. See COPYING for details.
+ *
+ * NOTE (Jeremy, jc-43): this file is compiled TWICE, in two different languages.
+ * The Qt build reaches it through generic/_in.cpp, which is nothing but
+ * #include "in.c", so it is compiled as C++; the SDL build compiles it as C.
+ * Anything added here has to be valid in both -- no designated initializers, no
+ * compound literals, no bare struct tags without a typedef, and none of C++'s
+ * alternative operator spellings (and/or/not/xor) as identifiers.
  */
 
 #include	<string.h>
@@ -48,6 +55,20 @@ enum {
 /* The complete array of key states.
  */
 static char keystates[TWK_LAST];
+
+/* MOD (Jeremy, jc-43): when each key most recently began being held, used to
+ * arbitrate between direction keys that are down at the same time. Stamped from
+ * a counter that only ever increases, so a larger value means "pressed more
+ * recently"; zero means "never pressed since the program started".
+ *
+ * The counter is deliberately never reset. Resetting it without also clearing
+ * keypressorder[] would leave stale stamps that compare as NEWER than fresh
+ * ones, silently inverting every arbitration. Wrapping is not a concern: at a
+ * sustained ten presses per second a 32-bit counter takes over thirteen years
+ * to wrap, and it starts again at zero every launch.
+ */
+static unsigned keypressorder[TWK_LAST];
+static unsigned keypresscounter;
 
 /* The last mouse action.
  */
@@ -209,10 +230,11 @@ static keycmdmap const inputkeycmds[] = {
  */
 static keycmdmap const* keycmds = gamekeycmds;
 
-/* A map of keys that can be held down simultaneously to produce
- * multiple commands.
+/* MOD (Jeremy, jc-43): direction-key arbitration lives in its own file so the
+ * test harness can compile it on its own. It is #included rather than linked
+ * because everything in it is static; see the comment at the head of that file.
  */
-static int mergeable[CmdKeyMoveLast + 1];
+#include	"dirinput.c"
 
 /*
  * Running the keyboard's state machine.
@@ -243,6 +265,26 @@ static void _keyeventcallback(int scancode, int down) {
         default:
             if (scancode < TWK_LAST) {
                 if (down) {
+                    /* MOD (Jeremy, jc-43): stamp the press order. KS_OFF and
+                     * KS_STRUCK are the two states meaning "not currently
+                     * held", so both begin a new press. Stamping only on
+                     * KS_OFF would miss the KS_STRUCK -> KS_REPEATING path
+                     * below -- a key tapped and pressed again inside one cycle
+                     * -- leaving it holding its PREVIOUS press's stamp and
+                     * losing recency comparisons it should win.
+                     *
+                     * KS_REPEATING is excluded because it means the key was
+                     * already down, so its existing stamp is the right one.
+                     * Do not read that as "auto repeat only": a genuine second
+                     * press arriving on a KS_STRUCK key lands in KS_REPEATING
+                     * too, and such a key reaches neither survivor slot in
+                     * input(), so its diagonal is a cycle late. Pre-existing,
+                     * unchanged here, and easy to miss precisely because the
+                     * state is named for the other way of reaching it.
+                     */
+                    if (keystates[scancode] == KS_OFF
+                        || keystates[scancode] == KS_STRUCK)
+                        keypressorder[scancode] = ++keypresscounter;
                     keystates[scancode] = keystates[scancode] == KS_OFF ? KS_PRESSED : KS_REPEATING;
                 } else {
                     keystates[scancode] = keystates[scancode] == KS_PRESSED ? KS_STRUCK : KS_OFF;
@@ -253,6 +295,15 @@ static void _keyeventcallback(int scancode, int down) {
 }
 
 /* Initialize (or re-initialize) all key states.
+ *
+ * NOTE (jc-43): the keys found already down are replayed in SCANCODE order, so
+ * the press stamps they receive here are fabricated, and can actively INVERT
+ * true recency rather than merely approximate it -- the Qt codes rank the
+ * arrows West < North < East < South, so a player holding Right and then Left
+ * comes out of this ranked the other way round and Chip leaves in the other
+ * direction. Accepted, not ignored: this runs only when the ruleset actually
+ * changes (setrulesetbehavior returns early otherwise), which is between
+ * levels with Chip standing still, never mid-move.
  */
 static void restartkeystates(void) {
     uint8_t* keyboard;
@@ -298,8 +349,19 @@ static void resetkeystates(void) {
         /* KS_DOWNBUTOFF3 => */ KS_DOWN,
         /* KS_REPEATING   => */ KS_DOWN
     };
-    if (casualinputs) //Make it less likely to repeat inputs on tap for casual players (command line arg)
-        keyboard_trans[KS_DOWNBUTOFF1] = KS_DOWNBUTOFF2;
+    /* Make it less likely to repeat inputs on tap for casual players (command
+     * line arg).
+     *
+     * MOD (Jeremy, jc-43): assign BOTH ways. This used to only ever set the
+     * casual value into a static table and never put it back, so once
+     * casualinputs had been true the longer mute stayed wired in for the life
+     * of the process even if the flag went false. Unreachable in the shipped
+     * program -- the -c flag is parsed once before any input -- but the test
+     * suite toggles it, and a table that silently disagrees with the variable
+     * that is supposed to control it is a trap for whoever makes the flag
+     * settable from the Options menu later.
+     */
+    keyboard_trans[KS_DOWNBUTOFF1] = casualinputs ? KS_DOWNBUTOFF2 : KS_DOWN;
 
     char const* newstate = joystickstyle ? joystick_trans : keyboard_trans;
     for (int n = 0; n < TWK_LAST; n++)
@@ -384,19 +446,36 @@ int anykey(void) {
  * until a key with an associated command is selected. In keyboard behavior
  * mode, the function can return CmdPreserve, indicating that if the key
  * command from the previous poll has not been processed, it should still
- * be considered active. If two mergeable keys are selected, the return
- * value will be the bitwise-or of their command values.
+ * be considered active. In joystick behavior mode, two perpendicular
+ * direction keys held at once return the bitwise-or of their commands -- the
+ * diagonal that Lynx rules resolve into a block slap.
+ *
+ * MOD (Jeremy, jc-43): direction keys used to be arbitrated by their position
+ * in the keycmds table, so North beat South and West beat East no matter which
+ * the player had pressed more recently. They are now collected per axis and
+ * decided by press recency; see resolvedirections(). Non-direction commands
+ * keep first-match-wins. Deferring their return to the foot of the loop is
+ * observably identical to returning early, because every direction entry
+ * precedes every non-direction entry in both keycmds tables and every
+ * non-direction command sorts above CmdKeyMoveLast.
  */
 int input(int wait) {
     keycmdmap const* kc;
     int lingerflag = FALSE;
     int cmd1, cmd, n;
+    dirsurvivors dirs;
+    int axis, dircmd;
 
     for (;;) {
         resetkeystates();
         eventupdate(wait);
 
         cmd1 = cmd = 0;
+        /* Zeroed per iteration, not per call: when wait is TRUE this loop runs
+         * again, and a survivor left over from the previous cycle would be
+         * arbitrated against keys that are no longer down.
+         */
+        memset(&dirs, 0, sizeof dirs);
         for (kc = keycmds; kc->scancode; ++kc) {
             n = keystates[kc->scancode];
             if (!n)
@@ -413,23 +492,63 @@ int input(int wait) {
                 if (kc->alt != (keystates[TWK_LALT] || keystates[TWK_RALT]))
                     continue;
 
+            axis = commandaxis(kc->cmd);
+
             if (n == KS_PRESSED || (kc->hold && n == KS_DOWN)) {
-                if (!cmd1) {
-                    cmd1 = kc->cmd;
-                    if (!joystickstyle || cmd1 > CmdKeyMoveLast
-                        || !mergeable[cmd1])
-                        return cmd1;
-                } else {
-                    if (cmd1 <= CmdKeyMoveLast
-                        && (mergeable[cmd1] & kc->cmd) == kc->cmd)
-                        return cmd1 | kc->cmd;
+                if (axis == AXIS_NONE) {
+                    if (!cmd1)
+                        cmd1 = kc->cmd;
+                } else if (!dirs.held[axis]
+                           || keypressorder[kc->scancode] > dirs.heldorder[axis]) {
+                    dirs.held[axis] = kc->cmd;
+                    dirs.heldorder[axis] = keypressorder[kc->scancode];
                 }
+            } else if (n == KS_STRUCK && joystickstyle && kc->hold
+                       && axis != AXIS_NONE) {
+                /* A direction tapped and released inside this one cycle. All
+                 * three gates are load-bearing. joystickstyle keeps this out
+                 * of MS rules. kc->hold keeps it out of inputkeycmds, whose
+                 * arrows are directions too, so that a tapped arrow cannot
+                 * promote inside a text prompt. And the axis test stops the
+                 * hold=TRUE shift-cheat arrows of a debug build from reaching
+                 * here -- they are not direction commands.
+                 *
+                 * Note what kc->hold does NOT buy: it does not stop a text
+                 * prompt from producing a diagonal, because the held path
+                 * above qualifies on KS_PRESSED without consulting hold at
+                 * all. Two arrows pressed together in a prompt returned a
+                 * diagonal before this change and still do.
+                 */
+                if (!dirs.struck[axis]
+                    || keypressorder[kc->scancode] > dirs.struckorder[axis]) {
+                    dirs.struck[axis] = kc->cmd;
+                    dirs.struckorder[axis] = keypressorder[kc->scancode];
+                }
+                cmd = kc->cmd; /* still eligible for the fallback below */
             } else if (n == KS_STRUCK || n == KS_REPEATING) {
                 cmd = kc->cmd;
             } else if (n == KS_DOWNBUTOFF1 || n == KS_DOWNBUTOFF2) {
+                /* Physically down, but muted for a cycle or two so that one
+                 * tap yields one move (keyboard behavior only -- joystick_trans
+                 * has no DOWNBUTOFF state). The key must still CLAIM its axis:
+                 * dropping out of the contest would hand the axis back to an
+                 * older key the player is trying to leave, costing them a move
+                 * in the wrong direction. resolvedirections() emits nothing at
+                 * all when a muted key wins, and the lingerflag below turns
+                 * that into CmdPreserve.
+                 */
+                if (axis != AXIS_NONE
+                    && (!dirs.suppressed[axis]
+                        || keypressorder[kc->scancode] > dirs.suppressedorder[axis])) {
+                    dirs.suppressed[axis] = kc->cmd;
+                    dirs.suppressedorder[axis] = keypressorder[kc->scancode];
+                }
                 lingerflag = TRUE;
             }
         }
+        dircmd = resolvedirections(&dirs, joystickstyle);
+        if (dircmd)
+            return dircmd;
         if (cmd1)
             return cmd1;
         if (cmd)
@@ -494,9 +613,6 @@ int _genericinputinitialize(void) {
     geng.keyeventcallbackfunc = _keyeventcallback;
     geng.mouseeventcallbackfunc = _mouseeventcallback;
     geng.windowmapposfunc = _windowmappos;
-
-    mergeable[CmdNorth] = mergeable[CmdSouth] = CmdWest | CmdEast;
-    mergeable[CmdWest] = mergeable[CmdEast] = CmdNorth | CmdSouth;
 
     setkeyboardrepeat(TRUE);
     return TRUE;

@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-42
+  Tile World  --  Jeremy Christman's fork                    build jc-43
 ==============================================================================
 
   1. What this is
@@ -437,6 +437,40 @@ collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
 release below was measured that way before shipping.
 
+
+jc-43  --  Direction keys follow you, not a lookup table
+-------------------------------------------------------
+
+  * PRESSING A NEW DIRECTION WHILE STILL HOLDING THE OLD ONE NOW WORKS THE SAME
+    WAY IN ALL FOUR DIRECTIONS. When two direction keys were down, the game
+    picked whichever came first in an internal table, so North always beat South
+    and West always beat East regardless of which you had just pressed. Turning
+    south while holding north, or east while holding west, was ignored until you
+    let go -- while the opposite two turned immediately. The key you pressed most
+    recently now wins, in both rulesets.
+
+  * TAPPING A PERPENDICULAR DIRECTION WHILE RUNNING NO LONGER GETS THROWN AWAY.
+    A tap that began and ended between two polls -- under about a twentieth of a
+    second -- was discarded outright if another direction was held, so it formed
+    no diagonal and fired no block slap. It now counts. Two caveats worth stating:
+    Chip only reads the keyboard once per move, so in motion this lands about one
+    time in four; standing still, it now works every time. Longer taps always
+    worked and are unchanged. To slap reliably while moving, HOLD the
+    perpendicular key rather than tapping it.
+
+  * BLOCK SLAPPING IS UNCHANGED. Holding two perpendicular directions still
+    produces the diagonal that flicks a block sideways, and the rule deciding
+    which direction is primary -- the way Chip is already facing -- is untouched.
+    Two Sets of Rules, Piston It Away and the Lynx-only CCLXP2 levels need it.
+    What changed is only which key represents an axis when two are held on it.
+
+  * THREE OR MORE DIRECTIONS AT ONCE now compose the diagonal from the newer key
+    on each axis. Holding two opposite directions while moving along that same
+    axis can therefore turn a slap into an ordinary push. It was previously
+    decided by table position rather than by design.
+
+  * No recorded solution can be affected by any of this. Replays feed the engine
+    from the .tws file and never consult the keyboard at all.
 
 jc-42  --  Hardening the tileset picker
 -----------------------------------------
