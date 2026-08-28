@@ -22,10 +22,24 @@ packaging FAILS if README.txt's header does not name that same tag.
 param(
     [string]$Exe = "build-jc35\tworld2.exe",
     [string]$Dlls = "C:\msys64\mingw64\bin",
-    [string]$Strip = "C:\msys64\mingw64\bin\strip.exe"
+    [string]$Strip = "C:\msys64\mingw64\bin\strip.exe",
+    [switch]$SkipTests
 )
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
+
+# The unit tests gate the release (added jc-43). A test suite that nothing runs
+# is documentation, and the defects it covers are the silent kind -- a wrong
+# direction arbitration does not crash, it makes a block slap quietly stop
+# firing and a level become unsolvable months later. Skip only with -SkipTests,
+# and only when you have run them yourself.
+if (-not $SkipTests) {
+    Write-Host "Running unit tests..." -ForegroundColor Cyan
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $root "test\run-tests.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        throw "unit tests failed -- refusing to package. Fix them, or pass -SkipTests if you have a reason."
+    }
+}
 
 # The build tag is the single source of truth for the release name. Read from fork.h as of jc-34:
 # that header is what help.c and TWApp.cpp both compile in, so this script and the binary cannot
