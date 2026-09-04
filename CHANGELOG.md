@@ -99,7 +99,7 @@ is also why there is no jc-45 for it. It is what found the three defects above.
 - **Continuous integration.** `.github/workflows/ci.yml` builds and tests on every push and pull
   request; `codeql.yml` runs static analysis; `release.yml` packages a draft release from a `jc-*`
   tag push. Every action is pinned to a commit SHA, with Dependabot keeping the pins current.
-- **A real test suite**, with unit, integration and end-to-end layers. See `CLAUDE.md` §5.
+- **A real test suite**, in two layers — unit and end-to-end. See `CLAUDE.md` §5.
 - **`build.ps1`** — the MSYS2 + CMake incantation that used to live only in prose, as one command.
 - **`coverage.ps1`** — gcov-based line and branch coverage, with a committed baseline so the numbers
   in the documentation cannot quietly stop being true.

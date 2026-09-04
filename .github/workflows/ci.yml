@@ -114,6 +114,69 @@ jobs:
           path: test-results/
           if-no-files-found: warn
 
+  # 🔴 THE ONLY PLACE SANITIZERS CAN RUN AT ALL.
+  #
+  # This project is built with mingw-w64 GCC, which ships no libasan and no
+  # libubsan -- `-fsanitize=address` fails at link time with "cannot find
+  # -lasan". So AddressSanitizer and UndefinedBehaviorSanitizer are a
+  # Linux-only capability here, and this job is the whole of it.
+  #
+  # It matters more than the coverage number. The program's main job is parsing
+  # files strangers made, and the four memory-safety defects fixed in jc-44 and
+  # jc-45 were each found by reading the code and then hand-building a test that
+  # could observe the specific defect. ASan observes the entire class without
+  # anybody having to suspect it first.
+  #
+  # Needs no Qt and no SDL: the unit tests compile the source under test
+  # directly (docs/adr/0003), so gcc alone instruments the engine and the
+  # parsers.
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          chmod +x test/run-sanitizers.sh
+          ./test/run-sanitizers.sh
+
+  # Does this still build on something that is not Windows?
+  #
+  # Nothing here ships from Linux and nobody plays it there. The job earns its
+  # place two other ways: CMakeLists.txt carries a complete non-Windows branch
+  # that would otherwise rot unnoticed, and a working Linux build is the
+  # prerequisite for giving CodeQL a real compilation database instead of the
+  # buildless extraction it falls back on today (see codeql.yml).
+  #
+  # Allowed to fail the job without failing the workflow would be worse than
+  # useless -- a red X people learn to ignore. If this breaks, either fix it or
+  # delete the job and say so in docs/adr/0010.
+  linux-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Qt5 and SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qtbase5-dev qttools5-dev-tools libsdl2-dev cmake ninja-build
+
+      - name: Build the Qt flavor
+        run: |
+          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DOSHW=qt
+          cmake --build build-linux
+          ls -l build-linux/tworld2
+
+      # The portable core has no Windows-only API -- the only windows.h in the
+      # tree is in oshw-sdl, which the Qt flavor does not compile. So the binary
+      # should actually run, and its GUI-free command surface is testable here
+      # exactly as it is on Windows.
+      - name: The built binary answers on its command line
+        run: |
+          ./build-linux/tworld2 -V | head -3
+          ./build-linux/tworld2 -V | grep -q "jc-" || { echo "::error::-V did not report a build tag"; exit 1; }
+
   # Builds the real program and drives it through its GUI-free command line.
   # The DYNAMIC Qt flavor deliberately: it is a fraction of the build time of
   # the static one and runs the same code. The static build is what ships, and

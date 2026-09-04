@@ -6,9 +6,17 @@ Runs the Tile World UNIT tests.
     powershell -ExecutionPolicy Bypass -File test\run-tests.ps1 -ResultsPath test-results
     powershell -ExecutionPolicy Bypass -File test\run-tests.ps1 -Lang c
 
-For the integration and end-to-end layers as well, use the runner at the repository
-root: `run-tests.ps1`. This script is the unit layer only, and is what package.ps1
-gates on.
+For the end-to-end layer as well, use the runner at the repository root:
+`run-tests.ps1`. This script is the unit layer only, and is what package.ps1 gates
+on. There are TWO layers, not three -- some unit tests here link more than one
+module (series_test.c compiles fileio.c in alongside series.c), which is
+integration-flavored, but there is no separate integration runner and nothing
+should claim one.
+
+A third instrument sits outside both runners because it needs a level collection
+this repository does not contain: test\run-corpus.ps1 replays a whole library of
+recorded solutions and diffs one build against another. Run it before shipping any
+change to the engine or the file formats -- neither layer here can see a desync.
 
 Each test is a self-contained C file that compiles the code under test directly, so
 no configured CMake build tree is needed -- only a C compiler. See
