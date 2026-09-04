@@ -1,0 +1,60 @@
+# EditorConfig — https://editorconfig.org
+#
+# This exists for one reason: an agent or editor defaulting to a different
+# indent width produces a diff that is mostly whitespace and effectively
+# unreviewable. This is a FORK, and its whole value is that `git diff` against
+# upstream 2.3.1 shows exactly what changed and nothing else.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+# The C and C++ sources are upstream's, in upstream's style: four-space
+# indentation, with hard TABS used for column alignment after #include and
+# #define. Those alignment tabs are not indentation and must be left alone.
+#
+# trim_trailing_whitespace is deliberately OFF here. Turning it on lets any
+# editor silently reformat whole upstream files on save, which buries a
+# three-line fix in a four-hundred-line diff. Fix whitespace only in lines you
+# are already changing.
+[*.{c,h,cpp}]
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = false
+
+# This fork's own files -- tooling, documentation, CI -- have no upstream to
+# stay diffable against, so they get the tidy treatment.
+[*.{ps1,psm1}]
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{yml,yaml}]
+indent_size = 2
+trim_trailing_whitespace = true
+
+[*.md]
+indent_size = 2
+# Two trailing spaces are a hard line break in Markdown.
+trim_trailing_whitespace = false
+
+[{CMakeLists.txt,*.cmake}]
+indent_size = 4
+trim_trailing_whitespace = true
+
+# Upstream's plain-text records and the shipped README. Left exactly as they
+# are; README.txt in particular is column-aligned by hand and ships to users.
+[{README.txt,Changelog,BUGS,COPYING}]
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+# Level data and other binaries. Named explicitly so that no editor is ever
+# tempted to "normalize" them; .gitattributes marks them binary as well.
+[*.{dat,dac,ccx,tws,bmp,wav,ico,png,zip}]
+end_of_line = unset
+insert_final_newline = false
+trim_trailing_whitespace = false

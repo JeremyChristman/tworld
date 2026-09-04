@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-43
+  Tile World  --  Jeremy Christman's fork                    build jc-44
 ==============================================================================
 
   1. What this is
@@ -435,8 +435,49 @@ Where a release says "N levels", that is the number of recorded solutions that
 replayed incorrectly before the fix and correctly after it, measured across a
 collection of 274 level sets and roughly 22,000 solutions. "0 regressions"
 means no solution that replayed correctly before stopped doing so -- every
-release below was measured that way before shipping.
+release from jc-43 down was measured that way before shipping.
 
+jc-44 is the exception, and deliberately so: it changes no engine code at all,
+only the checks that decide whether a damaged FILE is refused, so there is
+nothing for a solution corpus to measure. What was done instead is described in
+that entry.
+
+
+jc-44  --  A malicious solution file can no longer crash the game
+-----------------------------------------------------------------
+
+  * A .tws FILE CAN NO LONGER OVERWRITE MEMORY IT WAS NOT GIVEN. When you open
+    a solution file directly -- by dragging it onto the program, or naming it
+    on the command line -- Tile World looks inside it for the name of the level
+    set it belongs to. It trusted the length written in the file, and copied
+    that many bytes into a fixed 256-byte space. A file claiming a longer name
+    than that overwrote whatever came next, and a large enough one crashed the
+    game outright. Measured against the released build jc-43: a file declaring
+    a 1000- or 2000-byte name crashes it, and 400 or 600 bytes ends it
+    abnormally. The length is now capped, and the result is always properly
+    terminated -- every one of those files is simply refused by this build.
+
+    This is worth taking seriously even though nothing has gone wrong for
+    anybody: solution files get passed between players constantly, they come
+    from strangers, and nothing about opening one looks risky.
+
+  * TWO MORE PLACES WHERE A DAMAGED LEVEL FILE COULD MAKE THE PROGRAM READ PAST
+    THE END OF WHAT IT LOADED. Both were reads rather than writes, and neither
+    could be reached by a level set that actually works -- one of them cannot be
+    reached from a file on disk at all. They are fixed because the reason they
+    were harmless was an accident of an unrelated check somewhere else, and that
+    is not the kind of safety that stays true.
+
+  * NONE OF THE THREE WAS INTRODUCED BY THIS FORK. All date from the version of
+    Tile World this fork is built on. Nothing about how the game PLAYS has
+    changed: no level, no solution, no timing and no score is affected.
+
+  * Also in this build, though invisible while playing: the stock
+    tw_settings.ini included in this download had been missing the two tileset
+    settings added in jc-41, so it was no longer listing every setting the way
+    it is meant to. Both are present now. And the project gained a real test
+    suite -- around 17,000 checks, run before every release -- which is what
+    found the problems above.
 
 jc-43  --  Direction keys follow you, not a lookup table
 -------------------------------------------------------

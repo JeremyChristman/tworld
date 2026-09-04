@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only is all CI needs. The release workflow asks for more, separately.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Seconds, no toolchain, and it catches the mistakes that are embarrassing rather than subtle.
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Nothing personal or copyrighted may be committed
+        run: |
+          # NOTE: this is a deny-list of specific names, NOT a ban on *.dat.
+          # data/ and sets/ legitimately contain upstream's redistributable
+          # community packs (CCLP1-5, CCLXP2, intro) and 17 .dac files -- a
+          # blanket rule would fail on the first run and get switched off,
+          # which is worse than having no rule. See
+          # docs/adr/0005-what-level-data-may-be-committed.md.
+          #
+          # .gitignore covers all of these, but .gitignore does nothing about
+          # `git add -f`, and that is exactly what happens while reproducing a
+          # bug with someone's solution file.
+          bad=$(git ls-files | grep -iE '(^|/)(CHIPS\.dat|tw_settings\.ini)$|\.tws$|^save/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::files that must never be committed are tracked:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "no copyrighted level data, solution files, save state or settings are tracked"
+
+      - name: The build tag is defined exactly once
+        run: |
+          # fork.h is the single definition (docs/adr/0006). package.ps1 and
+          # build.ps1 both parse it with a regular expression, and a
+          # reformatted #define breaks them in a way whose cause is not
+          # obvious from the error.
+          if ! grep -qE '^[[:space:]]*#[[:space:]]*define[[:space:]]+FORK_BUILD_TAG[[:space:]]+"[^"]+"' fork.h; then
+            echo "::error::fork.h has no FORK_BUILD_TAG in the form build.ps1 and package.ps1 expect"
+            exit 1
+          fi
+          tag=$(sed -nE 's/^[[:space:]]*#[[:space:]]*define[[:space:]]+FORK_BUILD_TAG[[:space:]]+"([^"]+)".*/\1/p' fork.h)
+          echo "build tag: $tag"
+          # README.txt ships inside the download and must describe the build it
+          # ships with. package.ps1 enforces this too, but failing here is
+          # faster and does not need a toolchain.
+          if ! head -5 README.txt | grep -qE "build[[:space:]]+$tag[[:space:]]*$"; then
+            echo "::error::README.txt's header does not name build $tag"
+            exit 1
+          fi
+          echo "README.txt header names $tag"
+
+  # The unit layer needs only a C compiler, so it is separate from -- and much
+  # faster than -- the job that builds Qt. It is the one that should tell you
+  # what broke.
+  unit:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # ⚠ TAG-PINNED, NOT SHA-PINNED, and that is a known gap rather than an
+      # oversight: every other action here is pinned to a commit SHA (see
+      # .github/dependabot.yml for why). This one was added without a verified
+      # SHA to hand. Pin it before the RELEASE workflow is ever made to depend
+      # on a third-party action, since that job produces bytes strangers run.
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          # C:\ so the toolchain lands at C:\msys64, which is where build.ps1
+          # and test\run-tests.ps1 look by default. Keeping CI on the same
+          # paths as the maintainer's machine means the scripts' own path
+          # handling is exercised rather than bypassed.
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+
+      # Seconds, and it guards a claim that had already gone stale: the stock
+      # tw_settings.ini shipped in the release zip is hand-written, and jc-41
+      # added two settings that never reached it. Runs before the tests because
+      # it needs no compiler and its failure is a one-line fix.
+      - name: The shipped stock settings file matches the code
+        run: powershell -ExecutionPolicy Bypass -File verify-defaults.ps1
+
+      - name: Unit tests
+        run: powershell -ExecutionPolicy Bypass -File test\run-tests.ps1 -ResultsPath test-results
+
+      - name: Publish unit test results
+        # Runs even when the tests failed -- that is when the report matters most.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unit-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+  # Builds the real program and drives it through its GUI-free command line.
+  # The DYNAMIC Qt flavor deliberately: it is a fraction of the build time of
+  # the static one and runs the same code. The static build is what ships, and
+  # package.ps1 is what verifies that one.
+  build-and-e2e:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt5
+            mingw-w64-x86_64-SDL2
+
+      - name: Build
+        run: powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic -Manifest dist/build-manifest.json
+
+      - name: End-to-end tests
+        # These drive the built executable: directory resolution, .dac parsing,
+        # the score table, and a real batch verification of a synthesized level
+        # set with one correct and one incorrect solution.
+        run: powershell -ExecutionPolicy Bypass -File test\run-e2e.ps1 -ResultsPath test-results
+
+      - name: Publish end-to-end results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+      - name: Upload the build manifest
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build-manifest
+          path: dist/build-manifest.json
+          if-no-files-found: warn

@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in this build of Tile World does not work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, two quick checks that resolve most reports:
+
+        - **If the game does not start at all** and you unpacked only the `.exe`, put it back with
+          the other files from the zip. `zlib1.dll` and `libzstd.dll` must sit beside it, and
+          without them Windows shows no window and no error — it just appears to do nothing.
+        - **If the behavior also happens in upstream Tile World 2.3.1**, it probably belongs
+          [there](https://github.com/SicklySilverMoon/tworld) — the original maintainers did not
+          write this fork's changes and are not responsible for them.
+
+  - type: input
+    id: build
+    attributes:
+      label: Which build
+      description: >
+        The `jc-N` from **Help > About**. The window title does *not* show it — the build tag is off
+        by default — so About is the place to look. The release you downloaded is also fine.
+      placeholder: jc-43
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ruleset
+    attributes:
+      label: Which ruleset
+      options:
+        - MS
+        - Lynx
+        - Not sure / not relevant
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: input
+    id: levelset
+    attributes:
+      label: Level set and level
+      description: >
+        Which set and level number, if it is specific to one. **Please do not attach the .dat** —
+        level sets are third-party content and are not redistributed here. Naming it is enough, and
+        if it is a set you made, say so.
+      placeholder: CCLP3, level 16
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: >
+        Run it from a terminal with output redirected and paste what appears:
+        `"Tile World.exe" -d > out.txt 2> err.txt` (add whatever arguments reproduce the problem).
+        This matters more than usual: the program is built for the Windows GUI subsystem, so when
+        launched by double-click **it has no console and every warning it prints goes nowhere**.
+        Redirecting to a file is the only way to see them.
+      render: text
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: Your tw_settings.ini
+      description: >
+        Paste the contents. It sits in the folder you launched the game from — note that this is the
+        *working directory*, not necessarily the folder the .exe is in, so if you launched from a
+        shortcut it may be somewhere else. If there is no such file, say so; that is useful too.
+      render: ini
+
+  - type: checkboxes
+    id: known
+    attributes:
+      label: Before submitting
+      options:
+        - label: >
+            I checked section 8 of
+            [CLAUDE.md](https://github.com/JeremyChristman/tworld/blob/main/CLAUDE.md) for
+            already-recorded defects.
+        - label: >
+            If this is a crash caused by a file I downloaded, I have read
+            [SECURITY.md](https://github.com/JeremyChristman/tworld/blob/main/SECURITY.md) and
+            considered reporting it privately instead.

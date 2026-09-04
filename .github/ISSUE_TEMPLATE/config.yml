@@ -1,0 +1,21 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Upstream Tile World
+    url: https://github.com/SicklySilverMoon/tworld
+    about: >
+      This is a personal fork. If the behavior also happens in upstream Tile World 2.3.1, it probably
+      belongs there — the maintainers of the original did not write these changes. This fork's own
+      changes are listed in README.txt section 7 and in FORK.md.
+  - name: How this fork differs
+    url: https://github.com/JeremyChristman/tworld/blob/main/FORK.md
+    about: Every change in this fork, why it exists, and what was measured.
+  - name: Known issues, already recorded
+    url: https://github.com/JeremyChristman/tworld/blob/main/CLAUDE.md
+    about: >
+      Section 8 lists the defects that are known and not yet fixed, including which are upstream's.
+      Please check there before filing.
+  - name: Reporting something memory-safety related
+    url: https://github.com/JeremyChristman/tworld/security/advisories/new
+    about: >
+      Crashes or corruption caused by a downloaded .dat, .dac or .tws are best reported privately
+      first. See SECURITY.md.

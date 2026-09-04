@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(powershell -ExecutionPolicy Bypass -File build.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic)",
+      "Bash(powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic -Clean)",
+      "Bash(powershell -ExecutionPolicy Bypass -File build.ps1 -Configure)",
+      "Bash(powershell -ExecutionPolicy Bypass -File run-tests.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Unit)",
+      "Bash(powershell -ExecutionPolicy Bypass -File run-tests.ps1 -E2E)",
+      "Bash(powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build)",
+      "Bash(powershell -ExecutionPolicy Bypass -File run-tests.ps1 -ResultsPath test-results)",
+      "Bash(powershell -ExecutionPolicy Bypass -File test\\run-tests.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File test\\run-tests.ps1 -ResultsPath test-results)",
+      "Bash(powershell -ExecutionPolicy Bypass -File test\\run-e2e.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File verify-defaults.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File coverage.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File coverage.ps1 -CheckBaseline)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git branch:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git check-attr:*)",
+      "Bash(git worktree list)",
+      "Bash(gcc --version)",
+      "Bash(g++ --version)",
+      "Bash(cmake --version)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git tag -d:*)",
+      "Bash(git update-ref -d:*)",
+      "Bash(git push origin --delete:*)"
+    ]
+  }
+}

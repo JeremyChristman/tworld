@@ -217,7 +217,31 @@ static int expandmsdatlevel(gamestate *state)
 	     setup->number, CXGRID * CYGRID - pos);
     data += size + 2;
     size = readword(data - 2);
-    if (data + size > dataend)
+    /* MOD (Jeremy, jc-44): reserve two bytes, exactly as the upper layer's
+     * check above does.
+     *
+     * Both map layers are decoded by the same run-length loop, and that loop is
+     * bounded only at the top of each iteration: on a 0xFF escape it reads
+     * `data[++n]` TWICE, so a layer whose last byte is 0xFF reads two bytes past
+     * its declared end. The upper layer's guard happens to reserve those two
+     * bytes -- not on purpose, but because it is reserving the lower layer's own
+     * length word. This one reserved nothing.
+     *
+     * Fixing it here also fixes the metadata size word read further down
+     * (`size = readword(data)` after `data += size`), which had the same
+     * two-byte overshoot and did not even need the 0xFF: passing this check now
+     * guarantees `data + 2 <= dataend` there.
+     *
+     * ⚠ NOT reachable from a .dat on disk today -- readleveldata() rejects any
+     * level whose password field is not exactly four characters, which
+     * guarantees several bytes of slack past anything this loop can touch. It is
+     * fixed because that safety is an accident of an unrelated check in a
+     * different file, and because getenddisplaysetup()'s built-in level passes
+     * this stricter form with ZERO margin, which is the sort of thing that stops
+     * being true silently. test/encoding_test.c pins both facts.
+     *
+     * Not a fork bug: git blame puts it in the upstream 2.3.1 import. */
+    if (data + size + 2 > dataend)
 	goto badlevel;
     for (n = pos = 0 ; n < size && pos < CXGRID * CYGRID ; ++n) {
 	if (data[n] == 0xFF) {

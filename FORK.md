@@ -427,9 +427,147 @@ exactly what's mine:
    `cmd` argument entirely whenever `state.replay >= 0` and drives `currentinput` from the solution
    move list, and `batchmode` never even turns joystick behavior on.
 
+16. **Three memory-safety fixes in the file parsers** (`solution.c`, `solution.h`, `tworld.c`,
+   `series.c`, `encoding.c`, `test/` (two new suites)).
+   All three are **upstream's**, not this fork's — `git blame` puts every one on the 2.3.1 import —
+   and none of them changes how the game plays. They were found by a security review of the parsers
+   while this repository was being made agent-ready, and they are grouped into one build because
+   they are one class of defect in one surface: **length fields read out of files that other people
+   made**.
+
+   **(a) A `.tws` could smash a 256-byte stack buffer. This is the one that mattered.**
+   `loadsolutionsetname()` read a 32-bit record length straight out of the solution file and
+   `fread()` that many bytes into the caller's buffer, with no upper bound and no terminator. Its one
+   caller (`tworld.c`) passes `char buf[256]` on the stack, and then `strcpy()`s out of it.
+   **Measured against the shipped jc-43 binary** (the static release build, not a dev build): a
+   `.tws` declaring a **1000- or 2000-byte** set name segfaults it, and 400 or 600 bytes terminate it
+   abnormally (exit 127). The overwriting bytes come from the file. jc-44 exits cleanly at every
+   length tested, 260 through 60000.
+
+   ⚠ **Be precise about which binary.** The first measurement of this was taken on a *dynamic* dev
+   build, where 400 bytes was the segfault threshold; the shipped static build has a different frame
+   layout and needs more. Both crash — but quoting the dev build's number as the release's was wrong,
+   and it is the same class of overstatement `git blame` caught in the jc-40 README.
+
+   It is reachable by an ordinary gesture. `tworld.c` runs this on the first positional argument
+   whenever exactly one is given — which is what **dragging a `.tws` onto the executable** does, and
+   what `docs/tworld2.6` documents. Solution files are passed between players constantly.
+
+   The fix takes a buffer size, clamps to it, and terminates. `readsolution()` in the same file
+   already clamped the **identical** record to 255 and terminated it; this path was simply forgotten.
+   🔴 The size parameter is the fork's own addition and is the point of the change: a clamp alone
+   fixes today's bug and leaves the next caller free to reintroduce it, because the old signature
+   made the constraint invisible at the call site. `solution.h` had promised "up to 255" for years
+   with nothing enforcing it.
+
+   **(b) `readleveldata()` advanced a pointer by a file-supplied size and then dereferenced it**
+   (`series.c`). The existing check covers only the upper map layer; the lower layer's 16-bit size
+   was added to `data` unvalidated. Worst case — a zero upper layer, a 65535-byte lower layer and a
+   13-byte record — is a two-byte read roughly 64 KB past a 13-byte allocation. Read-only, and the
+   level is rejected moments later for having no password, but only after the wild read. Triggerable
+   from any `.dat`.
+
+   **(c) The lower map layer's RLE bounds check reserved two fewer bytes than the upper layer's**
+   (`encoding.c`). Both layers are decoded by the same loop, and on a `0xFF` escape that loop reads
+   `data[++n]` **twice** — so a layer whose last byte is `0xFF` reads two bytes past its declared
+   end. The upper layer's guard happens to reserve exactly those two bytes, but only because it is
+   reserving the *lower layer's own length word*; nothing connected the two. Fixing this also fixes
+   the metadata size word read below it, which had the same overshoot without even needing the
+   `0xFF`.
+
+   ⚠ **(c) is NOT reachable from a `.dat` on disk**, and that was verified rather than assumed:
+   `readleveldata()` runs first and ends in an unconditional gate rejecting any level whose decoded
+   password is not exactly four characters, which guarantees several bytes of slack past anything the
+   loop can touch. It is fixed anyway, because "safe" resting on an unrelated check in a different
+   file is not a property that stays true.
+
+   🔺 **The one input that bypasses that gate is `getenddisplaysetup()`** — the end-of-series screen,
+   whose level is a static 139-byte array handed straight to the parser — **and it satisfies the
+   stricter check with exactly ZERO margin** (121 + 16 + 2 = 139). One more byte of tightening would
+   break the screen players see after finishing a set, and break it only there, months later.
+   `test/encoding_test.c` pins that, rather than leaving it as arithmetic in a comment.
+
+   ⚠ **The obvious form of the termination fix was not enough, and a test caught it.** Terminating
+   the buffer once on entry looks sufficient and is not: `fileread()` is `fread(data, size, 1, fp)`,
+   which on a truncated file returns FAILURE having already written up to `size-1` bytes into the
+   buffer — overwriting the terminator that was just placed there — and then jumps to the error exit.
+   The buffer is therefore terminated on entry AND at both failure labels. The case that found this
+   was written from the review comment describing the hazard, and failed on the first run.
+
+   **Verified.** Each fix was reverted individually and the suite re-run: removing the clamp turns
+   the canary case red (and crashes the test binary), and reverting the `encoding.c` guard turns its
+   case red. Two new suites — `test/encoding_test.c` (10 cases) and `test/series_test.c` (7) — plus
+   four new cases in `test/solution_test.c` cover both directions, because a hardening change that
+   also rejects valid input is not a fix but a different bug. The suite went from 16,944 to 17,015
+   unit checks.
+
+   **On the corpus.** A full 303-set batch verification was **not** run — that collection is not on
+   this machine — and it is not the right instrument anyway, because no engine code changed. Three
+   things stand in for it, the last of which is conclusive.
+
+   *Empirically:* a scanner evaluated the old and the new `encoding.c` guard against all 903 levels
+   in the seven bundled sets. **Zero** would newly be rejected.
+
+   *Algebraically — and this is the real answer:* **the two new guards are the same inequality.**
+   With `U` the upper-layer size and `L` the lower-layer size, `series.c`'s new check accepts only
+   when `levelsize >= U + L + 14`, and `encoding.c`'s new check requires exactly `levelsize >=
+   U + L + 14`. They ship together, so the stricter `encoding.c` guard cannot reject anything
+   `readleveldata()` accepts — by construction, not by sampling.
+
+   *And with margin:* any level that a PREVIOUS build accepted must have entered the optional-field
+   loop at least once, which forces `levelsize >= U + L + 17`. So the new guard passes with three
+   bytes to spare on every level any earlier release ever loaded.
+
+   ⚠ An earlier draft of this note argued the same conclusion from the four-character password gate
+   and put the guaranteed slack at nine bytes. That reasoning is sound but indirect, and the number
+   was **wrong** — the field loop clamps its length, so a password field with no terminator passes
+   and the true minimum is eight. The algebraic form above needs no password argument at all.
+   `test/series_test.c` still pins the password gate, because other things lean on it.
+
+   **Deliberately NOT fixed here:** one of `mslogic.c`'s trap-wiring dereferences reads a map cell
+   through a position that `readpos()` only partly validates, so a malformed wiring can index past
+   `map[]`. One byte, read-only, and almost certainly still mapped memory. Every other consumer of
+   those wirings is already guarded and `lxlogic.c` sanitizes both endpoints up front, so this is one
+   missed call site rather than a systemic gap.
+
+   It is held back because unlike the three above it is **engine behavior**, and the obvious guard is
+   the dangerous kind: positions past the end of the map are *load-bearing here* — `POS_INVALID` and
+   the MSCC row-32 cloner glitch both deliberately produce them (see mod 2 and `encoding.c`). A naive
+   `pos < CXGRID * CYGRID` test at that call site would quietly change emulation behavior, which is
+   exactly what a full solution-corpus run exists to catch. That run has to come first.
+
+   ⚠ The exact triggering byte pattern is deliberately not written down here. `SECURITY.md` asks
+   researchers to disclose privately so a fix can ship first, and this file should not do the
+   opposite for a defect that is still open.
+
 ## Testing
 
-`test/run-tests.ps1` runs the unit tests; `package.ps1` runs it first and refuses to package if it
+**`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:
+
+| Layer | Script | Needs | What it covers |
+|---|---|---|---|
+| unit | `test/run-tests.ps1` | a C compiler | one module at a time: the RNG, the `.tws` codec, the MS engine, the keyboard arbitration |
+| end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
+
+As of 2026-09-04: **10 unit runs / 17,015 checks and 12 end-to-end cases / 35 checks, 0 failures.**
+Machine-readable results with `-ResultsPath test-results` (JUnit XML + JSON). Coverage, unit layer
+only, is measured by `coverage.ps1`: **28.2% of branches overall**, from 100% of `random.c` down to
+0% of `fileio.c` (which is compiled in but never called by any case). `verify-defaults.ps1` checks
+that the stock `tw_settings.ini` in `package.ps1` still declares every setting `settings.cpp` does —
+it did not, for two releases.
+
+The full brief for anyone working here, including the traps that make a test *lie*, is
+[`CLAUDE.md`](CLAUDE.md); the deliberate decisions are recorded in [`docs/adr/`](docs/adr/).
+
+⚠ **Three of these tests were written, reviewed, passed, and pinned nothing** — the row-32 cloner
+case used an x value where the fixed and broken code agree, the creature-position case asserted only
+"not the aliased value" when both implementations satisfy that, and the diagonal round trip used gaps
+too small to reach the encoding it was written to protect. All three were caught by planting the
+defect and watching the suite stay green. **Prove a new test can fail before believing it.**
+
+### The jc-43 input tests, in detail
+
+`package.ps1` runs the unit layer first and refuses to package if it
 fails (`-SkipTests` overrides). Every test is built **twice**, as C and as C++, because `generic/in.c`
 is compiled as C by the SDL build and as C++ by the shipped Qt build (through `generic/_in.cpp`,
 which is nothing but `#include "in.c"`), and a construct valid in only one of them would break a build

@@ -93,7 +93,15 @@ foreach ($dll in "zlib1.dll", "libzstd.dll") {
 #                   at first, which would have quietly turned every fresh install's sound DOWN.
 #   showdeathcounter=false  jc-37. Opt-in like every other switch: a fresh install shows no
 #                   counter, and deathcount=0 is merely the honest starting total.
-# Re-check this list whenever a default changes.
+#   lynxtileset=    jc-41, ADDED 2026-09-03 -- these two were missing for two releases, which
+#   mstileset=      is what verify-defaults.ps1 now exists to catch. Shipped EMPTY on purpose:
+#                   istilesetname() in res.c rejects an empty or all-whitespace name, so the
+#                   loader falls back to the rc file's built-in tiles, which is exactly the
+#                   behavior of an absent key. Shipping the line with no value documents that
+#                   the setting exists and can be edited -- same pattern as selectedseries=.
+#
+# Re-check this list whenever a default changes -- and run verify-defaults.ps1, which compares
+# these keys against settings.cpp's SECTIONS[] so that "re-check" is not left to memory.
 @"
 [Display]
 bgcolor=#285080
@@ -101,6 +109,8 @@ deathcount=0
 displayccx=1
 forceshowtimer=0
 legacyscores=false
+lynxtileset=
+mstileset=
 showbuildtag=false
 showdeathcounter=false
 showinitstate=0

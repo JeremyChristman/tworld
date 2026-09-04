@@ -1,0 +1,61 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so that NEW CodeQL queries run against existing code without
+    # waiting for the next commit. This matters more here than in most
+    # projects: the code under analysis is a set of parsers for files that
+    # strangers make, and it barely changes from month to month -- so almost
+    # all of the value of this workflow comes from the query set improving,
+    # not from the code changing.
+    - cron: '17 5 * * 2'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze C/C++
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          languages: c-cpp
+          # 🔴 build-mode: none is a DELIBERATE CONCESSION here, not the ideal,
+          # and the difference matters more for C/C++ than it would for a
+          # managed language. Buildless extraction does not see the
+          # preprocessor as the real build sees it, so anything behind an
+          # #ifdef that this fork's build defines -- WIN32, TWPLUSPLUS, and the
+          # thirty-two NO_FIX_* macros -- may be analyzed in the wrong
+          # configuration or skipped.
+          #
+          # The alternative is build-mode: manual, which needs a working build
+          # on the runner. This project builds with MSYS2 + Qt5 on Windows;
+          # a Linux Qt5 build looks feasible (CMakeLists.txt already carries a
+          # complete non-Windows branch, and the only windows.h in the tree is
+          # in oshw-sdl, which the Qt flavor does not compile) but it has never
+          # been tried. Until somebody spikes it, a scan that runs reliably
+          # beats a scan that is red on every push.
+          #
+          # UPGRADE PATH, for whoever picks this up: add a job that runs
+          #     sudo apt-get install -y qtbase5-dev libsdl2-dev
+          #     cmake -S . -B build -DOSHW=qt && cmake --build build
+          # and if it works, switch this to build-mode: manual driving it. That
+          # same job would also unlock ASan/UBSan and fuzzing of the .dat/.tws
+          # parsers, none of which can run on the MSYS2 toolchain at all
+          # (mingw-w64 GCC ships no libasan/libubsan).
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          category: '/language:c-cpp'

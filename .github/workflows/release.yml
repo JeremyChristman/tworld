@@ -1,0 +1,186 @@
+name: Release
+
+# 🔴 THE AUTOMATIC TAG TRIGGER IS DISARMED, ON PURPOSE, AND MUST STAY THAT WAY
+# UNTIL THE ACTION BELOW IS PINNED TO A COMMIT SHA.
+#
+# This job runs with contents: write, id-token: write and attestations: write,
+# and it ends by signing a provenance statement for the bytes it just produced.
+# msys2/setup-msys2 is currently pinned to the MUTABLE TAG `v2` (see the note at
+# that step). A mutated `v2` would land attacker-controlled code inside the
+# process that compiles the release zip -- and this workflow would then attest
+# to it, which is worse than having no attestation at all, because a signed
+# statement is what people are told to trust.
+#
+# Until that pin is a SHA, releases are cut locally with package.ps1 and
+# uploaded by hand (.github/RELEASING.md step 7 describes both paths). Leaving
+# `push: tags` armed would mean every `git push origin jc-N` silently started
+# this job.
+#
+# TO RE-ARM: pin msys2/setup-msys2 to a verified commit SHA, then restore
+#     push:
+#       tags: ['jc-*']
+# above workflow_dispatch.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing jc-N tag to build a draft release for'
+        required: true
+
+# Creating a release needs write access. Recently created repositories default
+# GITHUB_TOKEN to read-only, and without this the whole build succeeds and then
+# fails on the very last step. id-token and attestations are for provenance.
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+# Two tag pushes in quick succession would otherwise race on the same draft.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Nothing here uses git after checkout, and leaving a write-scoped
+          # token in .git/config while the job compiles C and runs four
+          # PowerShell scripts is free risk.
+          persist-credentials: false
+
+      # ⚠ TAG-PINNED, NOT SHA-PINNED. Every other action in this repository is
+      # pinned to a commit SHA precisely because THIS job produces bytes that
+      # strangers download and run: a mutated tag on an action here would land
+      # code in the job that builds them, and a trojaned build would play
+      # perfectly normally. This one was added without a verified SHA to hand.
+      # 🔴 PIN IT BEFORE RELYING ON THIS WORKFLOW FOR A PUBLISHED RELEASE.
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          # C:\ so the toolchain lands at C:\msys64, which is where build.ps1
+          # and package.ps1 look by default.
+          location: C:\
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt5-static
+            mingw-w64-x86_64-SDL2
+
+      - name: The shipped stock settings file matches the code
+        run: powershell -ExecutionPolicy Bypass -File verify-defaults.ps1
+
+      # THE GUARD THIS WORKFLOW EXISTS FOR. The git tag and the tag compiled
+      # into the executable are two independent facts, and nothing else compares
+      # them. Push jc-44 while fork.h still reads jc-43 and every other gate
+      # passes: the README check looks for jc-43 and finds it, the zip is named
+      # TileWorld-jc-43.zip, and release jc-44 publishes a binary that calls
+      # itself jc-43.
+      #
+      # The tag reaches PowerShell through the ENVIRONMENT, never through a
+      # ${{ }} expression in a run: block. Actions substitutes expressions as
+      # raw text before PowerShell parses the line, and inside a double-quoted
+      # string $(...) and backticks execute -- and `jc-$(whoami)` is a valid,
+      # pushable git tag name that matches this workflow's jc-* filter. Anyone
+      # able to push a tag could otherwise run arbitrary code here with a
+      # write-scoped token. The regex is the belt to that braces.
+      - name: Build (the tag must match fork.h)
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if ($env:TAG -notmatch '^jc-\d+$') { throw "refusing to build a tag that is not jc-N: $env:TAG" }
+          powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor static -ExpectTag $env:TAG -Manifest dist/build-manifest.json
+
+      - name: Tests
+        # -Exe rather than -Build: the static executable was just built above and
+        # is the one being released, so the end-to-end layer should drive THAT
+        # binary rather than building a second, different one.
+        run: powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Exe build-static\tworld2.exe -ResultsPath test-results
+
+      - name: Package
+        # package.ps1 runs the unit tests again itself and refuses to package if
+        # they fail. Left in place: it is the gate a human running package.ps1
+        # by hand also gets, and CI should not be the only place it holds.
+        run: powershell -ExecutionPolicy Bypass -File package.ps1 -Exe build-static\tworld2.exe
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+      # Signs a statement that THIS workflow, at this commit, produced these
+      # exact bytes. Anyone can check it before running the download:
+      #
+      #     gh attestation verify TileWorld-jc-N.zip -R JeremyChristman/tworld
+      #
+      # This matters more here than in most projects: the published bytes come
+      # off a runner rather than the maintainer's machine, a ~40 MB statically
+      # linked Qt binary is completely opaque, it is NOT byte-reproducible
+      # (comptime.h embeds the build's date and time, see CMakeLists.txt), so a
+      # local rebuild cannot be hash-compared against it -- and a tampered build
+      # would play perfectly normally. Provenance is the only check on that path
+      # that does not depend on somebody noticing something.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: dist/TileWorld-*.zip
+
+      # DRAFT on purpose. CI builds on a different machine than the
+      # maintainer's, and the playtest gate means a human launches the actual
+      # artifact before anyone downloads it. This step also cannot catch a
+      # static-link failure that only shows on a real desktop.
+      #
+      # The existence check is explicit rather than relying on `gh release
+      # create` to reject a duplicate: it does return 422 for a PUBLISHED
+      # release, but draft releases are not bound to a git tag until they are
+      # published, so a second run would otherwise likely produce a SECOND draft
+      # carrying the same tag rather than an error.
+      - name: Create the draft release
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Explicit exit-code checks rather than PowerShell's error handling. On
+          # PowerShell 5.1, REDIRECTING a native command's stderr wraps every
+          # line in a NativeCommandError, which the Actions wrapper's
+          # $ErrorActionPreference='stop' then treats as terminating -- so
+          # `gh release view ... *> $null` turned the CORRECT answer ("release
+          # not found", i.e. safe to proceed) into a failed step.
+          $ErrorActionPreference = 'Continue'
+
+          if ($env:TAG -notmatch '^jc-\d+$') { throw "refusing to release a tag that is not jc-N: $env:TAG" }
+          $zip = Get-ChildItem dist -Filter "TileWorld-$($env:TAG).zip" -File
+          if (-not $zip) { throw "no dist\TileWorld-$($env:TAG).zip was produced" }
+
+          gh release view $env:TAG | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "a release for $($env:TAG) already exists -- delete it first, or use a new tag" }
+          Write-Host "no existing release for $($env:TAG); creating the draft"
+
+          $notes = @"
+          Built from ``$($env:TAG)`` by the release workflow.
+
+          **This is a draft.** Unpack the attached zip and play the game before publishing -- the
+          playtest gate is a human step, and it is the only place a static-link failure shows up.
+
+          The zip contains ``Tile World.exe``, a stock ``tw_settings.ini``, the two DLLs the game
+          needs beside it (``zlib1.dll`` and ``libzstd.dll``), ``README.txt`` and ``COPYING``.
+          Keep them together -- the executable will not start on its own.
+
+          See README.txt section 7 for what this build changed.
+          "@
+          gh release create $env:TAG $zip.FullName --draft --title $env:TAG --notes $notes
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }
+          Write-Host "drafted release $($env:TAG) with $($zip.Name)"

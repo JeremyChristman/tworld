@@ -235,6 +235,23 @@ static int readleveldata(fileinfo *file, gamesetup *game)
 	goto badlevel;
     data += data[0] | (data[1] << 8);
     data += 2;
+    /* MOD (Jeremy, jc-44): bound the pointer before reading through it.
+     *
+     * The check above covers only the UPPER layer. The lower layer's size is a
+     * 16-bit value out of the file and was added to `data` with no validation
+     * at all, after which the next line dereferenced the result. With a zero
+     * upper layer, a 65535-byte lower layer and a 13-byte record, that read
+     * landed about 64 KB past the end of a 13-byte allocation.
+     *
+     * Read-only, and the level is rejected a few lines later for having no
+     * password -- but only after the wild read has already happened. Reachable
+     * from any .dat, and .dat files are third-party downloads.
+     *
+     * Not a fork bug: git blame puts it in the upstream 2.3.1 import. Note the
+     * asymmetry it leaves behind -- encoding.c walks these same offsets and had
+     * the complementary hole, fixed in the same build. */
+    if (data + 2 > dataend)
+	goto badlevel;
     size = data[0] | (data[1] << 8);
     data += 2;
     if (data + size != dataend)

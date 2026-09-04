@@ -2292,7 +2292,11 @@ static int initoptionswithcmdline(int argc, char* argv[], startupdata* start) {
     }
 
     if (*start->filename && !start->savefilename) {
-        if (loadsolutionsetname(start->filename, buf) > 0) {
+        /* MOD (Jeremy, jc-44): pass the size of buf. `buf` is a 256-byte array
+         * on this function's stack and the length that used to govern the copy
+         * came straight out of the .tws being read -- see the note on
+         * loadsolutionsetname() in solution.c. */
+        if (loadsolutionsetname(start->filename, buf, sizeof buf) > 0) {
             start->savefilename = getpathbuffer();
             strcpy(start->savefilename, start->filename);
             strcpy(start->filename, buf);

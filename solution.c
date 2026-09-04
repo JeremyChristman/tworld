@@ -700,12 +700,52 @@ void clearsolutions(gameseries *series)
 
 /* Extract just the set name from the given solution file.
  */
-int loadsolutionsetname(char const *filename, char *buffer)
+/* MOD (Jeremy, jc-44): takes the size of buffer, and honors it.
+ *
+ * This function read a 32-bit length straight out of a .tws and fread() that
+ * many bytes into the caller's buffer, with no upper bound and no terminator.
+ * Its one caller (tworld.c) passes a 256-byte array on the stack. A solution
+ * file declaring a 400-byte set name therefore smashed the stack -- measured,
+ * segmentation fault -- and the bytes written were the file's own.
+ *
+ * It is reachable by an ordinary gesture, not a contrived one: tworld.c runs
+ * this on the first positional argument whenever exactly one is given, which is
+ * what DRAGGING A .tws ONTO THE EXECUTABLE does, and what the man page
+ * documents ("If the command-line only specifies a solution file, then Tile
+ * World will look up the name of the level set in the solution file"). Solution
+ * files are shared between players constantly.
+ *
+ * Not a fork bug: git blame puts it in the upstream 2.3.1 import. readsolution()
+ * below already clamps the IDENTICAL record to 255 and terminates it
+ * (see "size -= 16" there) -- this path was simply forgotten.
+ *
+ * The size parameter is the fork's own addition. A clamp alone would fix
+ * today's bug and leave the next caller free to reintroduce it, because the old
+ * signature made the constraint invisible at the call site. solution.h's comment
+ * already promised "up to 255" and nothing enforced it.
+ */
+int loadsolutionsetname(char const *filename, char *buffer, int buffersize)
 {
     fileinfo		file;
     unsigned long	dwrd;
     unsigned short	word;
     int			size;
+
+    if (buffersize < 1)
+	return -1;
+    /* MOD (Jeremy, jc-44): terminate the buffer UP FRONT, so the contract in
+     * solution.h ("the result is always terminated") holds on every path and not
+     * just the successful one.
+     *
+     * Without this, a short read leaves the picture the fix exists to prevent:
+     * fileread() is fread(data, size, 1, fp), which on a truncated file returns
+     * 0 having ALREADY deposited up to size-1 attacker-supplied bytes into the
+     * caller's buffer -- and control then goes to badfile, returning -1 with the
+     * buffer holding unterminated file content. Today's only caller checks the
+     * return value before touching the buffer, so nothing is exploitable; the
+     * next caller is the one this protects.
+     */
+    buffer[0] = '\0';
 
     clearfileinfo(&file);
     if (!openfileindir(&file, savedir, filename, "rb", NULL))
@@ -721,6 +761,11 @@ int loadsolutionsetname(char const *filename, char *buffer)
     size = dwrd - 16;
     if (size <= 0)
 	goto nosetname;
+    /* MOD (Jeremy, jc-44): the clamp this function never had. `size` is
+     * attacker-controlled and unbounded; the buffer is not. One byte is
+     * reserved for the terminator. */
+    if (size > buffersize - 1)
+	size = buffersize - 1;
 
     if (!filereadint16(&file, &word, NULL)
 				|| !filereadint32(&file, &dwrd, NULL))
@@ -729,14 +774,30 @@ int loadsolutionsetname(char const *filename, char *buffer)
 	goto nosetname;
     if (!fileskip(&file, 10, NULL) || !fileread(&file, buffer, size, NULL))
 	goto badfile;
+    /* MOD (Jeremy, jc-44): terminate it. The caller strcpy()s out of this
+     * buffer, and an unterminated set name walked off the end into whatever
+     * followed on the stack until it found a zero. */
+    buffer[size] = '\0';
 
     fileclose(&file, NULL);
     return size;
 
   badfile:
+    /* MOD (Jeremy, jc-44): terminate here too, not only on entry.
+     *
+     * Terminating once at the top is NOT enough, and a test is what proved it:
+     * fileread() is fread(data, size, 1, fp), and on a truncated file that
+     * returns failure HAVING ALREADY WRITTEN up to size-1 bytes of the file
+     * into the buffer -- overwriting the terminator that was put there on
+     * entry. Control then arrives here, so the buffer would go back to the
+     * caller holding unterminated file content. buffersize >= 1 is guaranteed
+     * by the guard at the top, so buffer[0] is always in bounds.
+     */
+    buffer[0] = '\0';
     fileclose(&file, NULL);
     return -1;
   nosetname:
+    buffer[0] = '\0';
     fileclose(&file, NULL);
     return 0;
 }

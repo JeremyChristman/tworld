@@ -76,12 +76,23 @@ extern int savesolutions(gameseries *series);
 extern void clearsolutions(gameseries *series);
 
 /* Read the solution file at filename to see if it contains a set
- * name. If so, copy it into buffer and return its length in bytes (up
- * to 255). Zero is returned if the solution file contains no set
+ * name. If so, copy it into buffer and return its length in bytes.
+ * Zero is returned if the solution file contains no set
  * name. A negative value is returned if the file cannot be read or is
  * not a valid solution file.
+ *
+ * MOD (Jeremy, jc-44): buffersize is the size of buffer, in bytes, INCLUDING
+ * room for the terminating NUL. At most buffersize-1 bytes are written and the
+ * result is always terminated, so the return value is never more than
+ * buffersize-1.
+ *
+ * The parameter exists because the length is read out of the file and the file
+ * is not ours: without it, a .tws could name a set of any length at all and
+ * this function would write every byte of it into whatever the caller passed.
+ * The comment here used to promise "up to 255" and nothing enforced it.
  */
-extern int loadsolutionsetname(char const *filename, char *buffer);
+extern int loadsolutionsetname(char const *filename, char *buffer,
+			       int buffersize);
 
 /* Produce a list of available solution files associated with the
  * given series (i.e. that have the name of the series as their

@@ -1,0 +1,56 @@
+version: 2
+
+updates:
+  # The workflows pin actions to commit SHAs rather than tags, because this
+  # repository's output is a binary that strangers download and run, and
+  # RELEASING.md has the maintainer publish CI's zip. SHA pinning WITHOUT this
+  # file would be worse than tags -- it would silently freeze those actions at
+  # a fixed version forever. The two go together.
+  #
+  # Dependabot rewrites the SHA and keeps the `# v4` comment accurate.
+  #
+  # ⚠ One action is currently tag-pinned rather than SHA-pinned:
+  # msys2/setup-msys2@v2 in ci.yml. That is a known gap, noted at the call
+  # site. Dependabot will still raise version bumps for it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: 'ci'
+    labels:
+      - dependencies
+    groups:
+      # codeql-action/init and codeql-action/analyze MUST move together. They
+      # are one action published as several entry points, and the analysis step
+      # refuses to run against a bundle initialized by a different major
+      # version. Ungrouped, Dependabot raises them as two separate PRs and EACH
+      # ONE FAILS on its own -- init at v4 with analyze still at v3 gives
+      # "Initialize CodeQL" success followed by "Perform CodeQL analysis"
+      # failure. Neither PR can ever go green alone, so neither can be merged,
+      # so the pair sits open forever. This is not hypothetical; it happened in
+      # the maintainer's other repository and cost two dead PRs.
+      codeql:
+        patterns:
+          - 'github/codeql-action*'
+      # Everything else from the same publisher moves as one PR. These are
+      # Node-runtime bumps that land together anyway, and one green CI run for
+      # the set is a better signal than three runs that each say nothing about
+      # the others.
+      actions:
+        patterns:
+          - 'actions/*'
+
+# There is deliberately no entry for a language ecosystem. This project has no
+# package manager and no dependency manifest: it is C and C++ built against
+# whatever MSYS2 provides (gcc, Qt5, SDL2, zlib, zstd), and those are system
+# packages on the maintainer's machine rather than anything declared in this
+# tree. Dependabot has nothing to read.
+#
+# That gap is real and worth naming rather than leaving implied: a
+# vulnerability in Qt5 or zlib would reach a released build through the
+# toolchain, and nothing here would raise a pull request about it. The
+# mitigations are that the shipped binary is statically linked from a
+# maintainer-controlled toolchain, and that SECURITY.md states the actual
+# exposure -- which for this program is overwhelmingly its own file parsers,
+# not its libraries.
