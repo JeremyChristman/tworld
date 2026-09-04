@@ -71,6 +71,37 @@ three cases in this suite were written, reviewed, passed, and turned out to pin 
 
 All three passed against a deliberately broken engine. Mutation is how that was found.
 
+**A fourth was worse, because it was infrastructure.** `test/tw_corpus.h` fenced every replayed
+corpus input with 64 poison bytes and claimed that caught over-writes without a sanitizer. No parser
+in this tree writes to its input, so the fences could never fire — and being legally allocated, they
+sat where ASan's redzone belongs and blunted it. Twenty assertions that could not fail, plus real
+harm. Mutation-test your *harness*, not only your cases.
+
+## Fuzzing, and the one rule that matters
+
+```bash
+test/run-fuzz.sh                 # Linux only; needs clang. 60s per target
+FUZZ_SECONDS=0 test/run-fuzz.sh  # just replay the committed corpus
+```
+
+🔴 **A finding is not fixed until its input is committed.** libFuzzer generates fresh inputs every
+run, so a green run proves nothing durable and a crash found today can vanish tomorrow. When the
+fuzzer reports something:
+
+1. Fix the defect.
+2. **Copy the reproducer from `test/fuzz/findings/` into `test/fuzz/corpus/<target>/`** and commit
+   it. That directory is gitignored scratch; nothing left there survives.
+3. Raise `tw_expect_atleast` in the matching unit test — each corpus input adds a check.
+
+The unit suite replays the whole corpus on Windows, so step 2 is what makes a Linux-only,
+probabilistic finding into a deterministic test that runs everywhere.
+See [`docs/adr/0011`](../docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
+
+⚠ **Do not delete a hand-written malformed-input case because the corpus "covers it".** Measured:
+re-introducing jc-44's missing bound left the corpus replay green while the hand-written
+`encoding_test` case failed. Every committed input is a *well-formed* file, and a corpus of valid
+inputs cannot test rejection.
+
 ## Working alongside other agents
 
 - `build.ps1` writes into `build-<flavor>\`, and **`package.ps1` wipes all of `dist/`**. Two agents
