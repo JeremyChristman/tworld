@@ -76,10 +76,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 
     fclose(file.fp);
     file.fp = NULL;
-    /* readleveldata() frees leveldata on its own failure paths and NULLs it, so
-     * this is the success path only -- but free(NULL) is fine either way and
-     * leaving it out leaks on every accepted input, which would make the
-     * fuzzer run out of memory and report that instead of a real bug. */
+    /* Safe on every path, for two different reasons -- worth stating both,
+     * because an earlier version of this comment claimed readleveldata() NULLs
+     * the field on all of them, and it does not. Failures AFTER
+     * `game->leveldata = data` go through badlevel:, which frees and NULLs it
+     * (series.c:284). Failures BEFORE that assignment never touch the field at
+     * all -- it is NULL only because of the memset above. Either way this is a
+     * legitimate single free or a free(NULL).
+     *
+     * Leaving it out would leak on every accepted input, and the fuzzer would
+     * then report an out-of-memory instead of the bug it was looking for. */
     free(game.leveldata);
     free(copy);
     return 0;

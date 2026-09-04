@@ -201,7 +201,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1204);
+    tw_expect_atleast(1207);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.

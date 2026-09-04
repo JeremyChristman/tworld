@@ -69,6 +69,18 @@ if ! command -v "$CC" > /dev/null 2>&1; then
     exit 1
 fi
 
+# Rejected up front rather than passed through. A non-numeric FUZZ_SECONDS makes
+# `[ "$FUZZ_SECONDS" -eq 0 ]` error out and read as false, so the run falls into
+# the fuzz branch and hands the garbage to -max_total_time=; libFuzzer then exits
+# nonzero and the script reports it under "=== FINDING ===". A typo would
+# masquerade as a security finding, which is the one thing this script must
+# never print falsely.
+case "$FUZZ_SECONDS" in
+    ''|*[!0-9]*)
+        echo "FUZZ_SECONDS must be a whole number of seconds, not '$FUZZ_SECONDS'"
+        exit 1 ;;
+esac
+
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 mkdir -p "$FINDINGS"

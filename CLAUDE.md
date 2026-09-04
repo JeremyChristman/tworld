@@ -184,7 +184,7 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **10 unit runs, 17,089 checks; 12 end-to-end cases, 35 checks; 0 failures.**
+Current state: **10 unit runs, 17,092 checks; 12 end-to-end cases, 35 checks; 0 failures.**
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 

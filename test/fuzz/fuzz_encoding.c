@@ -72,6 +72,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     fuzzstate.game = &fuzzsetup;
     fuzzstate.ruleset = Ruleset_MS;
     fuzzstate.statusflags = 0;
+    /* expandmsdatlevel() resets map, trapcount, clonercount, crlistcount and
+     * hinttext itself at entry, but assigns chipsneeded only AFTER three early
+     * `goto badlevel` checks -- so on a rejected input it keeps whatever the
+     * previous execution left there. Nothing reads it back for a bounds or
+     * pointer decision today, so it is not a live defect; it is reset anyway
+     * because carried state is how a fuzzer reproducer stops reproducing. */
+    fuzzstate.chipsneeded = 0;
 
     expandleveldata(&fuzzstate);
 

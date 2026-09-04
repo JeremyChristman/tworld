@@ -62,7 +62,12 @@ nobody had looked at. This is the generalization of the sixth.
   the fences could never fire, **and the 64 legally-allocated bytes sat where ASan's redzone belongs
   and blunted it.** The buffer is now sized exactly to the input. Retracted in the ADR rather than
   quietly deleted.
-- The suite grew from 17,059 to **17,089 checks**.
+- **Seeds for the MS mouse-move format**, which the first corpus missed. It is the only branch in
+  the `.tws` decoder that assembles a direction from raw bits rather than through `indextodir()`,
+  and the only one with its own variable-length truncation check — so it was reachable by
+  luck-of-mutation and by nothing else. Three seeds now cover its two-byte form, its five-byte form,
+  and a record that declares five bytes and supplies two.
+- The suite grew from 17,059 to **17,092 checks**.
 
 ### Changed
 
