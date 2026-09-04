@@ -59,3 +59,8 @@ chips.dat
 # holding a summary.tsv and the verifier's stdout for every set -- hundreds of
 # files and megabytes of them. They are evidence for one comparison, not source.
 /corpus-*/
+
+# libFuzzer reproducers (test/run-fuzz.sh). A finding is committed to
+# test/fuzz/corpus/ deliberately, with a case that replays it; the raw
+# artifact directory is scratch and must never be committed.
+/test/fuzz/findings/

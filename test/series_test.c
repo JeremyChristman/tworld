@@ -32,6 +32,7 @@
 
 #include	"tw_test.h"
 #include	"tw_fixture.h"
+#include	"tw_corpus.h"
 
 #include	"../fileio.c"
 #include	"../series.c"
@@ -91,6 +92,63 @@ static int readrecord(unsigned char const *record, int reclen, gamesetup *game)
     return r;
 }
 
+/* --- fuzz corpus replay -------------------------------------------------- *
+ *
+ * test/fuzz/corpus/leveldata/ replayed through readleveldata(), so a libFuzzer
+ * finding on Linux becomes a permanent regression case on every platform. See
+ * test/tw_corpus.h.
+ *
+ * ⚠ THE GUARD BYTES ARE NOT THE ORACLE IN THIS FILE, and saying so matters.
+ * readleveldata() takes a fileinfo and reads into an allocation of its own, so
+ * it never touches the fenced buffer and those fences cannot fail here. What
+ * this replay actually proves is narrower: that these inputs still parse to
+ * completion without crashing, hanging or aborting. The memory oracle for this
+ * parser is ASan in the `fuzz` CI job. Do not read a green run here as more
+ * than it is.
+ *
+ * The fuzz target uses fmemopen() to avoid a disk write per execution; that is
+ * POSIX-only, so the replay goes through a scratch file instead -- twenty files
+ * once per suite run, rather than tens of thousands per second.
+ */
+static char const *corpusscratch = "tw_corpus_test.dat";
+static int corpus_replayed = 0;
+
+static void corpus_read(twcorpusinput const *in)
+{
+    gamesetup	game;
+    fileinfo	file;
+    FILE       *f;
+
+    f = fopen(corpusscratch, "wb");
+    if (!f)
+	return;
+    fwrite(in->data, 1, (size_t)in->size, f);
+    fclose(f);
+
+    memset(&game, 0, sizeof game);
+    clearfileinfo(&file);
+    if (fileopen(&file, corpusscratch, "rb", NULL)) {
+	warn_count = 0;
+	errmsg_count = 0;
+	readleveldata(&file, &game);
+	fileclose(&file, NULL);
+	free(game.leveldata);
+    }
+    remove(corpusscratch);
+}
+
+static int corpus_report(int ok, char const *name)
+{
+    ++corpus_replayed;
+    /* `ok` is the fence check, which cannot fail here (see above). Asserted
+     * anyway so that this stays correct if the target is ever changed to parse
+     * out of memory -- and so the case has a real assertion per input rather
+     * than counting files and calling it coverage. */
+    CHECK_MSG(ok, "fuzz corpus input '%s' disturbed the guard bytes around it",
+	      name);
+    return ok;
+}
+
 static void put16(unsigned char *p, int v)
 {
     p[0] = (unsigned char)(v & 0xFF);
@@ -106,7 +164,24 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(22);
+    tw_expect_atleast(32);
+
+    tw_case("every committed fuzz corpus input still reads safely");
+    {
+	char dir[256];
+	int c;
+
+	CHECK_MSG(tw_corpus_dir("leveldata", dir, sizeof dir),
+		  "could not find test/fuzz/corpus/leveldata from the working"
+		  " directory -- the replay would have proved nothing");
+	if (dir[0]) {
+	    c = tw_corpus_run(dir, corpus_read, corpus_report);
+	    /* %.100s: tw_fail_ formats into 256 bytes; an unbounded %s of a
+	     * 256-byte array trips -Werror=format-truncation. */
+	    CHECK_MSG(c > 0, "corpus directory %.100s held no inputs", dir);
+	    CHECK_INT(corpus_replayed, c);
+	}
+    }
 
     /* ================================================================== */
     tw_case("a lower-layer size that runs past the record is REFUSED (jc-44)");

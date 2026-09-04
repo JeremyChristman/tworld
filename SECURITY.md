@@ -84,9 +84,29 @@ backport to. Fixes ship in the next tagged build.
   every variable-length encoding — and the level-record builder used by the engine tests is written
   from the format specification rather than from the parser, so a misreading in the parser is not
   reproduced in the fixtures.
-- CodeQL runs on every push and weekly (`.github/workflows/codeql.yml`).
-- ⚠ **Sanitizers and fuzzing are not currently run.** The mingw-w64 toolchain this project builds
-  with ships no `libasan` or `libubsan` and no libFuzzer, so ASan/UBSan and a fuzz target over
-  `expandleveldata()` and `expandsolution()` need a Linux build that does not exist yet. That is the
-  largest known gap in this policy, and the upgrade path is written down in the comment at the top of
-  `codeql.yml`.
+- **AddressSanitizer and UndefinedBehaviorSanitizer** run over the whole unit suite on every push
+  (the `sanitizers` job). This is not decoration: it found undefined behavior in the `.tws` seed and
+  best-time reads (jc-46) **on its first run**, in a line nobody had reason to suspect, through a
+  test that had been passing for weeks.
+- **The `.tws` and `.dat` parsers are fuzzed on every push** (the `fuzz` job, `test/run-fuzz.sh`) —
+  libFuzzer with ASan+UBSan over `expandsolution()`, `readleveldata()` and `expandleveldata()`, the
+  last of those deliberately ungated because its safety otherwise depends on a check in a different
+  file.
+- **Every input that ever mattered is committed and replayed.** `test/fuzz/corpus/` holds the seeds
+  and every reproducer, and the ordinary unit suite replays all of them on both platforms behind
+  guard bytes (`test/tw_corpus.h`). A fuzzer that forgets what it found buys nothing; this is what
+  turns a finding into a permanent regression test.
+- CodeQL runs on every push and weekly (`.github/workflows/codeql.yml`), observing a real Linux
+  build rather than buildless extraction.
+
+### Known gaps, stated rather than implied
+
+- ⚠ **Nothing analyzes the Windows build, which is the one that ships.** The sanitizer, fuzz and
+  CodeQL jobs all run on Linux, because mingw-w64 ships no `libasan` and no libFuzzer. The portable
+  core — every parser, both engines — is identical between the two, and every defect found so far
+  has been there; but `#ifdef WIN32` branches are analyzed in their POSIX form only.
+- ⚠ **Fuzzing is 60 seconds per target per push, not a soak.** That catches shallow regressions. A
+  deep campaign (`FUZZ_SECONDS=600` or more) is a manual act, and no scheduled soak job exists.
+- ⚠ **The Lynx engine (`lxlogic.c`) has no test coverage at all**, and neither engine is fuzzed —
+  only the file parsers are. An engine crash reachable from a malformed level that survives
+  `readleveldata()` would not be found by anything here.

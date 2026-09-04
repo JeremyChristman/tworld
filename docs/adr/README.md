@@ -20,6 +20,7 @@ it describes.
 | [0008](0008-accidental-diagonals-are-load-bearing.md) | Accidental diagonals are load-bearing: never "fix" block slapping away | Accepted |
 | [0009](0009-the-rng-must-never-change.md) | The RNG must never change, and must not match the original game | Accepted |
 | [0010](0010-ci-builds-on-windows-with-msys2.md) | CI builds on Windows with MSYS2, and tests the dynamic Qt flavor | Accepted |
+| [0011](0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md) | A fuzz finding is not fixed until its input is committed and replayed | Accepted |
 
 ## The short version, for someone in a hurry
 

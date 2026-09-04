@@ -21,6 +21,42 @@ stay attached to something someone can see.
 
 ---
 
+## Unreleased
+
+Nothing here changes the executable. It rides along with the next release that does.
+
+### Added — fuzzing the file parsers
+
+Every defect this fork has shipped a fix for lives in one surface: jc-44's three, jc-45's one and
+jc-46's two are all code that reads files strangers made. Five of those six were found by a person
+reading a parser and suspecting a specific line; the sixth was found by UBSan in seconds, in a line
+nobody had looked at. This is the generalization of the sixth.
+
+- **Three libFuzzer targets** over `expandsolution()`, `readleveldata()` and `expandleveldata()`,
+  built with ASan+UBSan, 60 s each on every push (`test/run-fuzz.sh`, the `fuzz` CI job).
+  `expandleveldata()` is fuzzed **ungated** on purpose — it normally runs only on records the
+  password gate accepted, and jc-44's third defect was a guard in `encoding.c` that was safe only
+  because of a check in `series.c`. Fuzzing through the gate alone could never reach that class.
+- 🔴 **The committed corpus is the part that lasts.** libFuzzer generates fresh inputs every run, so
+  a green run proves nothing durable. Every seed and every reproducer is committed under
+  `test/fuzz/corpus/`, and **the ordinary unit suite replays all of it on Windows too**
+  (`test/tw_corpus.h`) — behind 64 poison bytes on each side of the input, so an over-write is caught
+  with no sanitizer at all. **A finding is not fixed until its input is in that corpus.**
+  See [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
+- The suite grew from 17,059 to **17,088 checks** on the strength of the replay alone.
+
+### Changed
+
+- **CodeQL now observes a real build** (`build-mode: manual`) instead of buildless extraction. The
+  comment in `codeql.yml` had described this as a hypothetical upgrade needing a Linux build that
+  "has never been tried"; `linux-build` tried it and it takes 40 seconds. ⚠ It trades one blind spot
+  for a smaller one, stated in the file: the observed build is the Linux one, so `#ifdef WIN32`
+  branches are analyzed only in their POSIX form.
+- **`SECURITY.md` no longer claims sanitizers and fuzzing are unavailable** — that went stale the
+  moment jc-46 shipped. It now lists what actually runs, and states three residual gaps plainly:
+  nothing analyzes the Windows build that ships, 60 s per push is a regression check and not a soak,
+  and neither engine is fuzzed.
+
 ## jc-46 — 2026-09-04
 
 ### Fixed

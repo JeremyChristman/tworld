@@ -26,6 +26,7 @@
 
 #include	"tw_test.h"
 #include	"tw_fixture.h"
+#include	"tw_corpus.h"
 #include	"../encoding.c"
 
 /* --- the error surface, stubbed --------------------------------------- */
@@ -65,6 +66,47 @@ static int expandraw(unsigned char *data, int size)
     return expandleveldata(&teststate);
 }
 
+/* --- fuzz corpus replay -------------------------------------------------- *
+ *
+ * test/fuzz/corpus/encoding/ replayed through expandleveldata() on every
+ * platform, so a libFuzzer finding on Linux becomes a permanent regression case
+ * everywhere. See test/tw_corpus.h.
+ *
+ * 🔴 THIS TARGET IS DELIBERATELY UNGATED, and that is the point of it existing
+ * separately from the series.c one. expandleveldata() normally runs only on
+ * records readleveldata() already accepted, and that password gate is what
+ * gives the RLE loops their slack -- jc-44's third defect was a guard in this
+ * file that was safe only because of a check in a DIFFERENT file. Feeding this
+ * function directly is the only way to see that class.
+ *
+ * The guard bytes are a real oracle here: expandleveldata() reads straight out
+ * of the fenced buffer, so an over-write near either end is caught with no
+ * sanitizer at all.
+ */
+static int corpus_replayed = 0;
+
+static void corpus_expand(twcorpusinput const *in)
+{
+    memset(&testsetup, 0, sizeof testsetup);
+    testsetup.number = 1;
+    testsetup.leveldata = in->data;
+    testsetup.levelsize = in->size;
+
+    memset(teststate.map, 0, sizeof teststate.map);
+    teststate.game = &testsetup;
+    teststate.ruleset = Ruleset_MS;
+    teststate.statusflags = 0;
+    expandleveldata(&teststate);
+}
+
+static int corpus_report(int ok, char const *name)
+{
+    ++corpus_replayed;
+    CHECK_MSG(ok, "fuzz corpus input '%s' wrote outside its own buffer -- the"
+		  " guard bytes around it were modified", name);
+    return ok;
+}
+
 static void put16(unsigned char *p, int v)
 {
     p[0] = (unsigned char)(v & 0xFF);
@@ -79,7 +121,27 @@ int main(void)
     int size, n;
 
     tw_begin("encoding");
-    tw_expect_atleast(35);
+    tw_expect_atleast(45);
+
+    tw_case("every committed fuzz corpus input still expands safely");
+    {
+	char dir[256];
+	int c;
+
+	/* Not being able to FIND the corpus is a failure, not a skip: a replay
+	 * that read no files reporting success is the false green this whole
+	 * suite exists to prevent. */
+	CHECK_MSG(tw_corpus_dir("encoding", dir, sizeof dir),
+		  "could not find test/fuzz/corpus/encoding from the working"
+		  " directory -- the replay would have proved nothing");
+	if (dir[0]) {
+	    c = tw_corpus_run(dir, corpus_expand, corpus_report);
+	    /* %.100s: tw_fail_ formats into 256 bytes and -Werror rejects an
+	     * unbounded %s of a 256-byte array. CHECK_STR bounds the same way. */
+	    CHECK_MSG(c > 0, "corpus directory %.100s held no inputs", dir);
+	    CHECK_INT(corpus_replayed, c);
+	}
+    }
 
     /* ================================================================== *
      * 1. The jc-44 bounds fix.

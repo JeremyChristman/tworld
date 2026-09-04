@@ -66,6 +66,7 @@
  */
 
 #include	"tw_test.h"
+#include	"tw_corpus.h"
 
 /* NOTE: savedir and readonly are DEFINED BY solution.c itself (not by tworld.c,
  * as the extern declarations in solution.h might suggest), so this file must not
@@ -144,6 +145,41 @@ static void addmove(solutioninfo *s, int dir, int when)
     addtomovelist(&s->moves, act);
 }
 
+/* --- fuzz corpus replay -------------------------------------------------- *
+ *
+ * Every input under test/fuzz/corpus/solution/ goes through expandsolution()
+ * here, on every platform, with no clang and no sanitizer. That is what makes a
+ * libFuzzer finding permanent: the fuzzer discovers it once on Linux, the input
+ * is committed, and this replays it forever. See test/tw_corpus.h.
+ *
+ * The guard bytes are a real oracle in this file, because expandsolution()
+ * reads directly out of the buffer tw_corpus.h fenced -- an over-write within
+ * 64 bytes of either end is caught here without ASan.
+ */
+static int corpus_replayed = 0;
+
+static void corpus_expand(twcorpusinput const *in)
+{
+    gamesetup		g;
+    solutioninfo	s;
+
+    memset(&g, 0, sizeof g);
+    memset(&s, 0, sizeof s);
+    g.number = 1;
+    g.solutiondata = in->data;
+    g.solutionsize = in->size;
+    if (expandsolution(&s, &g))
+	destroymovelist(&s.moves);
+}
+
+static int corpus_report(int ok, char const *name)
+{
+    ++corpus_replayed;
+    CHECK_MSG(ok, "fuzz corpus input '%s' wrote outside its own buffer -- the"
+		  " guard bytes around it were modified", name);
+    return ok;
+}
+
 int main(void)
 {
     gamesetup game;
@@ -159,7 +195,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1195);
+    tw_expect_atleast(1204);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -402,6 +438,28 @@ int main(void)
 		free(g.solutiondata);
 	    }
 	    remove(path);
+	}
+    }
+
+    tw_case("every committed fuzz corpus input still parses safely");
+    {
+	char dir[256];
+	int n;
+
+	/* A corpus that cannot be FOUND must fail, not skip. Reporting success
+	 * for a replay that read no files is precisely the false green this
+	 * suite exists to prevent -- and it is the failure mode a corpus rots
+	 * into, silently, the first time someone moves a directory. */
+	CHECK_MSG(tw_corpus_dir("solution", dir, sizeof dir),
+		  "could not find test/fuzz/corpus/solution from the working"
+		  " directory -- the replay would have proved nothing");
+	if (dir[0]) {
+	    n = tw_corpus_run(dir, corpus_expand, corpus_report);
+	    /* %.100s, not %s: tw_fail_ formats into a 256-byte buffer and
+	     * -Werror=format-truncation rejects an unbounded %s of a 256-byte
+	     * array. CHECK_STR bounds its operands the same way. */
+	    CHECK_MSG(n > 0, "corpus directory %.100s held no inputs", dir);
+	    CHECK_INT(corpus_replayed, n);
 	}
     }
 

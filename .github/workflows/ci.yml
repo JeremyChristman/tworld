@@ -148,6 +148,54 @@ jobs:
           chmod +x test/run-sanitizers.sh
           ./test/run-sanitizers.sh
 
+  # ⭐ FUZZING THE FILE PARSERS -- the generalization of what the sanitizer job
+  # proved.
+  #
+  # Every defect this fork has shipped a fix for lives in the same surface.
+  # jc-44 was three (a .tws stack smash, a .dat pointer advanced by a
+  # file-supplied size, an RLE guard two bytes short); jc-45 was an unguarded
+  # map index out of a .dat; jc-46 was signed-shift UB in the .tws seed and time
+  # reads. Four releases, one root cause: this program's job is parsing files
+  # that strangers made.
+  #
+  # Five of those six were found by a person reading a parser and guessing which
+  # line was wrong. The sixth was found by UBSan in seconds. This job stops
+  # guessing entirely: generate inputs until the program itself objects.
+  #
+  # 🔴 THE COMMITTED CORPUS IS THE PART THAT LASTS. libFuzzer generates fresh
+  # inputs each run, so a green run here proves nothing durable. Every input
+  # that ever mattered is committed under test/fuzz/corpus/ and replayed by the
+  # ORDINARY unit suite on both platforms (test/tw_corpus.h), which is where a
+  # finding actually becomes a regression test. This job discovers; that one
+  # remembers.
+  #
+  # Linux-only for three reasons, not one: no libasan, no libFuzzer, and
+  # fuzz_leveldata.c uses fmemopen() to avoid a disk write per execution.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Fuzz the .tws and .dat parsers
+        # 60s per target. Long enough to catch a shallow regression on every
+        # push, short enough that nobody starts skipping CI. A real soak is
+        # FUZZ_SECONDS=600 run by hand, or a scheduled job if this ever earns
+        # one -- it has not yet, and pretending otherwise would be theater.
+        run: |
+          clang --version | head -1
+          chmod +x test/run-fuzz.sh
+          FUZZ_SECONDS=60 ./test/run-fuzz.sh
+
+      - name: Upload any reproducers
+        # Only on failure, and this is the whole value of a red run: the exact
+        # bytes that broke it, which then get committed to the corpus.
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-findings
+          path: test/fuzz/findings/
+          if-no-files-found: warn
+
   # Does this still build on something that is not Windows?
   #
   # Nothing here ships from Linux and nobody plays it there. The job earns its

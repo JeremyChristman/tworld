@@ -54,6 +54,8 @@ Two more, neither of which is PowerShell:
 ```bash
 test/run-corpus.ps1 ...          # replay differential over the whole collection -- see its header
 test/run-sanitizers.sh           # ASan+UBSan over the unit tests. LINUX ONLY; the CI job runs it
+test/run-fuzz.sh                 # libFuzzer over the .tws/.dat parsers. LINUX ONLY (needs clang)
+FUZZ_SECONDS=0 test/run-fuzz.sh  # just replay the committed corpus, no fuzzing
 ```
 
 🔴 **A UB check you CAN run on Windows**, which this repo wrongly believed impossible until jc-46 —
@@ -182,11 +184,24 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **10 unit runs, 17,059 checks; 12 end-to-end cases, 35 checks; 0 failures.**
+Current state: **10 unit runs, 17,088 checks; 12 end-to-end cases, 35 checks; 0 failures.**
 
-There is a third layer that does not run from `run-tests.ps1`, because it cannot run on Windows in
-full: **`test/run-sanitizers.sh`**, driven by the `sanitizers` job in CI. It rebuilds the unit tests
-under ASan+UBSan on Linux. It found jc-46 on its first run. See §8.
+Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
+
+- **`test/run-sanitizers.sh`** — the unit suite rebuilt under ASan+UBSan (the `sanitizers` job). It
+  found jc-46 on its first run. See §8.
+- **`test/run-fuzz.sh`** — libFuzzer over `expandsolution()`, `readleveldata()` and
+  `expandleveldata()` (the `fuzz` job), 60 s per target per push.
+
+🔴 **But the fuzz corpus is replayed BY the unit suite, on Windows, every run.** Every seed and every
+reproducer lives in `test/fuzz/corpus/<target>/`, and `solution_test.c`, `series_test.c` and
+`encoding_test.c` each replay their directory through `test/tw_corpus.h` — behind 64 poison bytes on
+each side of the input, so an over-write is caught with no sanitizer at all. **A finding is not fixed
+until its input is in that corpus.** libFuzzer discovers; the corpus remembers.
+See [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
+
+⚠ When you add a corpus input, the replay case's check count goes up — raise `tw_expect_atleast` in
+that test. Do not lower it.
 
 ### How a unit test is built
 
@@ -266,7 +281,12 @@ misreading in the parser is faithfully reproduced and never caught.
   has done it.
 - **No GUI is tested.** Everything in `oshw-qt/` — the score table's column spans, the color picker,
   the tileset menu, the death counter — is verified by hand only.
-- **`series.c`'s `.dac` parser has no unit test**, though the e2e layer exercises it.
+- **`series.c`'s `.dac` parser has no unit test**, though the e2e layer exercises it. It is also the
+  one untrusted-input parser with **no fuzz target** — `.dac` is line-based text rather than a
+  binary record, so it needs a different harness. That is the obvious next target.
+- **Neither engine is fuzzed, only the parsers.** A crash reachable from a malformed level that gets
+  *past* `readleveldata()` and into `mslogic.c` or `lxlogic.c` would not be found by anything here.
+  jc-45's defect was exactly that shape and was found by hand.
 
 ### Coverage — what the suite actually reaches
 
