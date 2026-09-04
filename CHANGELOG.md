@@ -21,6 +21,72 @@ stay attached to something someone can see.
 
 ---
 
+## jc-46 — 2026-09-04
+
+### Fixed
+
+- **Signed-shift overflow reading a `.tws`.** `game->solutiondata[N]` is an `unsigned char`, which
+  integer-promotes to a **signed** `int`, so `solutiondata[11] << 24` on a high byte of `0x80` or
+  more overflowed into the sign bit — undefined behavior. Two sites: the RNG seed in
+  `expandsolution()` and the recorded best time in `readsolution()`. Both now assemble in unsigned
+  types, the idiom `fileio.c:308` already used. **Upstream's**, on the 2.3.1 import.
+
+  **Not a corner case:** seeds are random 32-bit values, so this fired on roughly *half of every
+  solution file ever recorded* — ordinary files, not malformed ones. It was also sign-extending:
+  `rndseed` is `unsigned long`, 64 bits on LP64, so a high-bit seed widened to `0xFFFFFFFF........`
+  there.
+
+  **No replay was ever affected, and that is not luck** — `restartprng()` masks the seed with
+  `0x7FFFFFFF` (`play.c:153`) and the writer keeps only four bytes (`solution.c:406`), so the
+  damaged bits were discarded at both consumers. The fix is for the undefined step in the middle,
+  which a future compiler is entitled to treat as license.
+
+### Notes
+
+- 🔴 **This is the first defect found by a sanitizer rather than by reading the code**, and it
+  arrived on the sanitizer job's first run. Every previous memory-safety fix here (jc-44's three,
+  jc-45's one) was found by a human suspecting a specific line and then building a test that could
+  observe it — a method that works and does not scale. This one was in a line nobody had reason to
+  suspect, and the test that exposed it (`0xDEADBEEF`, whose `0xDE` is the "222" in the report) had
+  been passing for weeks. That is the whole argument for the job.
+- **Sanitizers are not as Linux-only as this repo claimed.** `-fsanitize=address` genuinely cannot
+  run under mingw-w64, which ships no `libasan` — but `-fsanitize=undefined` **with
+  `-fsanitize-undefined-trap-on-error`** needs no runtime library and works on Windows today. That
+  is how the fix was mutation-tested locally: the pre-fix build dies with `SIGILL`, the post-fix
+  build passes all 1,195 checks.
+- **Replay-neutral, measured over the whole collection.** jc-45 against jc-46: **289 sets, 18,640
+  valid / 1,107 invalid under both, and 0 of 303 per-set outputs differ.**
+- `test/run-sanitizers.sh` now passes `-Dstricmp=strcasecmp` on non-Windows, matching what
+  `CMakeLists.txt` does for every non-Windows build. Without it `series_test` failed to link.
+
+### Fixed — tooling and tests
+
+None of these changes the executable. All three were found by the jc-46 review rather than by the
+change itself.
+
+- 🔴 **`package.ps1` defaulted to `-Exe build-jc35\tworld2.exe`** — a gitignored leftover of the
+  desync project. The **documented** release command, `package.ps1` with no arguments, therefore
+  staged a binary from ten builds and three weeks earlier; packaging jc-46 produced a zip whose exe
+  reported `build jc-35`. Nothing ever shipped wrong, because `release.yml` passes `-Exe` explicitly
+  and because the tag check refused the stale exe — that check is the entire reason this was a caught
+  mistake rather than a shipped one. The default is now `build-static\tworld2.exe`, which is what
+  `build.ps1` with no arguments produces.
+- 🔴 **`series_test.c` compiled a `series.c` the released game does not contain.** `CMakeLists.txt`
+  defines `TWPLUSPLUS` unconditionally for the shipped Qt build, and `series.c` branches on it three
+  times — so the test was building `gameseriescmp_name()`, which never ships, while never building
+  `removefilenamesuffixes()`, which does. Same trap `CLAUDE.md` §3.3 documents for `WIN32` and
+  `fileio.c`; `input_test.c` had carried the flag correctly all along. Fixed with the one-line
+  `TESTFLAGS` declaration the convention already provides.
+- **`readsolution()`'s `besttime` read had no coverage at all**, so half of this release's own fix
+  was untested: nothing in the suite opened a `.tws` through that path, and `test/mkfixture.c` writes
+  zeros at offsets 12–15, so even the end-to-end layer never saw a high byte there. A file-based case
+  now does. ⚠ It cannot tell fixed from broken *by value* — both forms land in an `int` of the same
+  width — so its actual job is to make the line **execute** with bit 31 set, which is what gives the
+  sanitizer something to catch. Verified by reverting that hunk alone: `SIGILL`.
+- `test/run-sanitizers.sh` no longer prints "clean under ASan+UBSan" regardless of what ran. The
+  label is derived from the flags, so overriding `SAN` with UBSan alone — the combination that works
+  on Windows — reports UBSan alone.
+
 ## jc-45 — 2026-09-04
 
 ### Fixed

@@ -593,6 +593,69 @@ exactly what's mine:
    `BHLS1` #148 is the strongest single data point: a level carrying a malformed wiring whose
    recorded solution is *valid*, and it still replays identically.
 
+18. **Signed-shift overflow assembling a `.tws`'s 32-bit fields** (`solution.c`,
+   `test/solution_test.c`). Upstream's, on the 2.3.1 import.
+
+   `game->solutiondata` is `unsigned char *`. Each byte **integer-promotes to a signed `int`**, so
+   `solutiondata[11] << 24` with a high byte of `0x80` or more shifts into the sign bit — undefined
+   behavior, not merely ugly. Two sites had it: the RNG seed in `expandsolution()` and the recorded
+   best time in `readsolution()`. `fileio.c:308` already had the correct idiom
+   (`(unsigned int)byte << 24`) sitting in the same tree.
+
+   **Seeds are random 32-bit values, so this fired on roughly half of every solution file ever
+   recorded** — ordinary files, not damaged ones. There was a second-order effect too: `rndseed` is
+   `unsigned long`, which is **64 bits on LP64**, so a negative `int` sign-extended to
+   `0xFFFFFFFF........` on Linux while being harmless on Windows, where `unsigned long` is 32 bits.
+
+   **No replay was ever affected, and that is not luck.** Both consumers discard the damaged bits:
+   `restartprng()` masks with `0x7FFFFFFF` (`play.c:153`), and the writer keeps only the low four
+   bytes (`solution.c:406`). `besttime` is an `int`, and converting the assembled `unsigned int`
+   back to it is *implementation-defined* rather than undefined — gcc's documented modulo wrap
+   reproduces exactly the bits the old expression produced, so a `.tws` claiming a time with bit 31
+   set is still read as the same negative `int` it always was. The fix removes the undefined step in
+   the middle; it does not change any value.
+
+   🔴 **THIS IS THE FIRST DEFECT HERE FOUND BY A TOOL RATHER THAN BY A PERSON.** Every earlier one —
+   jc-44's three, jc-45's one — was found by reading a parser, suspecting a specific line, and then
+   hand-building a test that could observe that specific thing. That method works and it does not
+   scale. UndefinedBehaviorSanitizer found this on **the first run of the sanitizer job**, in a line
+   nobody had any reason to look at, and it did so through an ordinary header-fields case that had
+   been green for weeks: the `222` in the report is the `0xDE` of that case's `0xDEADBEEF` seed. The
+   test was already exercising the bug and had no way to say so.
+
+   ⚠ **And the "sanitizers cannot run on Windows" claim was half wrong.** `-fsanitize=address`
+   genuinely cannot — mingw-w64 ships no `libasan`, and the link fails with `cannot find -lasan`.
+   But `-fsanitize=undefined` **combined with `-fsanitize-undefined-trap-on-error`** lowers each
+   check to `__builtin_trap()` and needs **no runtime library at all**. That is how this fix was
+   mutation-tested locally, and the result is unambiguous: the pre-fix build dies with
+   `SIGILL` (exit 132) having printed nothing, and the post-fix build passes all 1,195 checks.
+
+   ⚠ **The Windows-only regression test is weaker than it looks, by construction.** Because
+   `unsigned long` is 32 bits there, old and new code produce identical values, so the new case's
+   value assertions cannot fail on the maintainer's machine — they are a real oracle only on LP64 or
+   under a sanitizer. The boundary is walked explicitly (`0x7FFFFFFF`, `0x80000000`, `0x80000001`,
+   `0xDEADBEEF`, `0xFF000000`, `0xFFFFFFFF`) because every case that existed before used a seed
+   below the sign bit, and the long round-trip case used `0x7FFFFFFF` — one short of the bit that
+   matters. Same shape of gap as the sub-2048 move gaps found in jc-44's review.
+
+   **Replay-neutral, measured over the whole collection.** jc-45 against jc-46: **289 sets, 18,640
+   valid and 1,107 invalid under both**, and **0 of 303 per-set outputs differ**.
+
+   ⭐ **The review of this one-line-per-site change found three things the change itself did not**,
+   which is the argument for reviewing small fixes as carefully as large ones:
+
+   * **`package.ps1` defaulted to a build directory from the desync project** (`build-jc35\`), so the
+     documented release command staged an exe reporting `build jc-35`. Only the tag check and
+     `release.yml`'s explicit `-Exe` stood between that and a mislabeled download.
+   * **`series_test.c` was compiling the wrong half of `series.c`** for want of `-DTWPLUSPLUS` —
+     testing `gameseriescmp_name()`, which never ships, and never testing
+     `removefilenamesuffixes()`, which does. Exactly the trap in `CLAUDE.md` §3.3, one file over.
+   * **`readsolution()`'s `besttime` read had no coverage**, so half of this very fix was unpinned:
+     nothing opened a `.tws` through that path, and `mkfixture.c` writes zeros at offsets 12–15. The
+     new file-based case cannot distinguish fixed from broken *by value* — same-width `int` either
+     way — so its job is to make the line **execute** with bit 31 set and give the sanitizer
+     something to see. Reverting that hunk alone now produces `SIGILL`; before, nothing went red.
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:

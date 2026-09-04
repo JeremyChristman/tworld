@@ -17,7 +17,17 @@
  * series.c and fileio.c are compiled only as C by CMake, and both rely on C's
  * implicit void* conversion. See docs/adr/0004.
  *
- * TESTFLAGS: -Wno-use-after-free
+ * TESTFLAGS: -Wno-use-after-free -DTWPLUSPLUS
+ *
+ * 🔴 -DTWPLUSPLUS IS NOT DECORATION, and its absence was a real hole found by
+ * the jc-46 review. CMakeLists.txt defines it unconditionally for the shipped
+ * Qt build, and series.c branches on it in three places -- so without it this
+ * test compiled a series.c the released game does not contain. Concretely:
+ * removefilenamesuffixes() (series.c:68) existed only in the shipped build and
+ * was never compiled here, while gameseriescmp_name() (series.c:668) is the
+ * opposite and was compiled here despite never shipping. That is the same trap
+ * CLAUDE.md section 3.3 documents for WIN32 and fileio.c, one file over.
+ * input_test.c has carried this flag for the same reason all along.
  */
 
 #include	"tw_test.h"

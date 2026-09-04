@@ -59,7 +59,17 @@ the same code in a fraction of the time. What the static link changes is packagi
   `release.yml`, which runs with write permissions and ends by **signing a provenance attestation**
   for the bytes it produced. An action that could change underneath that job would make the signature
   vouch for whatever it changed into, which is worse than having no attestation at all.
-- Sanitizers are unavailable on this path: mingw-w64 GCC ships no `libasan` or `libubsan`, and no
-  libFuzzer. ASan/UBSan and a fuzz target over the `.dat` and `.tws` parsers need a Linux build that
-  does not exist yet. The upgrade path is written at the top of `codeql.yml`, and the gap is stated
-  in `SECURITY.md` rather than left implied.
+- Sanitizers are **mostly** unavailable on this path, and the distinction turned out to matter.
+  mingw-w64 GCC ships no `libasan`, no `libubsan` and no libFuzzer, so `-fsanitize=address` fails at
+  link time with `cannot find -lasan`. AddressSanitizer and a fuzz target over the `.dat` and `.tws`
+  parsers therefore need Linux, which is why the `sanitizers` and `linux-build` jobs exist.
+
+  🔴 **But `-fsanitize=undefined` does not need `libubsan` if you do not want a readable report.**
+  Adding `-fsanitize-undefined-trap-on-error` lowers every check to `__builtin_trap()`, so the
+  instrumented binary needs **no runtime library at all** and builds and runs under mingw-w64 today.
+  You lose the diagnostic — the process just dies with `SIGILL` — but as a **pass/fail gate, and
+  especially as a mutation check on a UB fix, it works on Windows.** This ADR previously said
+  sanitizers were unavailable here full stop; that was too strong, and it was believed for long
+  enough that jc-46's fix was nearly shipped without a local mutation proof. The upgrade path for
+  CodeQL is written at the top of `codeql.yml`, and the remaining gap is stated in `SECURITY.md`
+  rather than left implied.

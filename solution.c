@@ -286,9 +286,21 @@ int expandsolution(solutioninfo *solution, gamesetup const *game)
     solution->flags = game->solutiondata[6];
     solution->rndslidedir = indextodir(game->solutiondata[7] & 7);
     solution->stepping = (game->solutiondata[7] >> 3) & 7;
-    solution->rndseed = game->solutiondata[8] | (game->solutiondata[9] << 8)
-					      | (game->solutiondata[10] << 16)
-					      | (game->solutiondata[11] << 24);
+    /* MOD (Jeremy, jc-46): assemble in unsigned. Each byte promotes to a
+     * SIGNED int, so << 24 on a byte >= 0x80 overflows into the sign bit --
+     * undefined behavior, and UndefinedBehaviorSanitizer halts on it. Seeds
+     * are random 32-bit values, so this fired on roughly half of every
+     * solution file ever recorded, not on malformed ones. The signed result
+     * also sign-extended on the way in: rndseed is unsigned long, 64 bits on
+     * LP64, so a negative int widened to 0xFFFFFFFF........ there. No replay
+     * was ever affected -- restartprng() masks with 0x7FFFFFFF and the writer
+     * below keeps only four bytes -- but it is still undefined, and a compiler
+     * is free to stop being kind about it. fileio.c:308 already reads a
+     * 32-bit field this way; this is the same idiom. */
+    solution->rndseed = (unsigned long)game->solutiondata[8]
+			    | ((unsigned long)game->solutiondata[9] << 8)
+			    | ((unsigned long)game->solutiondata[10] << 16)
+			    | ((unsigned long)game->solutiondata[11] << 24);
 
     initmovelist(&solution->moves);
     act.when = -1;
@@ -499,9 +511,18 @@ static int readsolution(fileinfo *file, gamesetup *game)
     if (size == 6)
 	return TRUE;
 
-    game->besttime = game->solutiondata[12] | (game->solutiondata[13] << 8)
-					    | (game->solutiondata[14] << 16)
-					    | (game->solutiondata[15] << 24);
+    /* MOD (Jeremy, jc-46): the same signed-shift overflow as the seed in
+     * expandsolution(), and EQUALLY undefined -- not a milder version of it.
+     * The only reason it never showed is that the result lands in an int of the
+     * same width either way, so the bits agreed by coincidence of types.
+     * Assembling in unsigned and converting back is implementation-defined
+     * rather than undefined, and gcc's documented modulo wrap reproduces
+     * exactly the bits the old expression produced. A .tws claiming a time with
+     * bit 31 set is still read as the same negative int it always was. */
+    game->besttime = (int)((unsigned int)game->solutiondata[12]
+			    | ((unsigned int)game->solutiondata[13] << 8)
+			    | ((unsigned int)game->solutiondata[14] << 16)
+			    | ((unsigned int)game->solutiondata[15] << 24));
     size -= 16;
     if (!game->number && !*game->passwd) {
 	game->sgflags |= SGF_SETNAME;

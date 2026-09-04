@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-45
+  Tile World  --  Jeremy Christman's fork                    build jc-46
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,33 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-46  --  How solution files are taken apart
+----------------------------------------------
+
+  * A HOUSEKEEPING FIX WITH NOTHING TO SEE. Every solution file records the
+    random seed the level was played with, stored as four separate bytes
+    that the game glues back together when it reads the file. The way it
+    glued them was wrong in a way the C language calls "undefined": for
+    about half of all possible seeds the arithmetic overflowed a signed
+    number. Every compiler this program has ever been built with produced
+    the right answer anyway, and both places that use the seed discard the
+    affected bits in any case, so nothing you can observe changes.
+
+  * IT IS FIXED REGARDLESS, because "the compiler is kind about it today" is
+    not a guarantee and a future one is free to stop. The identical mistake
+    in reading a recorded best time is fixed alongside it.
+
+  * HOW IT WAS FOUND is the part worth reporting. This is the first build
+    checked by a sanitizer -- a compiler mode that watches the program run
+    and reports the instant it does something undefined. It found this on
+    its very first run, in a line nobody had any reason to suspect, through
+    an ordinary test that had been passing for weeks.
+
+  * NOTHING ABOUT PLAY CHANGES, and that was measured rather than assumed:
+    303 solution files across 289 level sets -- 18,640 solutions that replay
+    correctly and 1,107 that do not -- give byte-for-byte identical results
+    before and after this build.
 
 jc-45  --  The last place a damaged level file could read too far
 -----------------------------------------------------------------

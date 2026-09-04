@@ -114,18 +114,26 @@ jobs:
           path: test-results/
           if-no-files-found: warn
 
-  # 🔴 THE ONLY PLACE SANITIZERS CAN RUN AT ALL.
+  # 🔴 THE ONLY PLACE AddressSanitizer CAN RUN.
   #
-  # This project is built with mingw-w64 GCC, which ships no libasan and no
-  # libubsan -- `-fsanitize=address` fails at link time with "cannot find
-  # -lasan". So AddressSanitizer and UndefinedBehaviorSanitizer are a
-  # Linux-only capability here, and this job is the whole of it.
+  # mingw-w64 GCC ships no libasan, so `-fsanitize=address` fails at link time
+  # with "cannot find -lasan", making ASan a Linux-only capability here.
   #
-  # It matters more than the coverage number. The program's main job is parsing
-  # files strangers made, and the four memory-safety defects fixed in jc-44 and
-  # jc-45 were each found by reading the code and then hand-building a test that
-  # could observe the specific defect. ASan observes the entire class without
-  # anybody having to suspect it first.
+  # UBSan is NOT Linux-only, which this repository believed until jc-46:
+  # `-fsanitize=undefined` paired with `-fsanitize-undefined-trap-on-error`
+  # needs no runtime library and runs fine under mingw-w64. See docs/adr/0010.
+  # This job still runs both, because a readable report beats a bare SIGILL
+  # when something actually fails.
+  #
+  # ⭐ THIS JOB PAID FOR ITSELF ON ITS FIRST RUN, and the argument it used to
+  # make in this comment is now a measurement. The four memory-safety defects
+  # fixed in jc-44 and jc-45 were each found by reading a parser, suspecting a
+  # specific line, and hand-building a test that could observe that specific
+  # thing -- a method that works and does not scale. The claim was that a
+  # sanitizer would observe the whole class without anybody suspecting
+  # anything first. That is exactly what happened: the first run found
+  # signed-shift undefined behavior in solution.c's .tws seed read (jc-46), in
+  # a line nobody had looked at, through a test that had been green for weeks.
   #
   # Needs no Qt and no SDL: the unit tests compile the source under test
   # directly (docs/adr/0003), so gcc alone instruments the engine and the

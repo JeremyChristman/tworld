@@ -9,18 +9,28 @@ Assembles the release zip that gets attached to the GitHub release:
         README.txt
         COPYING
 
-The exe must already be built (see FORK.md -- MSYS2 + static Qt). Point -Exe at
-it; the default is the usual build directory.
+The exe must already be built (see FORK.md -- MSYS2 + static Qt). The default is
+build-static\tworld2.exe, which is exactly what `build.ps1` with no arguments
+produces and what ships; point -Exe somewhere else only deliberately.
 
     powershell -ExecutionPolicy Bypass -File package.ps1
     powershell -ExecutionPolicy Bypass -File package.ps1 -Exe build-jc35\tworld2.exe
+
+🔴 THE DEFAULT USED TO BE build-jc35\tworld2.exe, and that was a trap. It is one
+of the many gitignored build-* directories the desync project left behind, so on
+the maintainer's machine the DOCUMENTED release command -- package.ps1 with no
+arguments, which is how RELEASING.md and CLAUDE.md both write it -- silently
+staged a binary from ten builds and three weeks earlier. Nothing shipped wrong
+only because release.yml passes -Exe explicitly and because the tag check below
+refused the stale exe. Found while packaging jc-46: it reported `build jc-35`.
+That check is the reason this was a caught mistake instead of a shipped one.
 
 The tag comes from FORK_BUILD_TAG in fork.h -- the same #define the program itself
 compiles in -- so the zip cannot be named for a build it does not contain, and
 packaging FAILS if README.txt's header does not name that same tag.
 #>
 param(
-    [string]$Exe = "build-jc35\tworld2.exe",
+    [string]$Exe = "build-static\tworld2.exe",
     [string]$Dlls = "C:\msys64\mingw64\bin",
     [string]$Strip = "C:\msys64\mingw64\bin\strip.exe",
     [switch]$SkipTests

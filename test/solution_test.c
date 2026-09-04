@@ -159,7 +159,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1170);
+    tw_expect_atleast(1195);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -288,6 +288,121 @@ int main(void)
 	CHECK_INT(sol.stepping, 3);
 	CHECK_INT(sol.rndslidedir, WEST);
 	destroymovelist(&sol.moves);
+    }
+
+    /* 🔴 REGRESSION, jc-46. The seed is the only field assembled out of four
+     * bytes, and the old expression shifted bytes that had promoted to a
+     * SIGNED int -- solutiondata[11] << 24 with a high byte >= 0x80 overflowed
+     * into the sign bit, which is undefined. UndefinedBehaviorSanitizer caught
+     * it on the first Linux run this project ever made, on the 0xDE of the
+     * 0xDEADBEEF case immediately above.
+     *
+     * Every other case in this file used a seed under 0x80000000, and the long
+     * round-trip below happens to use 0x7FFFFFFF -- one short of the bit that
+     * matters. So the boundary gets walked explicitly here.
+     *
+     * This is a real oracle with no sanitizer at all: rndseed is unsigned
+     * long, which is 64 bits on LP64, so the old code sign-extended a high-bit
+     * seed to 0xFFFFFFFF........ and these assertions fail on Linux whether or
+     * not the sanitizer is switched on. */
+    tw_case("a seed with the high bit set survives byte reassembly");
+    {
+	unsigned char const moves[] = { 0x01 };
+	static unsigned long const seeds[] = {
+	    0x7FFFFFFFUL, 0x80000000UL, 0x80000001UL,
+	    0xDEADBEEFUL, 0xFF000000UL, 0xFFFFFFFFUL
+	};
+	for (i = 0 ; i < (int)(sizeof seeds / sizeof *seeds) ; ++i) {
+	    setsolution(&game, moves, 1, 0x00, 0, seeds[i]);
+	    CHECK_INT(expandsolution(&sol, &game), TRUE);
+	    CHECK_MSG(sol.rndseed == seeds[i],
+		      "seed %lu came back as %lu", seeds[i], sol.rndseed);
+	    /* Whatever width unsigned long is, nothing above bit 31 may appear. */
+	    CHECK_MSG((sol.rndseed & ~0xFFFFFFFFUL) == 0,
+		      "seed %lu sign-extended past bit 31", seeds[i]);
+	    destroymovelist(&sol.moves);
+	}
+
+	/* And it must still be that value after a write and a read back. */
+	memset(&game, 0, sizeof game);
+	initmovelist(&sol.moves);
+	sol.rndseed = 0xFEDCBA98UL;
+	sol.flags = 0;
+	sol.rndslidedir = NORTH;
+	sol.stepping = 0;
+	addmove(&sol, NORTH, 0);
+	CHECK_INT(contractsolution(&sol, &game), TRUE);
+	CHECK_INT(game.solutiondata[11], 0xFE);
+	CHECK_INT(expandsolution(&back, &game), TRUE);
+	CHECK_MSG(back.rndseed == 0xFEDCBA98UL,
+		  "high-bit seed round-tripped to %lu", back.rndseed);
+	destroymovelist(&sol.moves);
+	destroymovelist(&back.moves);
+	free(game.solutiondata);
+	game.solutiondata = NULL;
+    }
+
+    /* 🔴 REGRESSION, jc-46 -- and the ONLY thing in this repository that
+     * reaches the second half of that fix. besttime is assembled in
+     * readsolution(), which needs a real file, so nothing touched it: this file
+     * never opened one, test/mkfixture.c writes all-zero bytes at offsets 12-15
+     * so the end-to-end layer never sees a high byte either, and
+     * series_test.c stubs readsolutions() out entirely. That hunk could have
+     * been reverted and shipped without one thing going red.
+     *
+     * ⚠ ON ANY MAINSTREAM COMPILER THIS CANNOT TELL FIXED FROM BROKEN BY
+     * VALUE. Both forms assemble into an int of the same width, so the bits
+     * agree and the assertion below passes either way. Its real job is to make
+     * the line EXECUTE with bit 31 set, which is what gives
+     * test/run-sanitizers.sh something to catch. Do not mistake it for a
+     * value oracle, and do not delete it for "not testing anything". */
+    tw_case("a recorded best time with the high bit set is read back (jc-46)");
+    {
+	char const *path = "tw_besttime_test.tws";
+	FILE *f;
+
+	f = fopen(path, "wb");
+	if (!f) {
+	    tw_skip("could not create a temporary .tws in the working directory");
+	} else {
+	    /* A 32-bit record length, then the record: level number, password,
+	     * flags, slide/stepping, the seed, the time, one move byte. 17 and
+	     * not 16 because readsolution() refuses any size <= 16 that is not
+	     * exactly 6. */
+	    fileinfo file;
+	    gamesetup g;
+	    unsigned char rec[17];
+	    unsigned char len[4];
+
+	    memset(rec, 0, sizeof rec);
+	    rec[0] = 0x01;                                  /* level number 1 */
+	    rec[2] = 'A'; rec[3] = 'B'; rec[4] = 'C'; rec[5] = 'D';
+	    rec[8] = 0x11; rec[9] = 0x22; rec[10] = 0x33; rec[11] = 0xC4;
+	    /* 0xFEDCBA98: bit 31 set, which is the entire point of the case. */
+	    rec[12] = 0x98; rec[13] = 0xBA; rec[14] = 0xDC; rec[15] = 0xFE;
+	    rec[16] = 0x01;
+	    len[0] = (unsigned char)(sizeof rec); len[1] = 0; len[2] = 0; len[3] = 0;
+	    fwrite(len, 1, 4, f);
+	    fwrite(rec, 1, sizeof rec, f);
+	    fclose(f);
+
+	    clearfileinfo(&file);
+	    file.name = (char*)path;
+	    file.fp = fopen(path, "rb");
+	    if (!file.fp) {
+		tw_skip("could not reopen the temporary .tws");
+	    } else {
+		memset(&g, 0, sizeof g);
+		CHECK_INT(readsolution(&file, &g), TRUE);
+		CHECK_INT(g.number, 1);
+		CHECK_MSG(g.besttime == (int)0xFEDCBA98UL,
+			  "besttime came back as %d, expected %d",
+			  g.besttime, (int)0xFEDCBA98UL);
+		fclose(file.fp);
+		free(g.solutiondata);
+	    }
+	    remove(path);
+	}
     }
 
     /* ================================================================== *

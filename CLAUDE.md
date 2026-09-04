@@ -49,6 +49,24 @@ powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock in
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit layer
 ```
 
+Two more, neither of which is PowerShell:
+
+```bash
+test/run-corpus.ps1 ...          # replay differential over the whole collection -- see its header
+test/run-sanitizers.sh           # ASan+UBSan over the unit tests. LINUX ONLY; the CI job runs it
+```
+
+🔴 **A UB check you CAN run on Windows**, which this repo wrongly believed impossible until jc-46 —
+`-fsanitize=undefined` needs no `libubsan` if you pair it with `-fsanitize-undefined-trap-on-error`:
+
+```bash
+gcc -std=gnu11 -w -I test/stub -fsanitize=undefined -fsanitize-undefined-trap-on-error \
+    -g -O1 -x c -o /tmp/t.exe test/solution_test.c && /tmp/t.exe
+```
+
+Undefined behavior becomes `SIGILL` (exit 132) instead of a readable report, which is all a gate or
+a mutation check needs. `-w` is there because `-O1` turns on `-Wformat-truncation` in `tw_test.h`.
+
 `build.ps1` does three things by hand that are easy to forget and that fail confusingly:
 
 1. **Puts `C:\msys64\mingw64\bin` first on `PATH`.** The gcc driver cannot spawn `cc1` unless its own
@@ -164,7 +182,11 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **8 unit runs, 16,877 checks; 11 end-to-end cases, 32 checks; 0 failures.**
+Current state: **10 unit runs, 17,059 checks; 12 end-to-end cases, 35 checks; 0 failures.**
+
+There is a third layer that does not run from `run-tests.ps1`, because it cannot run on Windows in
+full: **`test/run-sanitizers.sh`**, driven by the `sanitizers` job in CI. It rebuilds the unit tests
+under ASan+UBSan on Linux. It found jc-46 on its first run. See §8.
 
 ### How a unit test is built
 
@@ -364,6 +386,24 @@ passed with the guard removed. The one that works **poisons the out-of-bounds by
 `msstate.chipwait` is what the unguarded read sees. Reach for that shape whenever you fix a bound
 here, and assert the layout assumption first so the case fails loudly rather than going quietly
 vacuous.
+
+**Fixed in jc-46**: signed-shift overflow assembling a `.tws`'s 32-bit fields. `solutiondata[N]` is
+an `unsigned char`, which promotes to a **signed** `int`, so `<< 24` on a byte `>= 0x80` overflowed
+the sign bit — in `expandsolution()`'s seed and `readsolution()`'s best time. Upstream's. Seeds are
+random, so it fired on about **half of every solution file ever recorded**; no replay was ever
+affected because both consumers mask the damaged bits off. Replay-neutral: 289 sets, 0 of 303
+outputs changed. See `FORK.md` item 18.
+
+🔴 **jc-46 is the first defect here found by a TOOL rather than by a person**, on the sanitizer
+job's first run, in a line nobody had reason to suspect — through a test that had been green for
+weeks and had no way to report what it was already exercising. Prefer running a tool over reading
+another parser by hand.
+
+⚠ **And "sanitizers cannot run on Windows" is only half true.** `-fsanitize=address` cannot —
+mingw-w64 ships no `libasan`. But **`-fsanitize=undefined -fsanitize-undefined-trap-on-error` needs
+no runtime library** and works here now; each check becomes `__builtin_trap()`, so you get `SIGILL`
+instead of a report, which is all a gate or a mutation check needs. It requires `-O1`, which turns on
+`-Wformat-truncation` in `tw_test.h`, so add `-w` for a one-off run.
 
 What follows is what is still live.
 

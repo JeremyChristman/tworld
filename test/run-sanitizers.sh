@@ -61,7 +61,31 @@ trap 'rm -rf "$OUT"' EXIT
 # exercise this script on a toolchain without a sanitizer runtime, and saying
 # "clean under ASan" after that would be exactly the kind of false green the rest
 # of this suite exists to prevent.
-if [ -n "$SAN" ]; then WHAT="ASan+UBSan"; else WHAT="NO SANITIZERS (SAN was overridden)"; fi
+#
+# And the label is DERIVED from the flags rather than assumed. This used to say
+# "ASan+UBSan" for any non-empty SAN, which meant overriding SAN with UBSan
+# alone -- the one combination that works on Windows, see docs/adr/0010 --
+# printed "clean under AddressSanitizer" after never running it. That is the
+# exact false green the paragraph above refuses to print.
+if [ -z "$SAN" ]; then
+    WHAT="NO SANITIZERS (SAN was overridden)"
+else
+    WHAT=""
+    case "$SAN" in *address*)        WHAT="ASan" ;; esac
+    case "$SAN" in *undefined*)      WHAT="${WHAT:+$WHAT+}UBSan" ;; esac
+    case "$SAN" in *trap-on-error*)  WHAT="$WHAT, trapping (no report)" ;; esac
+    [ -z "$WHAT" ] && WHAT="the flags in SAN"
+fi
+
+# CMakeLists.txt applies this to every non-Windows build, in its else() branch.
+# These tests compile the source under test directly and never go through CMake
+# (docs/adr/0003), so the definition has to be repeated here -- without it
+# series.c fails to link with an undefined reference to stricmp. Windows has
+# stricmp in its CRT, so the script stays runnable there too.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) PORT="" ;;
+    *)                    PORT="-Dstricmp=strcasecmp" ;;
+esac
 
 fail=0
 ran=0
@@ -81,7 +105,7 @@ for test in test/*_test.c; do
         exe="$OUT/$name-${lang//+/p}"
 
         # shellcheck disable=SC2086
-        if ! $comp $std -Wall -Wextra -I test/stub $extra $SAN -x "$lang" -o "$exe" "$test" 2> "$OUT/$name.cc.log"; then
+        if ! $comp $std -Wall -Wextra -I test/stub $PORT $extra $SAN -x "$lang" -o "$exe" "$test" 2> "$OUT/$name.cc.log"; then
             echo "=== $name [$lang] : COMPILE FAILED ==="
             head -25 "$OUT/$name.cc.log"
             fail=$((fail + 1))
@@ -118,7 +142,7 @@ if [ "$fail" -gt 0 ]; then
     exit 1
 fi
 if [ -n "$SAN" ]; then
-    echo "$ran run(s) clean under AddressSanitizer and UndefinedBehaviorSanitizer"
+    echo "$ran run(s) clean under $WHAT"
 else
     echo "$ran run(s) passed, but WITHOUT SANITIZERS -- this proves nothing about memory safety"
 fi
