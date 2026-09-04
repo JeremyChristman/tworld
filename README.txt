@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-46
+  Tile World  --  Jeremy Christman's fork                    build jc-47
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,27 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-47  --  A small leak when a solution will not load
+------------------------------------------------------
+
+  * A SMALL AMOUNT OF MEMORY WAS LOST EVERY TIME A SOLUTION FAILED TO LOAD.
+    When the game reads a recorded solution it first sets aside a small block
+    of memory to hold the moves. If the solution then turned out to be damaged,
+    truncated, or simply empty, the game gave up without handing that block
+    back -- 64 bytes, every time. Nothing you would notice in a session, and
+    nothing that affects play, but it is a leak and it is now fixed.
+
+  * NOTHING ABOUT PLAY CHANGES, and it was measured rather than assumed:
+    303 solution files across 289 level sets -- 18,640 solutions that replay
+    correctly and 1,107 that do not -- give byte-for-byte identical results
+    before and after this build.
+
+  * FOUND BY A MACHINE, NOT A PERSON, which is now true of two builds running.
+    jc-46 was found by a sanitizer; this one was found the first time the
+    project's new fuzzing job ran -- a tool that feeds the game millions of
+    randomly mangled files a minute and watches for it to misbehave. It went
+    through nearly eleven million of them and this is what it caught.
 
 jc-46  --  How solution files are taken apart
 ----------------------------------------------

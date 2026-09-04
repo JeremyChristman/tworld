@@ -21,9 +21,22 @@ stay attached to something someone can see.
 
 ---
 
-## Unreleased
+## jc-47 — 2026-09-04
 
-Nothing here changes the executable. It rides along with the next release that does.
+### Fixed
+
+- **A 64-byte leak every time a solution failed to load.** `prepareplayback()` (`play.c:141`)
+  declares a stack-local `solutioninfo`, and `expandsolution()` has already called `initmovelist()`
+  — which allocates 16 entries — by the time it can fail. Both of that function's early exits
+  returned without freeing it, so the allocation was leaked on **every attempt to play back a
+  solution record that is malformed, truncated, or simply has no moves in it.** Upstream's; `git
+  blame` puts it on the 2.3.1 import. Bounded and small, but unbounded in count.
+
+  🔴 **Found by the fuzz job on its first run**, by LeakSanitizer, from a seed that is now
+  `test/fuzz/corpus/solution/fmt3-packed`. That is two consecutive releases where a tool found a
+  defect nobody had gone looking for: jc-46 by UBSan, jc-47 by LSan. Replay-neutral, measured over
+  the whole collection — jc-46 against jc-47: **289 sets, 18,640 valid / 1,107 invalid under both,
+  0 of 303 per-set outputs differ.**
 
 ### Added — fuzzing the file parsers
 
@@ -40,10 +53,16 @@ nobody had looked at. This is the generalization of the sixth.
 - 🔴 **The committed corpus is the part that lasts.** libFuzzer generates fresh inputs every run, so
   a green run proves nothing durable. Every seed and every reproducer is committed under
   `test/fuzz/corpus/`, and **the ordinary unit suite replays all of it on Windows too**
-  (`test/tw_corpus.h`) — behind 64 poison bytes on each side of the input, so an over-write is caught
-  with no sanitizer at all. **A finding is not fixed until its input is in that corpus.**
+  (`test/tw_corpus.h`). **A finding is not fixed until its input is in that corpus.**
   See [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
-- The suite grew from 17,059 to **17,088 checks** on the strength of the replay alone.
+- ⚠ **What the replay proves is narrow, and the first version of it claimed more.** It proves the
+  inputs still parse without crashing, and that the parser did not modify its own input. It is not a
+  memory oracle; ASan is. The original design fenced each input with 64 poison bytes and claimed that
+  caught over-writes without a sanitizer — measured, no parser here writes to its input at all, so
+  the fences could never fire, **and the 64 legally-allocated bytes sat where ASan's redzone belongs
+  and blunted it.** The buffer is now sized exactly to the input. Retracted in the ADR rather than
+  quietly deleted.
+- The suite grew from 17,059 to **17,089 checks**.
 
 ### Changed
 

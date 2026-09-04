@@ -145,8 +145,28 @@ int prepareplayback(void) {
         return FALSE;
     solution.moves.list = NULL;
     solution.moves.allocated = 0;
-    if (!expandsolution(&solution, state.game) || !solution.moves.count)
+    if (!expandsolution(&solution, state.game) || !solution.moves.count) {
+        /* MOD (Jeremy, jc-47): free the move list before giving up. `solution`
+         * is a STACK LOCAL, and expandsolution() has already called
+         * initmovelist() -- which allocates 16 entries -- by the time it can
+         * fail. Both of these exits therefore dropped the only pointer to that
+         * allocation: 64 bytes leaked per attempt to play back a solution
+         * record that is malformed, truncated, or simply has no moves in it.
+         *
+         * Note expandsolution()'s own `truncated:` path calls initmovelist()
+         * AGAIN before returning FALSE, which resets count but deliberately
+         * KEEPS the buffer -- so the list is live on the failure path, not
+         * merely stale. Upstream's; git blame puts it on the 2.3.1 import.
+         *
+         * destroymovelist() handles a NULL list, which is what the
+         * solutionsize <= 16 exit leaves behind (it returns before
+         * initmovelist() runs), so this is safe on every path that reaches it.
+         *
+         * Found by libFuzzer + LeakSanitizer on the fuzz job's first run, from
+         * a seed that is now test/fuzz/corpus/solution/fmt3-packed. */
+        destroymovelist(&solution.moves);
         return FALSE;
+    }
 
     destroymovelist(&state.moves);
     state.moves = solution.moves;

@@ -78,8 +78,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     /* sol is zeroed above deliberately: initmovelist() takes its
      * no-allocation branch on a non-zero `allocated` with a garbage `list`,
      * and then writes through it. play.c:147 zeroes for the same reason. */
-    if (expandsolution(&sol, &game))
-	destroymovelist(&sol.moves);
+    expandsolution(&sol, &game);
+
+    /* UNCONDITIONALLY, and mirroring the caller in play.c. expandsolution()
+     * has already called initmovelist() by the time it can fail, so freeing
+     * only on TRUE leaks 64 bytes per malformed input -- which is exactly the
+     * defect LeakSanitizer reported here on this job's first run, in the
+     * shipped prepareplayback(). destroymovelist() handles the NULL that the
+     * early solutionsize <= 16 exit leaves behind. */
+    destroymovelist(&sol.moves);
 
     free(copy);
     return 0;

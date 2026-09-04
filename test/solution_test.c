@@ -152,9 +152,13 @@ static void addmove(solutioninfo *s, int dir, int when)
  * libFuzzer finding permanent: the fuzzer discovers it once on Linux, the input
  * is committed, and this replays it forever. See test/tw_corpus.h.
  *
- * The guard bytes are a real oracle in this file, because expandsolution()
- * reads directly out of the buffer tw_corpus.h fenced -- an over-write within
- * 64 bytes of either end is caught here without ASan.
+ * ⚠ BE PRECISE ABOUT WHAT THIS PROVES. It proves these inputs still parse to
+ * completion without crashing or hanging, and that expandsolution() did not
+ * modify its own input. It is NOT a memory oracle: an over-read or over-write
+ * past the allocation is invisible to plain C, and expandsolution() walks its
+ * input through `unsigned char const *` and never writes to it, so the
+ * no-write check passes trivially today. It is here to fail the day that
+ * changes. The memory oracle is ASan, in run-sanitizers.sh and the fuzz job.
  */
 static int corpus_replayed = 0;
 
@@ -168,16 +172,18 @@ static void corpus_expand(twcorpusinput const *in)
     g.number = 1;
     g.solutiondata = in->data;
     g.solutionsize = in->size;
-    if (expandsolution(&s, &g))
-	destroymovelist(&s.moves);
+    expandsolution(&s, &g);
+    /* Unconditional, mirroring play.c's fixed prepareplayback(): the list is
+     * allocated before expandsolution() can fail, so freeing only on TRUE
+     * leaks. That leak was the fuzz job's first finding (jc-47). */
+    destroymovelist(&s.moves);
 }
 
-static int corpus_report(int ok, char const *name)
+static void corpus_report(twcorpusverdict v, char const *name)
 {
     ++corpus_replayed;
-    CHECK_MSG(ok, "fuzz corpus input '%s' wrote outside its own buffer -- the"
-		  " guard bytes around it were modified", name);
-    return ok;
+    CHECK_MSG(v == TW_CORPUS_OK, "fuzz corpus input '%.80s': %s",
+	      name, tw_corpus_why(v));
 }
 
 int main(void)

@@ -184,21 +184,30 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **10 unit runs, 17,088 checks; 12 end-to-end cases, 35 checks; 0 failures.**
+Current state: **10 unit runs, 17,089 checks; 12 end-to-end cases, 35 checks; 0 failures.**
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
 - **`test/run-sanitizers.sh`** — the unit suite rebuilt under ASan+UBSan (the `sanitizers` job). It
   found jc-46 on its first run. See §8.
 - **`test/run-fuzz.sh`** — libFuzzer over `expandsolution()`, `readleveldata()` and
-  `expandleveldata()` (the `fuzz` job), 60 s per target per push.
+  `expandleveldata()` (the `fuzz` job), 60 s per target per push. It found jc-47 on ITS first run —
+  a 64-byte leak in `prepareplayback()` — while the other two targets executed 1.9M and 8.8M inputs
+  clean. **Two releases running, a tool found the defect and no person went looking for it.**
 
 🔴 **But the fuzz corpus is replayed BY the unit suite, on Windows, every run.** Every seed and every
 reproducer lives in `test/fuzz/corpus/<target>/`, and `solution_test.c`, `series_test.c` and
-`encoding_test.c` each replay their directory through `test/tw_corpus.h` — behind 64 poison bytes on
-each side of the input, so an over-write is caught with no sanitizer at all. **A finding is not fixed
+`encoding_test.c` each replay their directory through `test/tw_corpus.h`. **A finding is not fixed
 until its input is in that corpus.** libFuzzer discovers; the corpus remembers.
 See [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
+
+⚠ **Know exactly what that replay proves, because an earlier version of this file overclaimed it.**
+It proves these inputs still parse without crashing or hanging, and that the parser did not modify
+its own input. **It is not a memory oracle** — all three parsers are read-only walkers, so the
+no-write check passes trivially and exists only to catch a future in-place decoder. ASan is the
+memory oracle. And **a corpus of valid files cannot test rejection**: re-introducing jc-44's missing
+bound was measured to leave the corpus replay green while the hand-written `encoding_test` case
+failed. Never replace a behavioral case with a corpus input.
 
 ⚠ When you add a corpus input, the replay case's check count goes up — raise `tw_expect_atleast` in
 that test. Do not lower it.
@@ -424,6 +433,15 @@ mingw-w64 ships no `libasan`. But **`-fsanitize=undefined -fsanitize-undefined-t
 no runtime library** and works here now; each check becomes `__builtin_trap()`, so you get `SIGILL`
 instead of a report, which is all a gate or a mutation check needs. It requires `-O1`, which turns on
 `-Wformat-truncation` in `tw_test.h`, so add `-w` for a one-off run.
+
+**Fixed in jc-47**: a 64-byte leak on every failed playback. `prepareplayback()`'s `solutioninfo` is
+a **stack local**, and `expandsolution()` has already called `initmovelist()` by the time it can
+fail — so both early exits dropped the allocation. Reachable from any malformed, truncated or
+empty solution record. Upstream's. Replay-neutral: 289 sets, 0 of 303 outputs changed.
+
+⭐ **Found by LeakSanitizer on the fuzz job's first run.** With jc-46, that is two consecutive
+releases where a *tool* found a defect nobody had gone looking for. The lesson has now been paid for
+twice: **run the instrument before reading another parser by hand.**
 
 What follows is what is still live.
 

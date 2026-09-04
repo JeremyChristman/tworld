@@ -79,9 +79,18 @@ static int expandraw(unsigned char *data, int size)
  * file that was safe only because of a check in a DIFFERENT file. Feeding this
  * function directly is the only way to see that class.
  *
- * The guard bytes are a real oracle here: expandleveldata() reads straight out
- * of the fenced buffer, so an over-write near either end is caught with no
- * sanitizer at all.
+ * ⚠ WHAT IT PROVES IS NARROW: that these inputs still expand to completion
+ * without crashing, and that expandleveldata() did not modify its own input.
+ * It is NOT a memory oracle -- expandmsdatlevel() walks the record through
+ * `unsigned char const *` and writes only into state->map, so the no-write
+ * check passes trivially today and exists to fail if that ever changes. ASan,
+ * in run-sanitizers.sh and the fuzz job, is the memory oracle.
+ *
+ * 🔴 AND THE HAND-WRITTEN CASES BELOW ARE NOT REDUNDANT WITH THIS. Measured:
+ * re-introducing jc-44's missing lower-layer bound makes the "a lower map layer
+ * running to the end of the record is REFUSED" case fail while this corpus
+ * replay stays green, because every committed input is a well-formed level. A
+ * corpus of valid files cannot test rejection. Keep both.
  */
 static int corpus_replayed = 0;
 
@@ -99,12 +108,11 @@ static void corpus_expand(twcorpusinput const *in)
     expandleveldata(&teststate);
 }
 
-static int corpus_report(int ok, char const *name)
+static void corpus_report(twcorpusverdict v, char const *name)
 {
     ++corpus_replayed;
-    CHECK_MSG(ok, "fuzz corpus input '%s' wrote outside its own buffer -- the"
-		  " guard bytes around it were modified", name);
-    return ok;
+    CHECK_MSG(v == TW_CORPUS_OK, "fuzz corpus input '%.80s': %s",
+	      name, tw_corpus_why(v));
 }
 
 static void put16(unsigned char *p, int v)

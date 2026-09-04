@@ -51,11 +51,36 @@ Committing the input converts a probabilistic finding into a deterministic test 
 maintainer's Windows machine, in the Windows CI job, and in the sanitizer job — everywhere, forever,
 in under a second.
 
-**The guard bytes make the replay a real oracle without a sanitizer.** Each input is copied into the
-middle of an allocation with 64 poison bytes on each side, and those are checked after the parser
-returns. Without that, "the parser returned" asserts nothing — a parser that ran off the end and came
-back is indistinguishable from one that did not. With it, every over-**write** within 64 bytes of
-either end is caught on a plain mingw build. That is precisely the shape of jc-44's stack smash.
+**What the replay proves, stated exactly.** Two things, and they are narrower than they sound:
+
+1. Every committed input still parses to completion without crashing, hanging or aborting. That is a
+   real regression check and it is most of the value — a reproducer that used to segfault does not.
+2. The parser did not **modify** its own input. Every target today is a read-only walker, so this
+   passes trivially; it exists to fail the day one starts decoding in place, which would break every
+   caller handing it a shared buffer.
+
+It is **not** a memory oracle. An over-read or over-write past the allocation is invisible to plain
+C. ASan — in `run-sanitizers.sh` and the `fuzz` job — is the memory oracle, and the replay's buffer
+is sized **exactly** to the input so ASan's redzone starts at the first byte past the end.
+
+### ⚠ The first version of this decision was wrong, and the reason is worth keeping
+
+It put 64 poison bytes on each side of the input and claimed that caught over-writes without a
+sanitizer. Review measured it, and the claim was empty twice over:
+
+- **None of the three parsers writes to its input at all** — `expandsolution()` and
+  `expandmsdatlevel()` both walk it through `unsigned char const *`, and `readleveldata()` never
+  touches the buffer, reading into its own allocation instead. Whole-block `memcmp` before and after,
+  on all twenty inputs: not one byte changed anywhere. The fences could never fire.
+- **Worse, they actively blunted ASan.** Those 64 bytes were legally allocated, so in the sanitizer
+  job they sat exactly where the redzone belongs. jc-44's two-byte over-read would have landed in the
+  fence and gone unreported. The fuzz targets had the exact-size `malloc` right and said why; the
+  replay did the opposite while claiming the same benefit.
+
+A mutation test settled it: re-introducing jc-44's missing lower-layer bound made the hand-written
+`encoding_test` case fail while the corpus replay stayed green — because every committed input is a
+well-formed level, and **a corpus of valid files cannot test rejection.** The hand-written behavioral
+cases are not redundant with the corpus and must not be replaced by it.
 
 ## Consequences
 

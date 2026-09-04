@@ -98,20 +98,28 @@ static int readrecord(unsigned char const *record, int reclen, gamesetup *game)
  * finding on Linux becomes a permanent regression case on every platform. See
  * test/tw_corpus.h.
  *
- * ⚠ THE GUARD BYTES ARE NOT THE ORACLE IN THIS FILE, and saying so matters.
+ * ⚠ THIS IS THE WEAKEST OF THE THREE REPLAYS, and saying so matters.
  * readleveldata() takes a fileinfo and reads into an allocation of its own, so
- * it never touches the fenced buffer and those fences cannot fail here. What
- * this replay actually proves is narrower: that these inputs still parse to
- * completion without crashing, hanging or aborting. The memory oracle for this
- * parser is ASan in the `fuzz` CI job. Do not read a green run here as more
- * than it is.
+ * it never touches the buffer tw_corpus.h handed us -- the no-write check
+ * cannot fail here even in principle. What a green run proves is exactly one
+ * thing: these inputs still parse to completion without crashing, hanging or
+ * aborting. The memory oracle for this parser is ASan in the `fuzz` CI job.
+ *
+ * 🔴 SO corpus_parsed IS THE ASSERTION THAT CARRIES THIS CASE. The replay goes
+ * through a scratch file, and the first version simply returned when it could
+ * not create one -- leaving a case whose name says the parser read every input
+ * safely, passing without the parser having run at all. That is the exact
+ * shape of lie CLAUDE.md section 3 catalogs, and it is reachable: a read-only
+ * checkout, or a sandboxed working directory. The count is now asserted against
+ * the number of files replayed.
  *
  * The fuzz target uses fmemopen() to avoid a disk write per execution; that is
  * POSIX-only, so the replay goes through a scratch file instead -- twenty files
- * once per suite run, rather than tens of thousands per second.
+ * once per suite run rather than tens of thousands per second.
  */
 static char const *corpusscratch = "tw_corpus_test.dat";
 static int corpus_replayed = 0;
+static int corpus_parsed = 0;
 
 static void corpus_read(twcorpusinput const *in)
 {
@@ -122,7 +130,11 @@ static void corpus_read(twcorpusinput const *in)
     f = fopen(corpusscratch, "wb");
     if (!f)
 	return;
-    fwrite(in->data, 1, (size_t)in->size, f);
+    if (fwrite(in->data, 1, (size_t)in->size, f) != (size_t)in->size) {
+	fclose(f);
+	remove(corpusscratch);
+	return;
+    }
     fclose(f);
 
     memset(&game, 0, sizeof game);
@@ -133,20 +145,16 @@ static void corpus_read(twcorpusinput const *in)
 	readleveldata(&file, &game);
 	fileclose(&file, NULL);
 	free(game.leveldata);
+	++corpus_parsed;
     }
     remove(corpusscratch);
 }
 
-static int corpus_report(int ok, char const *name)
+static void corpus_report(twcorpusverdict v, char const *name)
 {
     ++corpus_replayed;
-    /* `ok` is the fence check, which cannot fail here (see above). Asserted
-     * anyway so that this stays correct if the target is ever changed to parse
-     * out of memory -- and so the case has a real assertion per input rather
-     * than counting files and calling it coverage. */
-    CHECK_MSG(ok, "fuzz corpus input '%s' disturbed the guard bytes around it",
-	      name);
-    return ok;
+    CHECK_MSG(v == TW_CORPUS_OK, "fuzz corpus input '%.80s': %s",
+	      name, tw_corpus_why(v));
 }
 
 static void put16(unsigned char *p, int v)
@@ -164,7 +172,7 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(32);
+    tw_expect_atleast(33);
 
     tw_case("every committed fuzz corpus input still reads safely");
     {
@@ -180,6 +188,13 @@ int main(void)
 	     * 256-byte array trips -Werror=format-truncation. */
 	    CHECK_MSG(c > 0, "corpus directory %.100s held no inputs", dir);
 	    CHECK_INT(corpus_replayed, c);
+	    /* The one that stops this case passing without the parser having
+	     * run at all -- see the note above corpus_read(). */
+	    CHECK_MSG(corpus_parsed == c,
+		      "readleveldata() ran on only %d of %d corpus inputs; the"
+		      " rest could not be staged to a scratch file, so this case"
+		      " would otherwise have passed without parsing them",
+		      corpus_parsed, c);
 	}
     }
 

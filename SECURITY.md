@@ -93,9 +93,12 @@ backport to. Fixes ship in the next tagged build.
   last of those deliberately ungated because its safety otherwise depends on a check in a different
   file.
 - **Every input that ever mattered is committed and replayed.** `test/fuzz/corpus/` holds the seeds
-  and every reproducer, and the ordinary unit suite replays all of them on both platforms behind
-  guard bytes (`test/tw_corpus.h`). A fuzzer that forgets what it found buys nothing; this is what
-  turns a finding into a permanent regression test.
+  and every reproducer, and the ordinary unit suite replays all of them on both platforms
+  (`test/tw_corpus.h`). A fuzzer that forgets what it found buys nothing; this is what turns a
+  finding into a permanent regression test. ⚠ That replay proves the inputs still parse without
+  crashing and that the parser did not modify its input — **it is not itself a memory oracle**, and
+  a corpus of valid files cannot test rejection. ASan is the memory oracle; the hand-written
+  malformed-input cases are what test rejection.
 - CodeQL runs on every push and weekly (`.github/workflows/codeql.yml`), observing a real Linux
   build rather than buildless extraction.
 

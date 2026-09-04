@@ -656,6 +656,41 @@ exactly what's mine:
      way — so its job is to make the line **execute** with bit 31 set and give the sanitizer
      something to see. Reverting that hunk alone now produces `SIGILL`; before, nothing went red.
 
+19. **A movelist leaked on every failed playback** (`play.c`, `test/fuzz/`). Upstream's, on the
+   2.3.1 import.
+
+   `prepareplayback()` declares `solutioninfo solution` as a **stack local**. `expandsolution()`
+   calls `initmovelist()` — which allocates 16 entries, 64 bytes — before it can fail, and its own
+   `truncated:` path calls `initmovelist()` *again* on the way out, which resets the count but
+   deliberately keeps the buffer. So the list is live, not stale, when the function returns FALSE.
+   Both of `prepareplayback()`'s early exits then dropped the only pointer to it:
+
+   ```c
+   if (!expandsolution(&solution, state.game) || !solution.moves.count)
+       return FALSE;                     /* 64 bytes gone, every time */
+   ```
+
+   Reachable from any attempt to play back a solution record that is malformed, truncated, or has no
+   moves in it — the second disjunct means an *empty but valid* record leaks too. Small and bounded
+   per attempt; unbounded in count.
+
+   ⭐ **Found by LeakSanitizer on the fuzz job's first run**, from a seed now committed as
+   `test/fuzz/corpus/solution/fmt3-packed`. Two releases running, a tool has found a defect nobody
+   went looking for: UBSan for jc-46, LSan for jc-47. The other two targets executed 1.9M and 8.8M
+   inputs clean in the same run, which is the useful context — the finding was not noise.
+
+   **Replay-neutral, measured over the whole collection.** jc-46 against jc-47: **289 sets, 18,640
+   valid and 1,107 invalid under both**, and **0 of 303 per-set outputs differ**.
+
+   ⚠ **The fuzzing infrastructure itself needed a retraction, and it is recorded rather than
+   quietly fixed.** `test/tw_corpus.h` originally fenced each replayed input with 64 poison bytes and
+   claimed that caught over-writes on Windows without a sanitizer. Review measured it: no parser here
+   writes to its input at all — `expandsolution()` and `expandmsdatlevel()` both walk it through
+   `unsigned char const *` — so the fences could never fire, and being legally allocated they sat
+   exactly where ASan's redzone belongs and **blunted it by 64 bytes on each side**. The buffer is
+   now sized exactly to the input, and the replay asserts what it can actually prove: the input still
+   parses without crashing, and the parser did not modify it. See `docs/adr/0011`.
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:
