@@ -21,6 +21,32 @@ stay attached to something someone can see.
 
 ---
 
+## jc-45 — 2026-09-04
+
+### Fixed
+
+- **The last unguarded map index.** `readpos()` validates only the X byte of a coordinate pair, so a
+  beartrap wiring out of a `.dat` could send `initgame()`'s spring-the-traps loop reading past
+  `map[]`. Every other consumer of those wirings already checked; this one did not. **Upstream's**,
+  and the fourth defect from the jc-44 review — held back then because it sits in the engine and
+  needed a corpus run first.
+
+  **Real, not theoretical:** 7 malformed wirings in 4 sets in circulation (`BHLS1` #148, `CheeseT1`
+  #69, `TCCLP2` #11, `ZK2` #73), out of 42,433 wirings across 22,323 levels. All of them read
+  exactly one cell past the array, onto `msstate`, which is why it never surfaced.
+
+### Notes
+
+- **Replay-neutral, measured over the whole collection.** Batch verification of every set with a
+  recorded solution, jc-44 against jc-45: **290 sets, 18,739 valid / 1,108 invalid under both, and
+  0 of 303 per-set outputs differ.** `BHLS1` #148 — a level carrying a malformed wiring whose
+  solution is valid — replays identically.
+- 🔴 **A behavioral test could not catch this, and the first one did not.** Written the obvious way
+  it passed with the guard *removed*, because the out-of-bounds byte happened not to be
+  `Block_Static`. The real case poisons that byte: `map[POS_INVALID]` coincides exactly with
+  `msstate`, so writing `Block_Static` into `msstate.chipwait` is what the unguarded read would see.
+  It asserts the address equality first, so it fails loudly rather than silently going vacuous again.
+
 ## jc-44 — 2026-09-04
 
 ### Fixed — memory safety in the file parsers

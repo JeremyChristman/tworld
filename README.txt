@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-44
+  Tile World  --  Jeremy Christman's fork                    build jc-45
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,35 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-45  --  The last place a damaged level file could read too far
+-----------------------------------------------------------------
+
+  * A LEVEL FILE CAN NO LONGER MAKE THE GAME LOOK PAST THE EDGE OF ITS OWN
+    MAP. A beartrap in a .dat is stored with the coordinates of the button
+    that opens it and the trap it opens. The game checked that the across
+    coordinate was on the map but never the down one, so a level with a
+    damaged or hand-edited trap could send it looking one cell -- or in a
+    deliberately crafted file, far more -- past the end of the map.
+
+  * THIS ONE IS NOT HYPOTHETICAL. Four real level sets in circulation contain
+    such a trap: BHLS1 level 148, CheeseT1 level 69, TCCLP2 level 11, and
+    ZK2 level 73. In every one of them the read went exactly one cell too
+    far, into a harmless piece of the game's own bookkeeping, which is why
+    nobody ever saw anything wrong.
+
+  * NOTHING ABOUT PLAY CHANGES, and that was measured rather than assumed:
+    every recorded solution in a collection of 290 level sets -- 18,739 that
+    replay correctly and 1,108 that do not -- gives byte-for-byte identical
+    results before and after this build. That includes all four sets above.
+    BHLS1 level 148 in particular has a solution that replays correctly, and
+    it still does.
+
+  * Like the three fixed in jc-44, this was not introduced by this fork; it
+    dates from the version of Tile World this fork is built on. It was found
+    at the same time and held back deliberately, because it sits in the game
+    engine and a change there is not safe to ship until the whole solution
+    collection has been re-verified against it.
 
 jc-44  --  A malicious solution file can no longer crash the game
 -----------------------------------------------------------------

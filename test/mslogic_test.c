@@ -193,9 +193,10 @@ int main(void)
 {
     fixlevel lv;
     int i, r;
+    int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(89);
+    tw_expect_atleast(105);
 
     /* ================================================================== */
     tw_case("a synthesized level loads, and its header reaches the state");
@@ -444,6 +445,160 @@ int main(void)
 	    CHECK_INT(teststate.cloners[0].to, 12 + CXGRID * 12);
 	    CHECK_INT(teststate.cloners[0].from, 10 + CXGRID * 10);
 	}
+    }
+
+    tw_case("an out-of-range trap wiring cannot reach past the map (jc-45)");
+    {
+	/* 🔴 THE jc-45 DEFECT, in the two shapes it actually takes.
+	 *
+	 * readpos() validates only the X byte of a coordinate pair, so a trap
+	 * wiring's `to` can address anywhere from POS_INVALID (1056, one cell
+	 * past map[]) to 8191, against a 1056-entry array. initgame()'s
+	 * spring-the-traps loop dereferenced it without a bound.
+	 *
+	 * Both shapes are exercised because they are genuinely different:
+	 *
+	 *   to-x >= 32  -> readpos returns POS_INVALID. This is the shape that
+	 *                  occurs in the wild: all 7 malformed trap wirings in
+	 *                  the maintainer's 286 sets are of this kind (BHLS1
+	 *                  #148, CheeseT1 #69, TCCLP2 #11, ZK2 #73). The read
+	 *                  landed one cell past the array, inside msstate,
+	 *                  which is why nobody ever saw it.
+	 *   to-x <  32  -> readpos returns x + 32*y, up to 8191. Does not occur
+	 *                  in that collection, but a downloaded .dat can carry
+	 *                  it, and it is the one that reads far out of bounds.
+	 *
+	 * The assertion is BEHAVIORAL, not "it didn't crash": a level carrying
+	 * the malformed wiring must play exactly like the same level without it.
+	 * A guard that merely avoided the read but sprang a trap it should not
+	 * have would pass a crash test and fail this one.
+	 */
+	int plain_x, plain_y, plain_r;
+
+	/* The reference: no trap wiring at all. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 7, 7, FIX_BEARTRAP);
+	CHECK_INT(startlevel(&lv), TRUE);
+	plain_r = runticks(40, CmdEast);
+	plain_x = chipx();
+	plain_y = chipy();
+
+	/* Shape 1: to-x >= 32, the one real levels have. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 7, 7, FIX_BEARTRAP);
+	fix_addtrap(&lv, 3, 3, 35, 70);
+	CHECK_MSG(startlevel(&lv) == TRUE,
+		  "a level with an out-of-range trap wiring failed to start");
+	CHECK_MSG(teststate.trapcount == 1,
+		  "expected the wiring to be retained, got trapcount %d", teststate.trapcount);
+	if (teststate.trapcount == 1)
+	    CHECK_MSG(teststate.traps[0].to == POS_INVALID,
+		      "a to-x past the grid should read as POS_INVALID (%d), got %d",
+		      POS_INVALID, teststate.traps[0].to);
+	r = runticks(40, CmdEast);
+	CHECK_MSG(r == plain_r && chipx() == plain_x && chipy() == plain_y,
+		  "the malformed wiring changed play: Chip at (%d,%d) r=%d, expected (%d,%d) r=%d",
+		  chipx(), chipy(), r, plain_x, plain_y, plain_r);
+
+	/* Shape 2: to-x < 32 with a huge y -- the far out-of-bounds form. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 7, 7, FIX_BEARTRAP);
+	fix_addtrap(&lv, 3, 3, 10, 255);
+	CHECK_MSG(startlevel(&lv) == TRUE,
+		  "a level with a far out-of-range trap wiring failed to start");
+	if (teststate.trapcount == 1)
+	    CHECK_MSG(teststate.traps[0].to == 10 + CYGRID * 255,
+		      "a to-x inside the grid keeps the raw arithmetic: expected %d, got %d",
+		      10 + CYGRID * 255, teststate.traps[0].to);
+	r = runticks(40, CmdEast);
+	CHECK_MSG(r == plain_r && chipx() == plain_x && chipy() == plain_y,
+		  "the far-out-of-range wiring changed play: Chip at (%d,%d) r=%d, expected (%d,%d) r=%d",
+		  chipx(), chipy(), r, plain_x, plain_y, plain_r);
+    }
+
+    tw_case("the out-of-range read is PROVEN not to happen, by poisoning it");
+    {
+	/* 🔴 THE CASE THAT ACTUALLY BITES. The two above do not.
+	 *
+	 * A behavioral test cannot catch this fix, and that was measured: with
+	 * the guard removed, every case above still passes. Of course it does --
+	 * the fix is a memory-safety fix whose whole point is that behavior does
+	 * NOT change. The out-of-bounds read simply returns whatever byte
+	 * happens to be there, and that byte happens not to be Block_Static.
+	 *
+	 * So make it Block_Static. `map[POS_INVALID]` is exactly `msstate` --
+	 * verified by address comparison, and mapcell's top.id sits at offset 0,
+	 * so the first byte of msstate IS the tile id the unguarded code would
+	 * read. That first byte is `chipwait`, and initgame() does not assign it
+	 * until well AFTER the trap loop.
+	 *
+	 * With the poison in place and no guard, the loop reads Block_Static,
+	 * calls springtrap(button), and springtrap's OWN bound check then rejects
+	 * the off-map trap and warns -- so warn_count becomes the detector. With
+	 * the guard, springtrap is never reached and nothing warns.
+	 *
+	 * ⚠ This deliberately depends on the layout of `gamestate`. If `msstate`
+	 * ever stops following `map`, or gains a different first member, this
+	 * case stops testing what it says. It asserts the layout first so that it
+	 * fails loudly rather than quietly becoming another green no-op.
+	 */
+	CHECK_MSG((void*)&teststate.map[POS_INVALID] == (void*)&teststate.msstate,
+		  "map[POS_INVALID] no longer coincides with msstate -- this case's"
+		  " poison lands somewhere else and proves nothing");
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 7, 7, FIX_BEARTRAP);
+	fix_addtrap(&lv, 3, 3, 35, 70);          /* to-x >= 32 -> POS_INVALID */
+
+	/* Poison the byte one cell past the map. startlevel() memsets only
+	 * teststate.map, so this survives into initgame(). */
+	teststate.msstate.chipwait = (unsigned char)Block_Static;
+	/* ⚠ A DELTA, not `warn_count == 0`. warn_count is a running total that
+	 * nothing resets, so an absolute assertion silently couples this case to
+	 * every case above it: add one legitimately-warning case earlier and this
+	 * goes red for an unrelated reason, and the natural "fix" is to delete the
+	 * only oracle that catches this regression. It also made the guard-removed
+	 * run report a SECOND, false failure below. */
+	warn_before = warn_count;
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(warn_count == warn_before,
+		  "the engine read one cell past the map: it saw the poisoned"
+		  " Block_Static and tried to spring an off-map trap (%d new warning(s))",
+		  warn_count - warn_before);
+
+	/* And the guard must not have broken the ordinary case: a button wired
+	 * to a real trap holding a real block still springs it. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_setbot(&lv, 7, 7, FIX_BEARTRAP);
+	fix_settop(&lv, 7, 7, FIX_BLOCK);        /* a block sitting on the trap */
+	fix_addtrap(&lv, 3, 3, 7, 7);
+	teststate.msstate.chipwait = 0;
+	warn_before = warn_count;
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.trapcount == 1,
+		  "the in-range wiring was lost (trapcount %d)", teststate.trapcount);
+	if (teststate.trapcount == 1) {
+	    CHECK_INT(teststate.traps[0].from, 3 + CXGRID * 3);
+	    CHECK_INT(teststate.traps[0].to, 7 + CXGRID * 7);
+	}
+	CHECK_MSG(warn_count == warn_before,
+		  "a perfectly ordinary trap wiring produced %d new warning(s)",
+		  warn_count - warn_before);
     }
 
     tw_case("a beartrap wiring is read at the right stride");

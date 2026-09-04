@@ -260,13 +260,13 @@ uninstrumented executable, so what they reach is not counted and these figures u
 |---|---|---|
 | `random.c` | 100.0% | **100.0%** |
 | `generic/dirinput.c` | 100.0% | **97.8%** |
-| `encoding.c` | 78.4% | **69.0%** |
+| `encoding.c` | 78.4% | **70.1%** |
 | `generic/in.c` | 55.7% | **50.9%** |
-| `solution.c` | 41.3% | **27.0%** |
-| `mslogic.c` | 37.0% | **25.4%** |
-| `fileio.c` | 28.9% | **15.2%** |
+| `solution.c` | 42.4% | **27.4%** |
+| `mslogic.c` | 38.1% | **26.1%** |
+| `fileio.c` | 30.6% | **16.7%** |
 | `series.c` | 9.7% | **8.0%** |
-| **overall** | 36.5% | **27.7%** |
+| **overall** | 37.4% | **28.3%** |
 
 **Read the branch column.** An emulator is mostly conditionals, and a line count flatters an
 unexercised `switch` badly.
@@ -346,47 +346,47 @@ Check [`docs/adr/`](docs/adr/) before changing anything that looks wrong.
 
 ## 8. Known defects
 
-**Fixed in jc-44** (all three were upstream's, `git blame` puts them on the 2.3.1 import):
-a `.tws` could smash a 256-byte stack buffer through `loadsolutionsetname()` — measured on the
-shipped jc-43 release binary as a segfault at a 1000-byte declared set name, and abnormal
-termination at 400; `readleveldata()`
-advanced a pointer by a file-supplied size before dereferencing it; and the lower map layer's RLE
-guard reserved two fewer bytes than the upper layer's. See `FORK.md` item 16 for the engineering
-record, and `test/encoding_test.c` plus `test/solution_test.c` for the regressions that pin them.
+**Fixed in jc-44** (all upstream's; `git blame` puts them on the 2.3.1 import): a `.tws` could smash
+a 256-byte stack buffer through `loadsolutionsetname()` — measured on the shipped jc-43 release
+binary as a segfault at a 1000-byte declared set name; `readleveldata()` advanced a pointer by a
+file-supplied size before dereferencing it; and the lower map layer's RLE guard reserved two fewer
+bytes than the upper layer's.
+
+**Fixed in jc-45**: the last unguarded map index. `initgame()`'s spring-the-traps loop dereferenced a
+trap wiring's `to` with no bound, and `readpos()` validates only the X byte. Real: 7 malformed
+wirings in 4 sets in circulation. Verified replay-neutral over the maintainer's whole collection —
+290 sets, 0 of 303 outputs changed. See `FORK.md` item 17.
+
+🔴 **The lesson from jc-45 is worth more than the fix.** A *behavioral* test cannot catch a
+memory-safety fix whose entire point is that behavior does not change: the first version of that test
+passed with the guard removed. The one that works **poisons the out-of-bounds byte** —
+`map[POS_INVALID]` coincides exactly with `msstate`, so writing `Block_Static` into
+`msstate.chipwait` is what the unguarded read sees. Reach for that shape whenever you fix a bound
+here, and assert the layout assumption first so the case fails loudly rather than going quietly
+vacuous.
 
 What follows is what is still live.
 
-### 8.1 A trap wiring is used as a map index unchecked
+### 8.1 `-v` cannot work as documented
 
-`mslogic.c:4459` dereferences a map cell through a trap wiring's `to` position, which `readpos()`
-only partly validates, so a malformed wiring can index past `map[]`. One byte, read-only, and almost
-certainly still mapped memory, so it is practically inert. Every other consumer of these wirings is
-guarded, and `lxlogic.c:1871` sanitizes both endpoints up front; this one call site was missed.
-
-🔴 **The obvious fix is the dangerous one.** Positions beyond the end of the map are load-bearing in
-this engine: `POS_INVALID` and the MSCC row-32 cloner glitch both produce them deliberately
-(`encoding.c`, ADR 0002). A bare `pos < CXGRID * CYGRID` guard here would silently change emulation
-behavior. Whatever the fix is, it must distinguish those cases — and be corpus-verified.
-
-⚠ **Not fixed with the other three deliberately.** Unlike them it is *engine behavior* — the guard
-can only remove a spurious spring on an off-map wiring, but "only" is doing a lot of work in a
-codebase whose whole point is that solutions replay identically. It needs a full solution-corpus run
-before it ships. Upstream's.
+The option string at `tworld.c:2205` is `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v`
+takes an argument, while its handler takes none and the usage text says "Display version number and
+exit". `tworld2 -v` prints "option requires an argument"; `tworld2 -v x` prints `2.3.1`. One
+character. `testun-e2e.ps1` pins the current behavior deliberately, so fixing it turns that case
+red and tells you to invert it. Upstream's.
 
 ### 8.2 The smaller ones
 
-- **`-v` cannot work as documented.** The option string at `tworld.c:2205` is
-  `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v` takes an argument, while its handler
-  takes none and the usage text says "Display version number and exit". `tworld2 -v` prints "option
-  requires an argument"; `tworld2 -v x` prints `2.3.1`. One character. `testun-e2e.ps1` pins the
-  current behavior deliberately, so fixing it turns that case red and tells you to invert it.
-  Upstream's.
 - **`combinepath()` reads `dest[-1]` when `dir` is empty** (`fileio.c:394`). No shipped configuration
   reaches it: `SAVEDIR` is defined for non-Windows Debug only, and `root` cannot be empty since
   jc-40. The one way in is an explicit `-R ""` on the command line. Latent, not live. Upstream's.
 - **`series.c:41`** passes `sizeof g->list` (a pointer) where `sizeof *g->list` was meant. It
   over-allocates today, and becomes an under-allocation the moment that element type grows.
   Upstream's.
+- **Both new bounds checks form a pointer before comparing it** (`series.c`, `encoding.c`) — e.g.
+  `data + size + 2 > dataend`, which is technically undefined when the sum leaves the object. gcc and
+  clang do not exploit that for byte pointers, and the idiom matches the surrounding upstream code.
+  The fully-defined form is `(size_t)(dataend - data) < (size_t)size + 2`.
 
 ## 9. Conventions
 

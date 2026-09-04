@@ -212,7 +212,11 @@ try {
         foreach ($r in ($rows | Sort-Object File)) {
             [void]$sb.AppendLine(("{0}`t{1}`t{2}`t{3}`t{4}" -f $r.File, $r.Lines, $r.LinesHit, $r.Branches, $r.BranchesHit))
         }
-        [IO.File]::WriteAllText($baselineFile, $sb.ToString(), (New-Object Text.UTF8Encoding $false))
+        # LF, not CRLF. .gitattributes normalizes this file to LF anyway, so
+        # writing CRLF only earns a "CRLF will be replaced by LF" warning on
+        # every single commit that touches it.
+        [IO.File]::WriteAllText($baselineFile, ($sb.ToString() -replace "`r`n", "`n"),
+                                (New-Object Text.UTF8Encoding $false))
         Write-Host "wrote $baselineFile" -ForegroundColor Green
     }
 

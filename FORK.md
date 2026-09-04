@@ -540,6 +540,59 @@ exactly what's mine:
    researchers to disclose privately so a fix can ship first, and this file should not do the
    opposite for a defect that is still open.
 
+17. **The last unguarded map index** (`mslogic.c`, `test/mslogic_test.c`).
+   The fourth memory-safety defect from the jc-44 review, held back then because unlike the other
+   three it sits in the **engine** and needed a corpus run first. Upstream's, like the rest.
+
+   `readpos()` (`encoding.c`) validates only the **X** byte of a coordinate pair —
+   `x < CXGRID ? x + CYGRID * y : POS_INVALID` — and Y is a raw file byte. `initgame()`'s
+   spring-the-traps loop then did `cellat(xy->to)->top.id` with no bound, against a 1,056-entry
+   `map[]`. Every other consumer of these wirings already checked: `istrapbuttondown()` immediately
+   below it uses exactly the test now added, `springtrap()` has its own, and `lxlogic.c` sanitizes
+   both endpoints at load.
+
+   **It is not theoretical.** Scanning all 42,433 trap wirings across the maintainer's 286 sets and
+   22,323 levels found **7 malformed ones in 4 real sets** — `BHLS1` #148, `CheeseT1` #69, `TCCLP2`
+   #11, and `ZK2` #73 with four of them. Every one has `to-x >= 32`, so `readpos()` returns
+   `POS_INVALID` (1056) and the read was **exactly one cell past the array** — landing on `msstate`,
+   whose first byte is `chipwait`, which is why it never showed as anything. A `.dat` with `to-x < 32`
+   and a large Y would read up to 8,191; none of his sets has one, but a downloaded file can.
+
+   **Zero wirings use `to-y == 32`**, the virtual row the row-32 cloner glitch lives in — so the
+   choice of bound is moot on real data. `CXGRID * CYGRID` was used to match the neighboring code.
+   It is inert at this call site for a reason worth writing down: row 32 is still all-zero whenever
+   this loop runs, because `expandmsdatlevel()` memsets the whole map and its RLE loops fill only
+   `pos < CXGRID*CYGRID`. That memset is the one that matters — `initgame()` has **two** callers,
+   `initgamestate()` and `setenddisplay()`, and only the first memsets on its own account. A zeroed
+   `top.id` is 0 while `Block_Static` is `0x36`. And `springtrap()` independently refuses
+   `pos >= CXGRID*CYGRID`, so a row-32 trap wiring could not spring anything even if it reached
+   there.
+
+   ⚠ **Do not copy that bound to `activatecloner()` or any site that runs during play.**
+   `activaterow32cloner()` gives row 32 a live cell mid-game and the ordinary movement machinery runs
+   against it, so the same bound there would break the glitch outright. (An earlier draft of this
+   note said row 32 "holds MSCC's variable block". That is true of real MSCC and **false of this
+   program**: Tile World emulates the variable block in row 0's *bottom* layer via `resetdata()`,
+   which is bounded to `x < CXGRID`. Row 32 is the clone's transient cell.)
+
+   🔴 **A BEHAVIORAL TEST CANNOT CATCH THIS, AND THE FIRST ONE DID NOT.** The fix is memory-safety;
+   its whole point is that behavior does not change. Written the obvious way — same level with and
+   without a malformed wiring, compare Chip — the case passed with the guard *removed*, because the
+   out-of-bounds byte simply happened not to be `Block_Static`. Measured, not assumed.
+
+   So the real case **poisons the byte**. `map[POS_INVALID]` coincides exactly with `msstate` (the
+   test asserts that address equality first, so it fails loudly rather than quietly going vacuous),
+   and `mapcell.top.id` is at offset 0, so writing `Block_Static` into `msstate.chipwait` before
+   `initgame()` is precisely what the unguarded read would see. With the guard gone it now reports:
+   *"the engine read one cell past the map: it saw the poisoned Block_Static and tried to spring an
+   off-map trap."* That is the detector this fix needed and the two behavioral cases could not be.
+
+   **Replay-neutral, measured over the whole collection.** Batch verification of every set that has a
+   recorded solution, jc-44 against jc-45: **290 sets, 18,739 valid and 1,108 invalid under both**,
+   and **0 of 303 per-set outputs differ** — byte-identical, including all four affected sets.
+   `BHLS1` #148 is the strongest single data point: a level carrying a malformed wiring whose
+   recorded solution is *valid*, and it still replays identically.
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:
@@ -549,7 +602,7 @@ exactly what's mine:
 | unit | `test/run-tests.ps1` | a C compiler | one module at a time: the RNG, the `.tws` codec, the MS engine, the keyboard arbitration |
 | end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
 
-As of 2026-09-04: **10 unit runs / 17,015 checks and 12 end-to-end cases / 35 checks, 0 failures.**
+As of 2026-09-04: **10 unit runs / 17,034 checks and 12 end-to-end cases / 35 checks, 0 failures.**
 Machine-readable results with `-ResultsPath test-results` (JUnit XML + JSON). Coverage, unit layer
 only, is measured by `coverage.ps1`: **28.2% of branches overall**, from 100% of `random.c` down to
 0% of `fileio.c` (which is compiled in but never called by any case). `verify-defaults.ps1` checks

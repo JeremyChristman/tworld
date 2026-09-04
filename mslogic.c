@@ -4455,8 +4455,57 @@ static int initgame(gamelogic* logic) {
     possession(Key_Red) = possession(Key_Blue) = possession(Key_Yellow) = possession(Key_Green) = 0;
     possession(Boots_Ice) = possession(Boots_Slide) = possession(Boots_Fire) = possession(Boots_Water) = 0;
 
+    /* MOD (Jeremy, jc-45): bound xy->to before dereferencing it.
+     *
+     * readpos() (encoding.c) validates only the X byte of a coordinate pair:
+     * `x < CXGRID ? x + CYGRID * y : POS_INVALID`. Y is a raw file byte, so a
+     * beartrap wiring out of a .dat can address anywhere from POS_INVALID
+     * (1056, exactly one cell past map[]) up to 8191, against a 1056-entry
+     * array. This was the one consumer of these wirings that never checked --
+     * istrapbuttondown() just below uses precisely this test, springtrap() and
+     * activatecloner() have their own, and lxlogic.c sanitizes both endpoints
+     * at load.
+     *
+     * MEASURED, not assumed, across the maintainer's 286 sets / 22,323 levels /
+     * 42,433 trap wirings:
+     *   - 7 wirings in 4 real sets (BHLS1 #148, CheeseT1 #69, TCCLP2 #11 and
+     *     ZK2 #73) have to-y > 32. Every one of them also has to-x >= 32, so
+     *     readpos() hands back POS_INVALID and the read was one cell past the
+     *     array -- landing inside msstate, which is why it never showed.
+     *   - 0 wirings have to-y == 32, the virtual row the MSCC row-32 cloner
+     *     glitch uses (state.h, docs/adr/0002).
+     *
+     * ⚠ THE BOUND IS CXGRID * CYGRID, WHICH EXCLUDES THE VIRTUAL ROW -- and
+     * that is safe here for a reason specific to this call site, not a general
+     * one. Row 32 is still all zero whenever this loop runs, because
+     * expandmsdatlevel() memsets the WHOLE map (encoding.c, "memset(state->map,
+     * 0, sizeof state->map)") and its RLE loops then fill only
+     * pos < CXGRID*CYGRID. That memset is the one that matters, because
+     * initgame() has TWO callers -- initgamestate() and setenddisplay() -- and
+     * only the first does a memset of its own. A zeroed top.id is 0, and
+     * Block_Static is 0x36, so a row-32 cell could never satisfy this
+     * comparison anyway. Widening the bound to CXGRID * (CYGRID + 1) would be
+     * equally correct and equally inert; the narrower form is used because it
+     * is the one the neighboring code already uses.
+     *
+     * Belt to those braces: springtrap() itself refuses pos >= CXGRID*CYGRID,
+     * and the row-32 glitch is a CLONER path, never a trap one. A row-32 trap
+     * wiring could not spring anything even if it got here.
+     *
+     * 🔴 DO NOT COPY THIS BOUND TO activatecloner() OR ANY SITE THAT RUNS
+     * DURING PLAY. activaterow32cloner() gives row 32 a live cell mid-game
+     * (it writes cell->top.id and clears it again a few lines later), and the
+     * ordinary movement machinery runs against that cell -- so this bound there
+     * would break the row-32 glitch outright. (Row 32 is the clone's transient
+     * cell. MSCC's variable block is emulated in row 0's BOTTOM layer, by
+     * resetdata(), which is a different thing entirely and is bounded to
+     * x < CXGRID.)
+     */
     for (n = traplistsize(), xy = traplist(); n; --n, ++xy) {
-        if (xy->to == chippos() || cellat(xy->to)->top.id == Block_Static || istrapbuttondown(xy->from)) {
+        if (xy->to == chippos()
+                || (xy->to >= 0 && xy->to < CXGRID * CYGRID
+                        && cellat(xy->to)->top.id == Block_Static)
+                || istrapbuttondown(xy->from)) {
             springtrap(xy->from);
         }
     }
