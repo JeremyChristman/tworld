@@ -9,9 +9,13 @@ updates:
   #
   # Dependabot rewrites the SHA and keeps the `# v4` comment accurate.
   #
-  # ⚠ One action is currently tag-pinned rather than SHA-pinned:
-  # msys2/setup-msys2@v2 in ci.yml. That is a known gap, noted at the call
-  # site. Dependabot will still raise version bumps for it.
+  # Every action in this repository is SHA-pinned. There is deliberately no
+  # third-party action for the toolchain at all: windows-latest already ships
+  # MSYS2 at C:\msys64, so the workflows use pacman directly. That removes the
+  # one action that had been on a mutable tag, which mattered most in
+  # release.yml -- that job signs a provenance statement for the bytes it
+  # builds, and an action that could change under it would make the signature
+  # vouch for whatever it changed into.
   - package-ecosystem: github-actions
     directory: /
     schedule:

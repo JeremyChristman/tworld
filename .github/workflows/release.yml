@@ -1,26 +1,8 @@
 name: Release
 
-# 🔴 THE AUTOMATIC TAG TRIGGER IS DISARMED, ON PURPOSE, AND MUST STAY THAT WAY
-# UNTIL THE ACTION BELOW IS PINNED TO A COMMIT SHA.
-#
-# This job runs with contents: write, id-token: write and attestations: write,
-# and it ends by signing a provenance statement for the bytes it just produced.
-# msys2/setup-msys2 is currently pinned to the MUTABLE TAG `v2` (see the note at
-# that step). A mutated `v2` would land attacker-controlled code inside the
-# process that compiles the release zip -- and this workflow would then attest
-# to it, which is worse than having no attestation at all, because a signed
-# statement is what people are told to trust.
-#
-# Until that pin is a SHA, releases are cut locally with package.ps1 and
-# uploaded by hand (.github/RELEASING.md step 7 describes both paths). Leaving
-# `push: tags` armed would mean every `git push origin jc-N` silently started
-# this job.
-#
-# TO RE-ARM: pin msys2/setup-msys2 to a verified commit SHA, then restore
-#     push:
-#       tags: ['jc-*']
-# above workflow_dispatch.
 on:
+  push:
+    tags: ['jc-*']
   workflow_dispatch:
     inputs:
       tag:
@@ -56,26 +38,23 @@ jobs:
           # PowerShell scripts is free risk.
           persist-credentials: false
 
-      # ⚠ TAG-PINNED, NOT SHA-PINNED. Every other action in this repository is
-      # pinned to a commit SHA precisely because THIS job produces bytes that
-      # strangers download and run: a mutated tag on an action here would land
-      # code in the job that builds them, and a trojaned build would play
-      # perfectly normally. This one was added without a verified SHA to hand.
-      # 🔴 PIN IT BEFORE RELYING ON THIS WORKFLOW FOR A PUBLISHED RELEASE.
-      - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          # C:\ so the toolchain lands at C:\msys64, which is where build.ps1
-          # and package.ps1 look by default.
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-qt5-static
-            mingw-w64-x86_64-SDL2
+      # 🔴 NO THIRD-PARTY ACTION IN THIS JOB, and that is a security property,
+      # not a convenience. This job runs with contents/id-token/attestations
+      # write and ends by SIGNING a provenance statement for the bytes it just
+      # built. An action on a mutable tag could land attacker code inside that
+      # process, and the attestation would then vouch for it -- worse than no
+      # attestation, because a signature is what people are told to trust.
+      #
+      # windows-latest ships MSYS2 at C:\msys64 already, which is where
+      # build.ps1 and package.ps1 look by default, so nothing third-party is
+      # needed. Every remaining action here is pinned to a commit SHA.
+      - name: Install the toolchain packages
+        run: |
+          $pacman = 'C:\msys64\usr\bin\pacman.exe'
+          if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
+          & $pacman -Sy --noconfirm
+          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt5-static mingw-w64-x86_64-SDL2
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
 
       - name: The shipped stock settings file matches the code
         run: powershell -ExecutionPolicy Bypass -File verify-defaults.ps1

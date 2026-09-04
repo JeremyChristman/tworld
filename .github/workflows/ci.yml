@@ -73,23 +73,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # ⚠ TAG-PINNED, NOT SHA-PINNED, and that is a known gap rather than an
-      # oversight: every other action here is pinned to a commit SHA (see
-      # .github/dependabot.yml for why). This one was added without a verified
-      # SHA to hand. Pin it before the RELEASE workflow is ever made to depend
-      # on a third-party action, since that job produces bytes strangers run.
-      - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          # C:\ so the toolchain lands at C:\msys64, which is where build.ps1
-          # and test\run-tests.ps1 look by default. Keeping CI on the same
-          # paths as the maintainer's machine means the scripts' own path
-          # handling is exercised rather than bypassed.
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: >-
-            mingw-w64-x86_64-gcc
+      # NO THIRD-PARTY ACTION HERE, deliberately. windows-latest ALREADY ships
+      # MSYS2 at C:\msys64 -- which is exactly where build.ps1 and
+      # test\run-tests.ps1 look by default, so CI exercises the same path
+      # handling the maintainer's machines do instead of bypassing it.
+      #
+      # This started out as msys2/setup-msys2 with `location: C:\`, and the
+      # runner refused it outright: "Trying to install MSYS2 to C:\msys64 but
+      # that already exists, cannot continue." Using what is already there is
+      # simpler, several minutes faster, and removes the one action in this
+      # repository that was pinned to a mutable tag rather than a commit SHA.
+      - name: Install the toolchain packages
+        run: |
+          $pacman = 'C:\msys64\usr\bin\pacman.exe'
+          if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
+          # -Sy, not -Syu: refreshing the package database is enough to install
+          # from, and a full system upgrade on a throwaway runner costs minutes
+          # and can leave pacman asking for a restart.
+          & $pacman -Sy --noconfirm
+          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+          & 'C:\msys64\mingw64\bin\gcc.exe' --version
 
       # Seconds, and it guards a claim that had already gone stale: the stock
       # tw_settings.ini shipped in the release zip is hand-written, and jc-41
@@ -122,18 +126,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          location: C:\
-          msystem: MINGW64
-          update: false
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-qt5
-            mingw-w64-x86_64-SDL2
+      # See the note in the unit job: the runner's own MSYS2 at C:\msys64 is
+      # used rather than a third-party action.
+      - name: Install the toolchain packages
+        run: |
+          $pacman = 'C:\msys64\usr\bin\pacman.exe'
+          if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
+          & $pacman -Sy --noconfirm
+          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt5 mingw-w64-x86_64-SDL2
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
 
       - name: Build
         run: powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic -Manifest dist/build-manifest.json

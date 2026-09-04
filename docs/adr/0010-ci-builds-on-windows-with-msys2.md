@@ -48,10 +48,17 @@ the same code in a fraction of the time. What the static link changes is packagi
   release checklist has a human extract the zip and play the game.
 - **The unit job is separate so that it is the one that tells you what broke.** It needs one package
   and finishes in a fraction of the Qt job's time; if both fail, read the unit result first.
-- **`msys2/setup-msys2` is pinned to a tag, not a commit SHA**, unlike every other action here. That
-  is a known gap, recorded at the call site and in `dependabot.yml`. It must be pinned properly
-  before any *release* workflow is made to depend on a third-party action, because that job produces
-  bytes strangers run.
+- **No third-party action installs the toolchain**, which was not the original design. The first
+  version used `msys2/setup-msys2` with `location: C:\`, and the runner rejected it outright on the
+  very first CI run: *"Trying to install MSYS2 to C:\msys64 but that already exists, cannot
+  continue."* `windows-latest` ships MSYS2 at that exact path — the same one `build.ps1` and
+  `test/run-tests.ps1` default to — so the workflows now call `pacman` directly.
+
+  The forced change was an improvement on two counts beyond speed. It removed the only action in the
+  repository pinned to a mutable tag rather than a commit SHA; and that action had been in
+  `release.yml`, which runs with write permissions and ends by **signing a provenance attestation**
+  for the bytes it produced. An action that could change underneath that job would make the signature
+  vouch for whatever it changed into, which is worse than having no attestation at all.
 - Sanitizers are unavailable on this path: mingw-w64 GCC ships no `libasan` or `libubsan`, and no
   libFuzzer. ASan/UBSan and a fuzz target over the `.dat` and `.tws` parsers need a Linux build that
   does not exist yet. The upgrade path is written at the top of `codeql.yml`, and the gap is stated
