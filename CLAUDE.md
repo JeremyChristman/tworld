@@ -44,6 +44,7 @@ powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build         # build fi
 powershell -ExecutionPolicy Bypass -File run-tests.ps1 -ResultsPath test-results   # JUnit XML + JSON
 powershell -ExecutionPolicy Bypass -File test\run-tests.ps1 -Filter mslogic        # one unit test
 powershell -ExecutionPolicy Bypass -File test\run-e2e.ps1             # end-to-end only
+powershell -ExecutionPolicy Bypass -File test\run-qt-tests.ps1        # the oshw-qt layer (needs Qt)
 powershell -ExecutionPolicy Bypass -File package.ps1                  # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit layer
@@ -184,7 +185,7 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **10 unit runs, 17,133 checks; 12 end-to-end cases, 35 checks; 0 failures.**
+Current state: **10 unit runs, 17,169 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -293,8 +294,13 @@ misreading in the parser is faithfully reproduced and never caught.
 - **The other 31 `NO_FIX_*` toggles have no differential test.** Each is a documented behavior
   difference with a known direction, and compiling one test both ways would be a real oracle. Nobody
   has done it.
-- **No GUI is tested.** Everything in `oshw-qt/` — the score table's column spans, the color picker,
-  the tileset menu, the death counter — is verified by hand only.
+- **No GUI is tested**, still — the score table's column spans, the color picker, the tileset menu,
+  the death counter are all verified by hand. But `oshw-qt/` is no longer *entirely* uncovered:
+  `test/qt/ccmetadata_test.cpp` covers `CCMetaData.cpp`, the `.ccx` parser, with 90 checks. That is
+  the one file there that reads untrusted input rather than drawing a widget, and it is the only
+  parser in the tree **no other layer can reach** — `readextensions()` returns immediately when
+  `g_pMainWnd` is null, so batch mode, the e2e cases and all four fuzz targets skip it by
+  construction. Qt-linked tests need their own runner: `test\run-qt-tests.ps1`.
 - ~~`series.c`'s `.dac` parser has no unit test~~ — **closed in jc-48**, and writing that test found
   two shipped defects immediately (a path guard that could not work on Windows, and eleven ctype
   calls on a signed `char`). It has 40 unit checks and a fuzz target now. The lesson is the cheapest
@@ -475,8 +481,10 @@ ctype calls. **Do not "finish the sweep" without building what you touch.**
 
 🔴 **The lesson of jc-48 is the cheapest one in this file.** The `.dac` parser was the only one in the
 C core with no test, and it was the one with the bugs. Before reaching for a fuzzer, check what has
-no coverage at all. (`oshw-qt/CCMetaData.cpp` parses `.ccx` from inside level packs and still has
-none — Qt does the parsing and the index is bounds-checked, but nothing here tests it.)
+no coverage at all. That lesson was applied straight away: `oshw-qt/CCMetaData.cpp`, the `.ccx`
+parser, was the next thing with none, and it now has `test/qt/ccmetadata_test.cpp`. It found no
+defect — the level index really is bounds-checked and Qt does the parsing — and **"we looked and it
+was fine" is a result worth having**, because until it existed nobody could say so.
 
 What follows is what is still live.
 
@@ -485,7 +493,7 @@ What follows is what is still live.
 The option string at `tworld.c:2205` is `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v`
 takes an argument, while its handler takes none and the usage text says "Display version number and
 exit". `tworld2 -v` prints "option requires an argument"; `tworld2 -v x` prints `2.3.1`. One
-character. `testun-e2e.ps1` pins the current behavior deliberately, so fixing it turns that case
+character. `test/run-e2e.ps1` pins the current behavior deliberately, so fixing it turns that case
 red and tells you to invert it. Upstream's.
 
 ### 8.2 The smaller ones
@@ -583,7 +591,9 @@ own agent.** Review diffs to it the way you review code, not the way you skim co
 - **"Does my change affect replay?"**: build the exe and batch-verify a corpus:
   `tworld2.exe -b -r -S <savedir> <set>.dac`, reading **stdout**, from a scratch working directory.
   Remember §3.5: this cannot see input-layer changes.
-- **A GUI question**: there is no automated coverage. Build it, run it, and look.
+- **A GUI question**: essentially no automated coverage — build it, run it, and look. The exception
+  is `CCMetaData.cpp` (`test/qt/ccmetadata_test.cpp`, run by `test/run-qt-tests.ps1`); if what you
+  are touching is Qt-linked but not a widget, that runner is where a test can go.
 - **Driving the GUI for a playtest**: press-and-hold opens a menu but releasing on an item does not
   pick it, and arrow keys inside an open menu do nothing. What works is clicking the menu title
   (down+up in place), then a **second separate click** on the item, locating both through UIA

@@ -21,6 +21,46 @@ stay attached to something someone can see.
 
 ---
 
+## Unreleased
+
+Nothing here changes the executable. It rides along with the next release that does.
+
+### Added — the first test of anything in `oshw-qt/`
+
+Applying jc-48's lesson immediately: **the next thing with no coverage** was `CCMetaData.cpp`, the
+`.ccx` metadata parser. `.ccx` is XML that ships *inside* a level pack, so it sits on the same trust
+boundary as `.dat`, `.dac` and `.tws` — and nothing had ever parsed one under test.
+
+- **`test/qt/ccmetadata_test.cpp`** — 90 checks. Level-number bounds, author and ruleset
+  inheritance, prologue/epilogue pages, the direct-child stylesheet rule, `Clear()`, and a hostile
+  deeply-nested/huge-attribute input. It also parses **all six real `.ccx` files this repo ships**
+  (224 KB of CDATA, HTML and entities no hand-written fixture would imitate) — which nothing had
+  done before.
+- **`test/run-qt-tests.ps1`** — a third layer, because Qt-linked tests cannot use the gcc-only
+  runner (`CCMetaData.cpp` needs QDomDocument, QString and QColor). It **skips loudly** when Qt is
+  absent so a developer without it still gets every other layer; the CI step asserts it did *not*
+  skip, so that can never quietly become normal.
+
+🔴 **`.ccx` is the one parser no other layer can reach.** `readextensions()` returns immediately when
+`g_pMainWnd` is null — precisely the batch case — so no corpus run, no end-to-end case and none of
+the four fuzz targets has ever touched it, and none can. A Qt-linked unit test was the only option.
+
+**It found no defect**, and that is a fine result: the level index really is bounds-checked and Qt
+does the parsing. Mutation-proven all the same — deleting the bounds guard kills the run. "We looked
+and it was fine" is worth having; until now nobody could say it.
+
+### Fixed — documentation that was wrong
+
+- **`FORK.md`'s jc-48 verification table claimed `unslist.c` was "exercised by the corpus run, which
+  reads the `.ccx` extension files".** Both halves were false. `.ccx` is `CCMetaData.cpp`, not
+  `unslist.c`, and is never parsed in batch mode at all; and `unslist.c`'s loader is reached only
+  through `loadtxtresource(RES_TXT_UNSLIST, …)`, which does nothing unless the `unsolvablelist`
+  resource names a file — and it is set neither in `res/rc` nor in `initresourcedefaults()`. So
+  **nothing exercises `unslist.c`**, and `res/unslist.txt` ships and is never read. Corrected, with
+  the reasoning kept: verify what exercises a file before writing it down.
+- A stray carriage return in `CLAUDE.md` (`test<CR>un-e2e.ps1`) from an old `sed` whose `\r` was
+  taken as an escape. Repository swept; no other text file has one.
+
 ## jc-48 — 2026-09-05
 
 Both defects were found by **writing the first unit test the `.dac` parser has ever had**.

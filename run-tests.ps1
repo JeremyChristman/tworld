@@ -35,6 +35,7 @@ Exit code is 0 only if every layer that ran passed.
 param(
     [switch]$Unit,
     [switch]$E2E,
+    [switch]$Qt,
     [switch]$Build,
     [string]$Exe,
     [string]$Filter,
@@ -45,8 +46,8 @@ param(
 $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
 
-# Neither switch given means both layers. Naming one narrows to it.
-if (-not $Unit -and -not $E2E) { $Unit = $true; $E2E = $true }
+# No switch given means every layer. Naming one narrows to it.
+if (-not $Unit -and -not $E2E -and -not $Qt) { $Unit = $true; $E2E = $true; $Qt = $true }
 
 $failed = @()
 $ran = @()
@@ -124,6 +125,24 @@ if ($E2E) {
             if ($LASTEXITCODE -ne 0) { $failed += "e2e" }
         }
     }
+}
+
+if ($Qt) {
+    Write-Host ""
+    Write-Host "================== QT ==================" -ForegroundColor Cyan
+    # The oshw-qt layer. Small, and it covers the one thing no other layer can
+    # reach: .ccx metadata, which readextensions() parses ONLY when a main
+    # window exists -- so batch mode, the e2e cases and the fuzz targets all
+    # skip it by construction.
+    #
+    # run-qt-tests.ps1 reports SKIPPED and exits 0 when Qt is not installed, so
+    # a machine without it still gets every other layer. It says so loudly; CI
+    # has Qt, so a skip cannot quietly become the normal case.
+    $qtArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-qt-tests.ps1"))
+    if ($Filter) { $qtArgs += @("-Filter", $Filter) }
+    & powershell $qtArgs
+    if ($LASTEXITCODE -ne 0) { $failed += "qt" }
+    $ran += "qt"
 }
 
 Write-Host ""

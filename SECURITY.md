@@ -16,8 +16,17 @@ or reviewed. The parsers live in:
 | `encoding.c` | `.dat` level records — map layers, trap and cloner wiring, the creature list |
 | `series.c` | `.dat` level headers and the `.dac` text configuration |
 | `solution.c` | `.tws` solution files, including a five-format variable-length move codec |
-| `unslist.c` | the bundled unsolvable-level list |
+| `oshw-qt/CCMetaData.cpp` | `.ccx` level metadata — XML shipped inside a level pack |
+| `unslist.c` | the bundled unsolvable-level list — but see below |
 | `settings.cpp` | `tw_settings.ini` |
+
+⚠ **`unslist.c` is not actually reached in the shipped configuration.** Its loader runs only if the
+`unsolvablelist` resource names a file, and that is set neither in `res/rc` nor in the compiled-in
+defaults — so `res/unslist.txt` ships and is never read. Listed because the code is there and a
+distributor could enable it, not because a stock build parses it.
+
+⚠ **`.ccx` is parsed only when a main window exists.** `readextensions()` returns immediately in
+batch mode, so a headless run never touches one.
 
 Realistic worst case is memory corruption in the user's own session — a crash, or in principle code
 execution as that user. There is no privilege boundary to cross and nothing to escalate to. Please
@@ -99,6 +108,10 @@ backport to. Fixes ship in the next tagged build.
   libFuzzer with ASan+UBSan over `expandsolution()` (`.tws`), `readleveldata()` and
   `expandleveldata()` (`.dat`), and `readconfigfile()` (`.dac`). `expandleveldata()` is deliberately
   ungated, because its safety otherwise depends on a check in a different file.
+- **The `.ccx` metadata parser is covered too** (`test/qt/ccmetadata_test.cpp`, 90 checks). It is
+  the only parser here reachable ONLY from a running GUI -- readextensions() returns early in batch
+  mode -- so no corpus run, e2e case or fuzz target can touch it. No defect was found; the level
+  index is bounds-checked and Qt does the parsing.
 - ⚠ **The parser that had no test was the parser with the defects.** `readconfigfile()` was the last
   one with no coverage of any kind; writing its first unit test in jc-48 immediately found a path
   check that could not work on Windows and eleven `<ctype.h>` calls on a signed `char`. Coverage of

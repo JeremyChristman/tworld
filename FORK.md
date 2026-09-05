@@ -764,8 +764,24 @@ exactly what's mine:
    | `series.c` | 74 unit checks incl. 40 new `.dac` cases; the corpus run opens all 598 `.dac` files |
    | `solution.c` | 1,207 unit checks; every `.tws` in the corpus run |
    | `tworld.c` | the 12 end-to-end cases drive its command line; the wrap code renders level names in the playtest |
-   | `res.c` | **no unit test** — exercised by the GUI playtest, which loads `res/rc` to get its tileset |
-   | `unslist.c` | **no unit test** — exercised by the corpus run, which reads the `.ccx` extension files |
+   | `res.c` | **no unit test** — but `initresources()` runs in batch mode too, so `readrcfile()` is exercised by the corpus run as well as the GUI playtest |
+   | `unslist.c` | **no unit test AND NOTHING EXERCISES IT** — see below. Compile-verified only |
+
+   ⚠ **That last row was wrong when first written**, and the correction is worth more than the row.
+   It claimed `unslist.c` was "exercised by the corpus run, which reads the `.ccx` extension files",
+   which conflates two unrelated things and is false about both:
+
+   * `.ccx` is `oshw-qt/CCMetaData.cpp`, not `unslist.c`, and it is **never parsed in batch mode** —
+     `readextensions()` (`TWMainWnd.cpp:2149`) returns immediately when `g_pMainWnd` is null, which
+     is exactly the batch case. No corpus run has ever touched a `.ccx`.
+   * `unslist.c`'s loader is reached only through `loadtxtresource(RES_TXT_UNSLIST, ...)`
+     (`res.c:568`), which returns without calling the loader unless the `unsolvablelist` resource
+     names a file. **It is set neither in `res/rc` nor in `initresourcedefaults()`**, so
+     `loadunslistfromfile()` does not run in the shipped configuration at all. `res/unslist.txt`
+     ships and is never read.
+
+   Both claims were plausible and neither was checked. Verify what exercises a file before writing
+   it down, or the table becomes a way of *feeling* covered.
 
 ## Testing
 

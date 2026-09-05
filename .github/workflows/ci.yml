@@ -252,11 +252,32 @@ jobs:
           $pacman = 'C:\msys64\usr\bin\pacman.exe'
           if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
           & $pacman -Sy --noconfirm
-          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt5 mingw-w64-x86_64-SDL2
+          # pkgconf is explicit: test\run-qt-tests.ps1 asks pkg-config where Qt
+          # is rather than hardcoding include paths, and it SKIPS (exit 0) when
+          # it cannot find it -- so a missing pkg-config here would quietly
+          # stop the Qt layer running instead of failing the job.
+          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt5 mingw-w64-x86_64-SDL2 mingw-w64-x86_64-pkgconf
           if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
 
       - name: Build
         run: powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic -Manifest dist/build-manifest.json
+
+      # The oshw-qt layer. It covers the one parser no other layer can reach:
+      # readextensions() parses a .ccx ONLY when a main window exists, so batch
+      # mode, the end-to-end cases and all four fuzz targets skip it by
+      # construction. Before this existed nothing in oshw-qt\ had any coverage.
+      #
+      # 🔴 THE RUNNER SKIPS WHEN QT IS MISSING, which is right for a developer
+      # machine and would be a silent hole here -- so this step asserts it
+      # actually RAN rather than trusting the exit code.
+      - name: Qt tests (oshw-qt, the .ccx parser)
+        run: |
+          $out = powershell -ExecutionPolicy Bypass -File test\run-qt-tests.ps1 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match 'Qt tests SKIPPED') {
+            throw "the Qt layer SKIPPED on a runner that has Qt - it must never skip here"
+          }
+          if ($out -notmatch 'all Qt test runs passed') { throw "Qt tests failed" }
 
       - name: End-to-end tests
         # These drive the built executable: directory resolution, .dac parsing,
