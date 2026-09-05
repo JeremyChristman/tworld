@@ -191,10 +191,15 @@ Two more layers do not run from `run-tests.ps1`, because neither can run on Wind
 
 - **`test/run-sanitizers.sh`** — the unit suite rebuilt under ASan+UBSan (the `sanitizers` job). It
   found jc-46 on its first run. See §8.
-- **`test/run-fuzz.sh`** — libFuzzer over `expandsolution()`, `readleveldata()`,
-  `expandleveldata()` and (since jc-48) `readconfigfile()` (the `fuzz` job), 60 s per target per
-  push. It found jc-47 on ITS first run — a 64-byte leak in `prepareplayback()` — while the other
-  targets executed millions of inputs clean.
+- **`test/run-fuzz.sh`** — libFuzzer, **six targets**, 60 s each per push (the `fuzz` job). Four
+  parsers: `expandsolution()`, `readleveldata()`, `expandleveldata()`, `readconfigfile()`. And
+  **both engines**: `fuzz_mslogic.c` and `fuzz_lxlogic.c` load a level *and play it*. It found
+  jc-47 on its first run — a 64-byte leak in `prepareplayback()`.
+
+  🔴 **The engine targets cover a different class, and it is the one jc-45 was.** A parser target
+  proves a bad file is *refused*; jc-45 was a file that was **accepted** and then dereferenced out
+  of bounds inside `initgame()`. Their input is split — a move-count byte, a move stream, then the
+  raw level record — so a reproducer encodes both the level and the play.
 
 🔴 **But note what found jc-48: an ordinary unit test.** The `.dac` parser was the one untrusted-input
 parser with no coverage, and writing its first test turned up two shipped defects in minutes. Tools

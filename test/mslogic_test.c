@@ -61,6 +61,7 @@
 
 #include	"tw_test.h"
 #include	"tw_fixture.h"
+#include	"tw_corpus.h"
 
 /* The high-fidelity flag, declared extern in logic.h. Left FALSE: pedantic mode
  * changes several of the behaviors asserted below, and a test that silently ran
@@ -194,6 +195,104 @@ static int runticks(int n, int cmd)
 static int chipx(void) { return chippos() % CXGRID; }
 static int chipy(void) { return chippos() / CXGRID; }
 
+/* --- fuzz corpus replay -------------------------------------------------- *
+ *
+ * test/fuzz/corpus/mslogic/ replayed through the engine, so a libFuzzer finding
+ * on Linux becomes a permanent regression case everywhere (docs/adr/0011). The
+ * input format is the fuzz target's: a move-count byte, a move stream, then the
+ * raw level record.
+ *
+ * 🔴 THIS IS THE ONLY LAYER THAT REACHES THE ENGINE WITH A HOSTILE LEVEL. The
+ * parser targets stop at "the file was refused"; jc-45 was a file that was
+ * ACCEPTED and then dereferenced out of bounds inside initgame(). That is the
+ * class this replay keeps pinned.
+ *
+ * ⚠ A green run proves these inputs still load and play without crashing,
+ * hanging or tripping an _assert -- ASan in the `fuzz` job is the memory
+ * oracle. `enginecorpus_ran` stops it passing without the engine having run.
+ */
+static int enginecorpus_replayed = 0;
+static int enginecorpus_ran = 0;
+
+static void enginecorpus_run(twcorpusinput const *in)
+{
+    gamelogic	       *lg;
+    unsigned char      *level;
+    int			movecount, levelsize, i, t, tk;
+
+    if (in->size < 3)
+	return;
+    movecount = in->data[0] & 0x3F;
+    if (1 + movecount >= in->size)
+	return;
+    levelsize = in->size - 1 - movecount;
+
+    level = (unsigned char *)malloc((size_t)levelsize);
+    if (!level)
+	return;
+    memcpy(level, in->data + 1 + movecount, (size_t)levelsize);
+
+    if (logic) {
+	(*logic->shutdown)(logic);
+	logic = NULL;
+    }
+    free(testsetup.leveldata);
+    memset(&testsetup, 0, sizeof testsetup);
+    testsetup.number = 1;
+    testsetup.leveldata = level;
+    testsetup.levelsize = levelsize;
+
+    lg = mslogicstartup();
+    if (!lg) {
+	free(level);
+	testsetup.leveldata = NULL;
+	return;
+    }
+    logic = lg;
+    logic->state = &teststate;
+
+    memset(teststate.map, 0, sizeof teststate.map);
+    teststate.game = &testsetup;
+    teststate.ruleset = Ruleset_MS;
+    teststate.replay = -1;
+    teststate.currenttime = -1;
+    teststate.timeoffset = 0;
+    teststate.currentinput = NIL;
+    teststate.lastmove = NIL;
+    teststate.initrndslidedir = NIL;
+    teststate.stepping = -1;
+    teststate.statusflags = 0;
+    teststate.soundeffects = 0;
+    teststate.timelimit = 0;
+    teststate.moves.list = NULL;
+    teststate.moves.count = 0;
+    teststate.moves.allocated = 0;
+    restartprng(&teststate.mainprng, 12345);
+
+    if (expandleveldata(&teststate) && (*logic->initgame)(logic)) {
+	static int const cmds[5] = { NIL, CmdNorth, CmdWest, CmdSouth, CmdEast };
+	tk = -1;
+	for (i = 0 ; i < movecount ; ++i) {
+	    int cmd = cmds[in->data[1 + i] % 5];
+	    for (t = 0 ; t < 4 ; ++t) {
+		teststate.currenttime = ++tk;
+		teststate.currentinput = (short)cmd;
+		if ((*logic->advancegame)(logic))
+		    goto done;
+	    }
+	}
+    }
+  done:
+    ++enginecorpus_ran;
+}
+
+static void enginecorpus_report(twcorpusverdict v, char const *name)
+{
+    ++enginecorpus_replayed;
+    CHECK_MSG(v == TW_CORPUS_OK, "mslogic corpus input '%.80s': %s",
+	      name, tw_corpus_why(v));
+}
+
 int main(void)
 {
     fixlevel lv;
@@ -201,9 +300,27 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(105);
+    tw_expect_atleast(116);
 
     /* ================================================================== */
+    tw_case("every committed mslogic fuzz corpus input still plays");
+    {
+	char dir[256];
+	int c;
+
+	CHECK_MSG(tw_corpus_dir("mslogic", dir, sizeof dir),
+		  "could not find test/fuzz/corpus/mslogic from the working"
+		  " directory -- the replay would have proved nothing");
+	if (dir[0]) {
+	    c = tw_corpus_run(dir, enginecorpus_run, enginecorpus_report);
+	    CHECK_MSG(c > 0, "corpus directory %.100s held no inputs", dir);
+	    CHECK_INT(enginecorpus_replayed, c);
+	    CHECK_MSG(enginecorpus_ran == c,
+		      "the engine ran on only %d of %d corpus inputs",
+		      enginecorpus_ran, c);
+	}
+    }
+
     tw_case("a synthesized level loads, and its header reaches the state");
     fix_init(&lv);
     fix_border(&lv);

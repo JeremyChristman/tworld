@@ -134,6 +134,12 @@ backport to. Fixes ship in the next tagged build.
   has been there; but `#ifdef WIN32` branches are analyzed in their POSIX form only.
 - ⚠ **Fuzzing is 60 seconds per target per push, not a soak.** That catches shallow regressions. A
   deep campaign (`FUZZ_SECONDS=600` or more) is a manual act, and no scheduled soak job exists.
-- ⚠ **The Lynx engine (`lxlogic.c`) has no test coverage at all**, and neither engine is fuzzed —
-  only the file parsers are. An engine crash reachable from a malformed level that survives
-  `readleveldata()` would not be found by anything here.
+- ✅ **Both engines are now fuzzed and unit-tested**, closing what this section used to name as its
+  largest gap: an engine crash reachable from a malformed level that *survives* `readleveldata()`.
+  That is jc-45's exact shape — a file the parser accepted, then dereferenced out of bounds inside
+  `initgame()` — and no parser target could have found it. `fuzz_mslogic.c` and `fuzz_lxlogic.c`
+  load a level and play it; `lxlogic.c` went from 0% to 49.1% line coverage.
+- ⚠ **What remains uncovered in the engines is behavior, not memory safety.** The thirty-two
+  `NO_FIX_*` toggles have no differential test, and `mslogic.c` sits at 38.1% lines. A change that
+  is merely *different* rather than unsafe is caught by the solution-corpus differential, not by
+  anything in CI.

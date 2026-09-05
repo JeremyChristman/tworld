@@ -98,8 +98,15 @@ cases are not redundant with the corpus and must not be replaced by it.
 - ⚠ **60 seconds per target is a regression check, not a soak.** It catches shallow breakage on every
   push. A real campaign is `FUZZ_SECONDS=600` by hand. No scheduled soak job exists, and pretending
   a one-minute run is a security audit would be theater.
-- ⚠ **The engines are not fuzzed, only the parsers.** A crash reachable from a malformed level that
-  survives `readleveldata()` would not be found here. `lxlogic.c` has no coverage of any kind.
+- ✅ **The engines are fuzzed too, as of `fuzz_mslogic.c` and `fuzz_lxlogic.c`** — this bullet used
+  to say they were not, and that the gap was "a crash reachable from a malformed level that survives
+  `readleveldata()`". That is precisely jc-45's shape: a file the parser *accepted*, dereferenced
+  out of bounds inside `initgame()`. A parser target could never have found it.
+
+  Their input is split — a move-count byte, a move stream, then the raw level record — so the fuzzer
+  explores the level and the play together, and a reproducer encodes both. Each execution reseeds the
+  PRNG to a fixed value and calls the engine's `shutdown()` on every path out; without both, a crash
+  would depend on the inputs before it and the reproducer would not reproduce.
 - ⚠ **Nothing here analyzes the Windows build, which is the one that ships.** The portable core is
   identical and that is where all six defects were — but `#ifdef WIN32` branches are only ever seen
   in their POSIX form. Stated in `SECURITY.md` rather than left implied.

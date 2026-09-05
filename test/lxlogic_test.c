@@ -26,8 +26,8 @@
  *   * pedanticmode is DEFINED BY lxlogic.c itself (line 54), not by tworld.c.
  *     mslogic_test.c defines it because lxlogic.c is not in that translation
  *     unit; this file must NOT, or the link fails with a redefinition.
- *     (mslogic_test.c's comment says "defined in tworld.c" -- that is wrong;
- *     tworld.c:96 itself points at lxlogic.c.)
+ *     (mslogic_test.c used to say the flag is "defined in tworld.c"; writing
+ *     this file is what showed that was wrong, and it now says so correctly.)
  *   * creaturelist() here is state->creatures, the gamestate's own array --
  *     there is no separate engine-private list to read past, which is the trap
  *     mslogic_test.c documents at length. chippos() is simply creatures[0].pos.
@@ -59,6 +59,7 @@
 
 #include	"tw_test.h"
 #include	"tw_fixture.h"
+#include	"tw_corpus.h"
 
 /* NOTE: no `int pedanticmode` here. lxlogic.c:54 defines it. Pedantic mode is
  * left at its FALSE default deliberately -- it changes ice, teleport and
@@ -184,6 +185,100 @@ static int chipy(void) { return chippos() / CXGRID; }
  * is dead when removechip() has hidden him. */
 static int chipdied(void) { return getchip()->hidden != 0; }
 
+/* --- fuzz corpus replay -------------------------------------------------- *
+ *
+ * test/fuzz/corpus/lxlogic/ replayed through the engine, so a libFuzzer finding
+ * on Linux becomes a permanent regression case on every platform
+ * (docs/adr/0011). The input format is the fuzz target's: a move-count byte, a
+ * move stream, then the raw level record.
+ *
+ * ⚠ What a green run proves is narrow, as with the parser replays: these inputs
+ * still load and play to completion without crashing, hanging or tripping an
+ * _assert. ASan in the `fuzz` job is the memory oracle. `enginecorpus_ran` is
+ * the assertion that stops this passing without the engine having run.
+ */
+static int enginecorpus_replayed = 0;
+static int enginecorpus_ran = 0;
+
+static void enginecorpus_run(twcorpusinput const *in)
+{
+    gamelogic	       *lg;
+    unsigned char      *level;
+    int			movecount, levelsize, i, t, tk;
+
+    if (in->size < 3)
+	return;
+    movecount = in->data[0] & 0x3F;
+    if (1 + movecount >= in->size)
+	return;
+    levelsize = in->size - 1 - movecount;
+
+    level = (unsigned char *)malloc((size_t)levelsize);
+    if (!level)
+	return;
+    memcpy(level, in->data + 1 + movecount, (size_t)levelsize);
+
+    if (logic) {
+	(*logic->shutdown)(logic);
+	logic = NULL;
+    }
+    free(testsetup.leveldata);
+    memset(&testsetup, 0, sizeof testsetup);
+    testsetup.number = 1;
+    testsetup.leveldata = level;
+    testsetup.levelsize = levelsize;
+
+    lg = lynxlogicstartup();
+    if (!lg) {
+	free(level);
+	testsetup.leveldata = NULL;
+	return;
+    }
+    logic = lg;
+    logic->state = &teststate;
+
+    memset(teststate.map, 0, sizeof teststate.map);
+    teststate.game = &testsetup;
+    teststate.ruleset = Ruleset_Lynx;
+    teststate.replay = -1;
+    teststate.currenttime = -1;
+    teststate.timeoffset = 0;
+    teststate.currentinput = NIL;
+    teststate.lastmove = NIL;
+    teststate.initrndslidedir = NIL;
+    teststate.stepping = -1;
+    teststate.statusflags = 0;
+    teststate.soundeffects = 0;
+    teststate.timelimit = 0;
+    teststate.moves.list = NULL;
+    teststate.moves.count = 0;
+    teststate.moves.allocated = 0;
+    restartprng(&teststate.mainprng, 12345);
+
+    if (expandleveldata(&teststate) && (*logic->initgame)(logic)) {
+	static int const cmds[5] = { NIL, CmdNorth, CmdWest, CmdSouth, CmdEast };
+	tk = -1;
+	for (i = 0 ; i < movecount ; ++i) {
+	    int cmd = cmds[in->data[1 + i] % 5];
+	    for (t = 0 ; t < 4 ; ++t) {
+		teststate.currenttime = ++tk;
+		teststate.currentinput = (short)cmd;
+		if ((*logic->advancegame)(logic))
+		    goto done;
+	    }
+	}
+    }
+  done:
+    ++enginecorpus_ran;
+}
+
+static void enginecorpus_report(twcorpusverdict v, char const *name)
+{
+    ++enginecorpus_replayed;
+    CHECK_MSG(v == TW_CORPUS_OK, "lxlogic corpus input '%.80s': %s",
+	      name, tw_corpus_why(v));
+}
+
 /* A plain walled room with Chip at (9,9) facing south. */
 static void openroom(fixlevel *lv)
 {
@@ -201,11 +296,29 @@ int main(void)
     int		r;
 
     tw_begin("lxlogic");
-    tw_expect_atleast(64);
+    tw_expect_atleast(75);
 
     /* ================================================================== *
      * The level loads at all.
      * ================================================================== */
+
+    tw_case("every committed lxlogic fuzz corpus input still plays");
+    {
+	char dir[256];
+	int c;
+
+	CHECK_MSG(tw_corpus_dir("lxlogic", dir, sizeof dir),
+		  "could not find test/fuzz/corpus/lxlogic from the working"
+		  " directory -- the replay would have proved nothing");
+	if (dir[0]) {
+	    c = tw_corpus_run(dir, enginecorpus_run, enginecorpus_report);
+	    CHECK_MSG(c > 0, "corpus directory %.100s held no inputs", dir);
+	    CHECK_INT(enginecorpus_replayed, c);
+	    CHECK_MSG(enginecorpus_ran == c,
+		      "the engine ran on only %d of %d corpus inputs",
+		      enginecorpus_ran, c);
+	}
+    }
 
     tw_case("a synthesized level loads under the Lynx ruleset");
     {

@@ -25,6 +25,36 @@ stay attached to something someone can see.
 
 Nothing here changes the executable. It rides along with the next release that does.
 
+### Added — both engines are fuzzed
+
+The four parser targets prove a malformed file is **refused**. They say nothing about a file that is
+**accepted** and then breaks the engine — and that is not a hypothetical class, it is **jc-45**: a
+beartrap wiring with an out-of-range `to` that sailed through every parser check and was dereferenced
+inside `initgame()`. Seven real level sets in circulation carry one. No parser target could ever have
+found it; it took a person reading the code and hand-building a level.
+
+- **`test/fuzz/fuzz_mslogic.c` and `test/fuzz/fuzz_lxlogic.c`** — six fuzz targets now, four parsers
+  and both engines, 60 s each per push (~6 minutes of fuzzing).
+- 🔴 **The input is split so the fuzzer explores the level and the play together:** a move-count
+  byte, a move stream, then the raw level record. A level alone only reaches `expandleveldata()` and
+  `initgame()`; the interesting failures need Chip to walk into something. A reproducer therefore
+  encodes both halves.
+- Seeded from the same real CCLP level records the `encoding` corpus uses, paired with four move
+  plans (still, walk-east, mixed, long-play) — so the fuzzer starts from levels that actually load.
+- **Both corpora are replayed by the unit suite**, per [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md) —
+  `mslogic_test.c` and `lxlogic_test.c` each gained a replay case that drives the engine exactly as
+  the fuzz target does. This is the only layer that reaches an engine with a hostile level on
+  Windows.
+- ⚠ **Every execution is independent, deliberately.** Both engines keep file-scope state, so
+  `shutdown()` is called on every path out and the PRNG is reseeded to a fixed value each run.
+  Without both, a crash would depend on the inputs before it and the reproducer would not reproduce.
+- ⚠ **An `_assert` failure counts as a finding.** The engines' `_assert` calls `die()`, which in the
+  shipped program exits — so a downloaded file that can violate an engine invariant kills the game.
+  The targets abort on it and let libFuzzer save the input.
+
+Verified locally before CI by driving both targets over their corpora under
+`-fsanitize=undefined -fsanitize-undefined-trap-on-error`, which needs no libFuzzer.
+
 ### Added — the Lynx engine has a test
 
 `lxlogic.c` is 2,045 lines and had **zero coverage of any kind**. It was the largest hole in the

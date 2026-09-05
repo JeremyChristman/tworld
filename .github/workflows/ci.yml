@@ -148,8 +148,15 @@ jobs:
           chmod +x test/run-sanitizers.sh
           ./test/run-sanitizers.sh
 
-  # ⭐ FUZZING THE FILE PARSERS -- the generalization of what the sanitizer job
-  # proved.
+  # ⭐ FUZZING THE PARSERS AND BOTH ENGINES -- the generalization of what the
+  # sanitizer job proved.
+  #
+  # 🔴 THE TWO HALVES COVER DIFFERENT THINGS, and the second is the one jc-45
+  # needed. The four parser targets prove a malformed file is REFUSED. jc-45 was
+  # a file that was ACCEPTED -- a beartrap wiring with an out-of-range `to`,
+  # through every parser check and then dereferenced inside initgame(). Seven
+  # real level sets in circulation carry one. fuzz_mslogic.c and fuzz_lxlogic.c
+  # load a level AND play it, which is the only way to reach that class.
   #
   # Every defect this fork has shipped a fix for lives in the same surface.
   # jc-44 was three (a .tws stack smash, a .dat pointer advanced by a
@@ -176,11 +183,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Fuzz the .tws, .dat and .dac parsers
-        # 60s per target. Long enough to catch a shallow regression on every
-        # push, short enough that nobody starts skipping CI. A real soak is
-        # FUZZ_SECONDS=600 run by hand, or a scheduled job if this ever earns
-        # one -- it has not yet, and pretending otherwise would be theater.
+      - name: Fuzz the parsers AND both engines
+        # 60s per target across SIX targets -- four parsers and both engines --
+        # so about six minutes of fuzzing plus the sanitizer compiles. Long
+        # enough to catch a shallow regression on every push, short enough that
+        # nobody starts skipping CI. A real soak is FUZZ_SECONDS=600 by hand, or
+        # a scheduled job if this ever earns one; it has not, and pretending a
+        # six-minute run is a security audit would be theater.
         run: |
           clang --version | head -1
           chmod +x test/run-fuzz.sh

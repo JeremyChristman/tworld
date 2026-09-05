@@ -22,6 +22,18 @@
 # script is the generalization of that: instead of guessing which line is wrong,
 # generate inputs until the program says so itself.
 #
+# 🔴 THE ENGINES ARE FUZZED TOO, AND THAT IS A DIFFERENT SURFACE. The four
+# parser targets prove a malformed file is REFUSED. jc-45 was a file that was
+# ACCEPTED -- a beartrap wiring with an out-of-range `to` that sailed through
+# every parser check and was then dereferenced inside initgame(). Seven real
+# level sets in circulation carry one, and no parser target would ever have
+# found it. fuzz_mslogic.c and fuzz_lxlogic.c load a level AND PLAY IT, so the
+# fuzzer can reach failures that need Chip to walk into something.
+#
+# Their input is split -- a move-count byte, a move stream, then the raw level
+# record -- so a reproducer encodes both the level and the play. Each target's
+# header has the exact layout.
+#
 # LINUX ONLY, and for a different reason than run-sanitizers.sh
 #
 # run-sanitizers.sh is Linux-only because mingw-w64 ships no libasan. This one
