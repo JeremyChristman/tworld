@@ -177,38 +177,16 @@ static char const *const tilesetkey[Ruleset_Count] = {
  * separator differs. Also rejected: a drive-letter prefix, any "..", control
  * characters, and a name that is empty or nothing but whitespace.
  */
-/* MOD (Jeremy, jc-42): FALSE if name is a Windows reserved device name.
+/* MOD (Jeremy, jc-48): the reserved-device-name check that lived here from
+ * jc-42 has MOVED to fileio.c as isreservedfilename(), with the opposite
+ * (intuitive) polarity -- it now returns TRUE when the name IS reserved.
  *
- * Win32 resolves CON, NUL, COM1, LPT1 and friends to the DEVICE no matter what
- * directory prefix they are given, so "<resdir>\tilesets\LPT1" opens a parallel port
- * rather than a file. NUL and CON merely fail to load and fall back harmlessly, but
- * opening a serial or parallel device can block the GUI thread on a machine that has
- * the driver. Only reachable by hand-editing the ini -- the menu cannot list such a
- * file -- which is exactly why it is worth a few lines rather than a shrug.
- *
- * The comparison ignores any extension, because "COM1.bmp" resolves to the device too.
+ * A .dac's `file=` reaches openfileindir() exactly as a tileset name reaches
+ * gettilesetpath(), so it needs the identical guard; this fork had it for
+ * tilesets and not for level sets. Two copies of a check like this drift, and
+ * fileio.c is the file that owns file access. It also gains a unit test there,
+ * via test/series_test.c -- res.c has none.
  */
-static int isreservedname(char const *name)
-{
-    static char const *const reserved[] = {
-	"CON", "PRN", "AUX", "NUL",
-	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
-    };
-    char	base[16];
-    int		n, i;
-
-    for (n = 0 ; name[n] && name[n] != '.' ; ++n) {
-	if (n >= (int)(sizeof base - 1))
-	    return TRUE;			/* too long to be a device name */
-	base[n] = (char)toupper((unsigned char)name[n]);
-    }
-    base[n] = '\0';
-    for (i = 0 ; i < (int)(sizeof reserved / sizeof *reserved) ; ++i)
-	if (!strcmp(base, reserved[i]))
-	    return FALSE;
-    return TRUE;
-}
 
 static int istilesetname(char const *name)
 {
@@ -240,7 +218,7 @@ static int istilesetname(char const *name)
 	if ((unsigned char)*p < ' ')
 	    return FALSE;
     }
-    return isreservedname(name);
+    return !isreservedfilename(name);
 }
 
 int gettilesetpath(char *dest, char const *name)
@@ -324,11 +302,11 @@ static int readrcfile(void)
 	i = sizeof buf - 1;
 	if (!filegetline(&file, buf, &i, NULL))
 	    break;
-	for (p = buf ; isspace(*p) ; ++p) ;
+	for (p = buf ; isspace((unsigned char)*p) ; ++p) ;
 	if (!*p || *p == '#')
 	    continue;
 	if (sscanf(buf, "[%[^]]]", name) == 1) {
-	    for (p = name ; (*p = tolower(*p)) != '\0' ; ++p) ;
+	    for (p = name ; (*p = tolower((unsigned char)*p)) != '\0' ; ++p) ;
 	    if (!strcmp(name, "ms"))
 		ruleset = Ruleset_MS;
 	    else if (!strcmp(name, "lynx"))
@@ -343,7 +321,7 @@ static int readrcfile(void)
 	    warn("rc:%d: syntax error", lineno);
 	    continue;
 	}
-	for (p = name ; (*p = tolower(*p)) != '\0' ; ++p) ;
+	for (p = name ; (*p = tolower((unsigned char)*p)) != '\0' ; ++p) ;
 	for (i = sizeof rclist / sizeof *rclist - 1 ; i >= 0 ; --i)
 	    if (!strcmp(name, rclist[i].name))
 		break;

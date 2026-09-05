@@ -7,6 +7,7 @@
 #include	<stdio.h>
 #include	<stdlib.h>
 #include	<string.h>
+#include	<ctype.h>
 #include	<errno.h>
 #include	<dirent.h>
 #include	<fcntl.h>
@@ -217,7 +218,23 @@ int filegetline(fileinfo *file, char *buf, int *len, char const *msg)
     if (!fgets(buf, *len, file->fp))
 	return fileerr(file, msg);
     n = strlen(buf);
-    if (n == *len - 1 && buf[n] != '\n') {
+    /* MOD (Jeremy, jc-48): look at the LAST CHARACTER STORED, not at the
+     * terminator. This read `buf[n] != '\n'` with n == strlen(buf), which
+     * indexes the NUL -- never a newline -- so the whole condition collapsed to
+     * "the buffer filled". A line that filled it EXACTLY, its newline included,
+     * then took the discard-to-end-of-line branch below and swallowed the
+     * entire next line.
+     *
+     * Measured on a .dac: a 254-byte comment line ate the `ruleset = ms` after
+     * it, leaving series->ruleset at Ruleset_None, whereupon readseriesheader()
+     * falls back to the .dat's own signature. A set could load under the wrong
+     * ruleset from a configuration file that looks perfectly correct -- and
+     * that silently invalidates every solution recorded against it.
+     *
+     * Behavior changes ONLY in that exact case; a line genuinely longer than
+     * the buffer still discards its remainder, as it must. `n > 0` guards
+     * buf[-1] for a *len of 1, which no caller passes today. Upstream's. */
+    if (n == *len - 1 && n > 0 && buf[n - 1] != '\n') {
 	do
 	    ch = fgetc(file->fp);
 	while (ch != EOF && ch != '\n');
@@ -349,7 +366,63 @@ char *getpathbuffer(void)
     return buf;
 }
 
+/* MOD (Jeremy, jc-48): TRUE if name is a Windows reserved device name.
+ *
+ * Win32 resolves CON, NUL, COM1, LPT1 and friends to the DEVICE whatever
+ * directory prefix they are given, so "<datdir>\LPT1" opens a parallel port
+ * rather than a file. NUL and CON merely fail to load and fall back harmlessly,
+ * but opening a serial or parallel device can block the GUI thread on a machine
+ * that has the driver.
+ *
+ * MOVED HERE FROM res.c, where it guarded tileset names from jc-42 and nothing
+ * else. The same threat applies to any filename this program takes from a text
+ * file somebody else wrote -- a .dac's `file=` reaches openfileindir() exactly
+ * as a tileset name reaches gettilesetpath() -- so one fork had the guard and
+ * one did not. Two copies of a check like this drift; one copy in the file that
+ * owns file access does not. It also finally gets a unit test: test/series_test.c
+ * compiles fileio.c, and res.c has no test at all.
+ *
+ * 🔴 THE POLARITY IS THE OPPOSITE OF THE res.c ORIGINAL, deliberately. That one
+ * was named isreservedname() and returned FALSE when the name WAS reserved,
+ * which reads backwards at every call site. This returns TRUE when the name is
+ * reserved; res.c now negates it.
+ *
+ * The comparison ignores any extension, because "COM1.dat" resolves to the
+ * device too.
+ */
+int isreservedfilename(char const *name)
+{
+    static char const *const reserved[] = {
+	"CON", "PRN", "AUX", "NUL",
+	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    char	base[16];
+    int		n, i;
+
+    for (n = 0 ; name[n] && name[n] != '.' ; ++n) {
+	if (n >= (int)(sizeof base - 1))
+	    return FALSE;			/* too long to be a device name */
+	base[n] = (char)toupper((unsigned char)name[n]);
+    }
+    base[n] = '\0';
+    for (i = 0 ; i < (int)(sizeof reserved / sizeof *reserved) ; ++i)
+	if (!strcmp(base, reserved[i]))
+	    return TRUE;
+    return FALSE;
+}
+
 /* Return TRUE if name contains a path but is not a directory itself.
+ *
+ * ⚠ READ THAT AGAIN BEFORE USING THIS AS A GUARD (MOD (Jeremy, jc-48), comment
+ * only). What it actually answers is "is there an EXISTING FILE behind a path",
+ * and it looks only for DIRSEP_CHAR -- a BACKSLASH on Windows. So it says FALSE
+ * for a path that does not exist yet, and FALSE for `a/b.dat` on Windows even
+ * though Windows accepts that perfectly well.
+ *
+ * readconfigfile() used it to enforce "levelset filename may not contain a
+ * path" and was wrong on both counts; it now tests the separators directly.
+ * Callers that want "does this contain a path" must not use this function.
  */
 int haspathname(char const *name)
 {

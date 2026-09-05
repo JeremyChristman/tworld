@@ -21,6 +21,85 @@ stay attached to something someone can see.
 
 ---
 
+## jc-48 — 2026-09-05
+
+Both defects were found by **writing the first unit test the `.dac` parser has ever had**.
+`readconfigfile()` was the last untrusted-input parser in the C core with no coverage of any kind —
+`CLAUDE.md` §5 listed it as a known gap, and the end-to-end layer covered its happy path by accident.
+
+### Fixed
+
+- 🔴 **A `.dac` could name a file outside the data directory, and the guard against it did not
+  work on Windows.** `readconfigfile()` asked `haspathname()` (`fileio.c:354`) to reject a data-file
+  name containing a path. That function tests only `DIRSEP_CHAR` — a **backslash** on Windows — so a
+  forward slash passed, and Windows accepts forward slashes as separators perfectly well.
+  `openfileindir()` (`fileio.c:428`) then makes the same backslash-only test, finds none, and
+  **joins** the name onto the data directory, so `file = ../../../x.dat` resolves straight out of it.
+  `haspathname()` also `stat()`s the name and answers FALSE when nothing is there, so what it
+  really reports is "an existing file behind a path" — not the question this call site asked.
+
+  Now tested directly for both separators. The exposure was modest — an arbitrary-file **open**,
+  read-only, whose bytes are parsed as level data and almost always rejected, with no channel back
+  to whoever wrote the `.dac` — but the check was written to stop exactly this and did not.
+  **Upstream's.**
+
+  **And a device name needs no separator at all.** `CON`, `NUL`, `COM1`, `LPT1` and friends resolve
+  to the **device** from inside any directory, extension ignored, so `file = LPT1` reached a
+  parallel port. This fork made precisely that argument for *tileset* names in jc-42 and left level
+  sets open; the check has moved from `res.c` to `fileio.c` as `isreservedfilename()` and both
+  callers now share it — where it also finally gets a unit test, since `res.c` has none.
+
+  **Nothing legitimate is refused, and that is measured rather than assumed:** of the maintainer's
+  598 real `.dac` files, none contains a separator in its `file=` line and none names a device; the
+  full corpus run, which opens every one of them, is byte-identical. ⚠ One qualification: a
+  backslash is a legal filename character on Linux and macOS, so rejecting it *is* a behavior change
+  there — one a Windows-only collection cannot speak to.
+
+- **Undefined behavior wherever a `char` was handed to `<ctype.h>`.** `isspace()`, `tolower()` and
+  `isalpha()` are defined only for values representable as `unsigned char`, or `EOF`. `char` is
+  **signed** on both toolchains this builds with, so every byte `>= 0x80` arrived as a negative int.
+  **Twenty-two casts across six files:** `series.c` 6 (the `.dac` parser), `solution.c` 6 (its *two*
+  `.dat`-suffix comparisons), `tworld.c` 5 (level-name word-wrap), `res.c` 3 (the `res/rc` tileset
+  config), `unslist.c` 1, `fileio.c` 1. **Level packs carry accented characters**, so this was
+  ordinary input, not an attack.
+
+  `tworld.c` additionally gained a range check: its argument is a command code and the `Cmd` enum
+  runs past 255 (`CmdReservedLast` is 511), so `isalpha()` could be handed a value that is neither a
+  valid `unsigned char` nor `EOF`. `oshw-qt/TWMainWnd.cpp:566` already used that idiom. Values in
+  0–255 behave exactly as before. **Upstream's.**
+
+  ⚠ **Nothing observable was broken, and the fix changes nothing.** All 256 byte values were run
+  through `isspace`/`isalpha`/`tolower`/`toupper` as signed and as unsigned on the shipping
+  toolchain: **zero differing results.** This removes undefined behavior; it does not repair a
+  visible fault. There is consequently no test that can distinguish the two, and the high-bit cases
+  in `series_test.c` are a crash net rather than a regression net for the casts — stated there too.
+
+  ⚠ **Three instances in `oshw-sdl` are deliberately left**: `sdlout.c:812` and `sdltext.c:110,336`.
+  Those files are not compiled by this fork's build, so the change could not be built or tested.
+  (`oshw-qt/CMakeLists.txt` *does* compile one `oshw-sdl` file — `sdlsfx.c` — but it has no ctype
+  calls, so nothing that ships is affected.)
+
+### Added
+
+- **The `.dac` parser has a test suite** — `test/series_test.c` went from 33 checks to 110, covering every
+  directive, the comment and blank-line skip, nine ways of being malformed, high-bit bytes, and the
+  254-byte line boundary. Every REFUSED case is mutation-proven: removing the guard it names turns
+  it red. Removing only the backslash arm of the path fix gives 1 failure; removing the device-name
+  guard gives 3.
+- **A fourth fuzz target**, `test/fuzz/fuzz_dac.c`, over `readconfigfile()`, with thirteen seeds and the
+  usual corpus replay in the unit suite. It is the one parser here whose interesting inputs are text
+  rather than byte patterns, which is why it needed its own harness.
+
+  🔴 Worth knowing what it is watching: the parser's two `sscanf` calls have **no width specifiers**
+  and are safe only because `filegetline()` caps the line at 254 characters first — a bound in a different
+  function, which is the same shape as jc-44's third defect.
+
+### Notes
+
+- **Replay-neutral, measured over the whole collection.** jc-47 against jc-48: **289 sets, 18,640
+  valid / 1,107 invalid under both, and 0 of 303 per-set outputs differ.**
+- Suite: **17,169 unit checks**, up from 17,092.
+
 ## jc-47 — 2026-09-04
 
 ### Fixed

@@ -147,24 +147,24 @@ retry:
         *breakpos = n;
     } else {
         n = maxlen;
-        if (isspace(start[n])) {
+        if (isspace((unsigned char)start[n])) {
             *str += n;
-            while (isspace(**str))
+            while (isspace((unsigned char)**str))
                 ++*str;
-            while (n > 0 && isspace(start[n - 1]))
+            while (n > 0 && isspace((unsigned char)start[n - 1]))
                 --n;
             if (n == 0)
                 goto retry;
             *breakpos = n;
         } else {
-            while (n > 0 && !isspace(start[n - 1]))
+            while (n > 0 && !isspace((unsigned char)start[n - 1]))
                 --n;
             if (n == 0) {
                 *str += maxlen;
                 *breakpos = maxlen;
             } else {
                 *str = start + n;
-                while (n > 0 && isspace(start[n - 1]))
+                while (n > 0 && isspace((unsigned char)start[n - 1]))
                     --n;
                 if (n == 0)
                     goto retry;
@@ -350,7 +350,13 @@ static int keyinputcallback(void) {
         case CmdQuitLevel: return -1;
         case CmdQuit: exit(0);
         default:
-            if (isalpha(ch))
+            /* MOD (Jeremy, jc-48): range-check before asking ctype. `ch` is a
+             * command code, and the Cmd enum runs past 255 (CmdReservedLast is
+             * 511), so isalpha() could be handed a value that is neither a
+             * valid unsigned char nor EOF -- undefined. Values in 0..255 behave
+             * exactly as before; only the out-of-range ones, which isalpha()
+             * had no defined answer for anyway, are now excluded up front. */
+            if (ch >= 0 && ch <= 0xFF && isalpha(ch))
                 return toupper(ch);
     }
     return 0;

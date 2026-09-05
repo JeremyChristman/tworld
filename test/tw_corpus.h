@@ -35,7 +35,7 @@
  *
  * ⚠ AN EARLIER VERSION PUT 64 POISON BYTES ON EACH SIDE OF THE INPUT and
  * claimed that caught over-writes without a sanitizer. Measured, that claim was
- * empty twice over: none of the three parsers writes to its input at all, so
+ * empty twice over: none of the parsers writes to its input at all, so
  * the fences could never fire; and worse, those 64 bytes were legally
  * allocated, so under ASan they sat exactly where the redzone should be and
  * blunted it -- jc-44's two-byte over-read would have landed in the fence and

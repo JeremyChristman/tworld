@@ -465,22 +465,61 @@ static char *readconfigfile(fileinfo *file, gameseries *series)
 	fileerr(file, "bad filename in configuration file");
 	return NULL;
     }
-    if (haspathname(datfilename)) {
+    /* MOD (Jeremy, jc-48): test for a separator directly instead of asking
+     * haspathname(), which cannot do this job on the platform that ships.
+     *
+     * haspathname() is wrong here twice over. It looks for DIRSEP_CHAR, which
+     * on Windows is a BACKSLASH -- so a forward slash goes straight through,
+     * and Windows accepts forward slashes as separators perfectly well.
+     * openfileindir() then makes the same test, finds no backslash either, and
+     * JOINS the name onto the data directory, so `file = ../../../x.dat`
+     * resolves cleanly out of it. And haspathname() additionally stat()s the
+     * name and answers FALSE when nothing is there, so what it really reports
+     * is "an existing file behind a path" -- not "this contains a path", which
+     * is what this call site needs and what its own message already claims.
+     *
+     * A .dac is a text file that arrives inside a downloaded level pack, so
+     * this is reachable by installing a pack, which is the normal way to get
+     * one. The read is parsed as level data and mostly produces "invalid level
+     * data", so the exposure is small -- but the guard was written to stop
+     * exactly this and did not.
+     *
+     * Measured before tightening: 0 of the maintainer's 598 real .dac files
+     * contain a separator in their file= line, so nothing legitimate is
+     * refused. Checked for both separators rather than DIRSEP_CHAR because a
+     * .dac written on either platform can be read on the other. */
+    if (strchr(datfilename, '/') || strchr(datfilename, '\\')) {
 	fileerr(file, "levelset filename may not contain a path");
+	return NULL;
+    }
+
+    /* MOD (Jeremy, jc-48): and no Windows device name. With no separator a
+     * single Win32 path component cannot leave its directory -- but CON, NUL,
+     * COM1, LPT1 and friends resolve to the DEVICE from inside any directory,
+     * extension ignored, so `file = LPT1` reaches a parallel port rather than a
+     * file. NUL and CON fail harmlessly; opening a serial or parallel device
+     * can block the GUI thread on a machine that has the driver.
+     *
+     * This fork already made exactly this argument for TILESET names in jc-42
+     * (res.c) and did not make it for level sets, which is why the check now
+     * lives in fileio.c and both callers share it. 0 of the maintainer's 598
+     * real .dac files name a device. */
+    if (isreservedfilename(datfilename)) {
+	fileerr(file, "levelset filename may not be a device name");
 	return NULL;
     }
     for (lineno = 2 ; ; ++lineno) {
 	n = sizeof buf - 1;
 	if (!filegetline(file, buf, &n, NULL))
 	    break;
-	for (p = buf ; isspace(*p) ; ++p) ;
+	for (p = buf ; isspace((unsigned char)*p) ; ++p) ;
 	if (!*p || *p == '#')
 	    continue;
 	if (sscanf(buf, "%[^= \t] = %s", name, value) != 2) {
 	    fileerr(file, "invalid configuration file syntax");
 	    return NULL;
 	}
-	for (p = name ; (*p = tolower(*p)) != '\0' ; ++p) ;
+	for (p = name ; (*p = tolower((unsigned char)*p)) != '\0' ; ++p) ;
 	if (!strcmp(name, "lastlevel")) {
 	    n = (int)strtol(value, &p, 10);
 	    if (*p || n <= 0) {
@@ -489,24 +528,24 @@ static char *readconfigfile(fileinfo *file, gameseries *series)
 	    }
 	    series->final = n;
 	} else if (!strcmp(name, "ruleset")) {
-	    for (p = value ; (*p = tolower(*p)) != '\0' ; ++p) ;
+	    for (p = value ; (*p = tolower((unsigned char)*p)) != '\0' ; ++p) ;
 	    if (strcmp(value, "ms") && strcmp(value, "lynx")) {
 		fileerr(file, "invalid ruleset in configuration file");
 		return NULL;
 	    }
 	    series->ruleset = *value == 'm' ? Ruleset_MS : Ruleset_Lynx;
 	} else if (!strcmp(name, "usepasswords")) {
-	    if (tolower(*value) == 'n')
+	    if (tolower((unsigned char)*value) == 'n')
 		series->gsflags |= GSF_IGNOREPASSWDS;
 	    else
 		series->gsflags &= ~GSF_IGNOREPASSWDS;
 	} else if (!strcmp(name, "fixlynx")) {
-	    if (tolower(*value) == 'n')
+	    if (tolower((unsigned char)*value) == 'n')
 		series->gsflags &= ~GSF_LYNXFIXES;
 	    else
 		series->gsflags |= GSF_LYNXFIXES;
 	} else if (!strcmp(name, "fileinsetsdir")) {
-	    if (tolower(*value) == 'n')
+	    if (tolower((unsigned char)*value) == 'n')
 		series->gsflags &= ~GSF_DATFORDACSERIESDIR;
 	    else
 		series->gsflags |= GSF_DATFORDACSERIESDIR;
@@ -567,6 +606,10 @@ static int getseriesfile(char const *filename, void *data)
     series->savefilename = NULL;
     series->gsflags = 0;
     series->solheaderflags = 0;
+    /* MOD (Jeremy, jc-48): its neighbor was initialized here and this was not,
+     * which left an uninitialized int sitting immediately in front of
+     * filebase[] -- see the note in solution.c's opensolutionfile(). */
+    series->solheadersize = 0;
     series->allocated = 0;
     series->count = 0;
     series->final = 0;
@@ -758,6 +801,10 @@ static gameseries* createnewseries
     series->savefilename = NULL;
     series->gsflags = 0;
     series->solheaderflags = 0;
+    /* MOD (Jeremy, jc-48): its neighbor was initialized here and this was not,
+     * which left an uninitialized int sitting immediately in front of
+     * filebase[] -- see the note in solution.c's opensolutionfile(). */
+    series->solheadersize = 0;
     series->allocated = 0;
     series->count = datfile->levelcount;
     series->final = 0;

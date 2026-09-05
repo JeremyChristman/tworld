@@ -162,7 +162,7 @@ static int readunslist(fileinfo *file)
 	n = sizeof buf - 1;
 	if (!filegetline(file, buf, &n, NULL))
 	    break;
-	for (p = buf ; isspace(*p) ; ++p) ;
+	for (p = buf ; isspace((unsigned char)*p) ; ++p) ;
 	if (!*p || *p == '#')
 	    continue;
 	if (sscanf(p, "[%[^]]]", token) == 1) {

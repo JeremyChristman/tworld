@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-47
+  Tile World  --  Jeremy Christman's fork                    build jc-48
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,50 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-48  --  Two fixes in how level-set configuration files are read
+-------------------------------------------------------------------
+
+  * A .dac FILE CAN NO LONGER POINT AT A FILE OUTSIDE THE GAME'S OWN
+    FOLDERS. Every level set is reached through a small text file with a
+    .dac extension, which names the .dat holding the levels. That name was
+    supposed to be a plain filename with no folders in it, and the game
+    had a check meant to enforce exactly that -- but on Windows the check
+    only looked for backslashes, so a name written with forward slashes
+    walked straight past it and the game would happily follow it out of
+    the data folder. It is now rejected properly.
+
+    A name does not even need a folder in it to reach somewhere
+    unintended: on Windows, CON, NUL, COM1 and LPT1 name DEVICES rather
+    than files, from inside any folder. This build refuses those too --
+    which it has always done for tilesets, and now does for level sets.
+
+    Nothing you have is affected: every one of the 598 .dac files in the
+    maintainer's collection was checked, and not one contains a folder
+    name or a device name.
+
+  * A TIDY-UP AROUND ACCENTED CHARACTERS, WITH NOTHING TO SEE. Several
+    places in the game asked C's character-classification routines about
+    a byte without first putting it in the range those routines are
+    defined for. A level name, a .dac, a tileset entry or a filename with
+    an accented character in it -- which plenty of level packs have --
+    was asking a question the C language does not define an answer to.
+
+    To be clear about what this did and did not fix: every possible byte
+    value was checked both ways on the compiler this build uses, and the
+    answers were identical. Nothing was visibly broken and nothing behaves
+    differently now. It was undefined, it is not any more, and a future
+    compiler no longer has permission to surprise anyone. Twenty-two
+    places across six files.
+
+  * NOTHING ABOUT PLAY CHANGES, and again it was measured: 303 solution
+    files across 289 level sets -- 18,640 that replay correctly and 1,107
+    that do not -- give byte-for-byte identical results before and after.
+    That run reads every one of those 598 .dac files, which is also what
+    proves the stricter check refuses nothing real.
+
+  * BOTH WERE FOUND BY WRITING THE FIRST TEST this part of the program
+    ever had. It had no test at all until this build.
 
 jc-47  --  A small leak when a solution will not load
 ------------------------------------------------------

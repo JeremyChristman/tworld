@@ -176,7 +176,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Fuzz the .tws and .dat parsers
+      - name: Fuzz the .tws, .dat and .dac parsers
         # 60s per target. Long enough to catch a shallow regression on every
         # push, short enough that nobody starts skipping CI. A real soak is
         # FUZZ_SECONDS=600 run by hand, or a scheduled job if this ever earns

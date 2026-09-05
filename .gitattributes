@@ -11,3 +11,15 @@
 *.png  binary
 *.jar  binary
 *.zip  binary
+
+# 🔴 FUZZ CORPUS INPUTS ARE BYTES, NOT TEXT -- never normalize them.
+#
+# `* text=auto` above applies to these, and the binary corpora escape it only
+# because text=auto sniffs their NUL bytes. The .dac corpus has none, so a
+# reproducer saved with CRLF would be silently rewritten to LF on `git add` and
+# would stop reproducing -- which breaks the contract in docs/adr/0011 without
+# anything going red. Not hypothetical: series.c scans `%[^\n\r]` precisely
+# because CRLF .dac files exist in the wild.
+#
+# These files have no extension, so the *.dac rule above does not cover them.
+test/fuzz/corpus/** -text

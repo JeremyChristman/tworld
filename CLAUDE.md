@@ -184,16 +184,21 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **10 unit runs, 17,092 checks; 12 end-to-end cases, 35 checks; 0 failures.**
+Current state: **10 unit runs, 17,133 checks; 12 end-to-end cases, 35 checks; 0 failures.**
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
 - **`test/run-sanitizers.sh`** — the unit suite rebuilt under ASan+UBSan (the `sanitizers` job). It
   found jc-46 on its first run. See §8.
-- **`test/run-fuzz.sh`** — libFuzzer over `expandsolution()`, `readleveldata()` and
-  `expandleveldata()` (the `fuzz` job), 60 s per target per push. It found jc-47 on ITS first run —
-  a 64-byte leak in `prepareplayback()` — while the other two targets executed 1.9M and 8.8M inputs
-  clean. **Two releases running, a tool found the defect and no person went looking for it.**
+- **`test/run-fuzz.sh`** — libFuzzer over `expandsolution()`, `readleveldata()`,
+  `expandleveldata()` and (since jc-48) `readconfigfile()` (the `fuzz` job), 60 s per target per
+  push. It found jc-47 on ITS first run — a 64-byte leak in `prepareplayback()` — while the other
+  targets executed millions of inputs clean.
+
+🔴 **But note what found jc-48: an ordinary unit test.** The `.dac` parser was the one untrusted-input
+parser with no coverage, and writing its first test turned up two shipped defects in minutes. Tools
+are not a substitute for covering a parser at all — **check what has no test before reaching for the
+fuzzer.**
 
 🔴 **But the fuzz corpus is replayed BY the unit suite, on Windows, every run.** Every seed and every
 reproducer lives in `test/fuzz/corpus/<target>/`, and `solution_test.c`, `series_test.c` and
@@ -203,7 +208,7 @@ See [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-comm
 
 ⚠ **Know exactly what that replay proves, because an earlier version of this file overclaimed it.**
 It proves these inputs still parse without crashing or hanging, and that the parser did not modify
-its own input. **It is not a memory oracle** — all three parsers are read-only walkers, so the
+its own input. **It is not a memory oracle** — every one of these parsers is a read-only walker, so the
 no-write check passes trivially and exists only to catch a future in-place decoder. ASan is the
 memory oracle. And **a corpus of valid files cannot test rejection**: re-introducing jc-44's missing
 bound was measured to leave the corpus replay green while the hand-written `encoding_test` case
@@ -290,9 +295,10 @@ misreading in the parser is faithfully reproduced and never caught.
   has done it.
 - **No GUI is tested.** Everything in `oshw-qt/` — the score table's column spans, the color picker,
   the tileset menu, the death counter — is verified by hand only.
-- **`series.c`'s `.dac` parser has no unit test**, though the e2e layer exercises it. It is also the
-  one untrusted-input parser with **no fuzz target** — `.dac` is line-based text rather than a
-  binary record, so it needs a different harness. That is the obvious next target.
+- ~~`series.c`'s `.dac` parser has no unit test~~ — **closed in jc-48**, and writing that test found
+  two shipped defects immediately (a path guard that could not work on Windows, and eleven ctype
+  calls on a signed `char`). It has 40 unit checks and a fuzz target now. The lesson is the cheapest
+  one in this file: **the parser with no test was the parser with the bugs.**
 - **Neither engine is fuzzed, only the parsers.** A crash reachable from a malformed level that gets
   *past* `readleveldata()` and into `mslogic.c` or `lxlogic.c` would not be found by anything here.
   jc-45's defect was exactly that shape and was found by hand.
@@ -442,6 +448,35 @@ empty solution record. Upstream's. Replay-neutral: 289 sets, 0 of 303 outputs ch
 ⭐ **Found by LeakSanitizer on the fuzz job's first run.** With jc-46, that is two consecutive
 releases where a *tool* found a defect nobody had gone looking for. The lesson has now been paid for
 twice: **run the instrument before reading another parser by hand.**
+
+**Fixed in jc-48**, both upstream's, and **both found by writing the first unit test the `.dac`
+parser ever had** — not by a fuzzer or a sanitizer:
+
+1. **A `.dac` could name a file outside the data directory.** `readconfigfile()` asked
+   `haspathname()` to reject a path; that tests only `DIRSEP_CHAR` (a **backslash** on Windows) and
+   additionally `stat()`s the name, so it answers "is there an existing file behind a path".
+   `openfileindir()` then *joins* the name onto the data directory and `../../../x.dat` resolves out
+   of it. Now tested for both separators at the call site — **and for Windows device names**, which
+   need no separator at all: `CON`/`NUL`/`COM1`/`LPT1` resolve to the device from inside any
+   directory. This fork already guarded *tilesets* against that in jc-42 and left level sets open, so
+   the check moved from `res.c` to `fileio.c` as `isreservedfilename()` and both callers share it.
+   0 of 598 real `.dac` files are affected by either rule.
+2. **Twenty-two ctype casts on a signed `char`** — `isspace`/`tolower`/`isalpha` are defined only
+   for `unsigned char` values or `EOF`, and every byte `>= 0x80` arrived negative. `series.c` 6,
+   `solution.c` 6, `tworld.c` 5, `res.c` 3, `unslist.c` 1, `fileio.c` 1. `tworld.c` also needed a
+   range check: `Cmd` runs past 255. ⚠ **Nothing observable was broken** — all 256 byte values give
+   identical answers signed or unsigned on this toolchain, so **no test can distinguish the two
+   states**, and the high-bit cases in `series_test.c` are a crash net, not a regression net.
+
+⚠ Three ctype instances remain in `oshw-sdl` (`sdlout.c:812`, `sdltext.c:110`, `:336`), deliberately
+left: **those three files** are not compiled here, so the change could not be built or tested. Note
+the precise claim — `oshw-qt/CMakeLists.txt` *does* compile `oshw-sdl/sdlsfx.c`, which simply has no
+ctype calls. **Do not "finish the sweep" without building what you touch.**
+
+🔴 **The lesson of jc-48 is the cheapest one in this file.** The `.dac` parser was the only one in the
+C core with no test, and it was the one with the bugs. Before reaching for a fuzzer, check what has
+no coverage at all. (`oshw-qt/CCMetaData.cpp` parses `.ccx` from inside level packs and still has
+none — Qt does the parsing and the index is bounds-checked, but nothing here tests it.)
 
 What follows is what is still live.
 

@@ -89,6 +89,11 @@ extern char *getpathbuffer(void);
  */
 extern int haspathname(char const *name);
 
+/* MOD (Jeremy, jc-48): TRUE if name is a Windows reserved device name (CON,
+ * NUL, COM1, LPT1 ...), extension ignored. Moved here from res.c so the .dac
+ * and tileset paths share one copy. */
+extern int isreservedfilename(char const *name);
+
 /* Return a pointer to the filename, skipping over any directories in
  * the front.
  */

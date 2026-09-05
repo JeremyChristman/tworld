@@ -30,8 +30,8 @@ the program objects.
 
 ## Decision
 
-Three libFuzzer targets over the parsers — `expandsolution()`, `readleveldata()`, and
-`expandleveldata()` — built with ASan+UBSan, run for 60 seconds each on every push.
+Four libFuzzer targets over the parsers — `expandsolution()` (.tws), `readleveldata()` and
+`expandleveldata()` (.dat), and `readconfigfile()` (.dac) — built with ASan+UBSan, run for 60 seconds each on every push.
 
 **And, the part that is actually load-bearing:** every input that has ever mattered — each seed, and
 every reproducer the fuzzer has produced — is **committed** under `test/fuzz/corpus/<target>/`, and
@@ -68,7 +68,7 @@ is sized **exactly** to the input so ASan's redzone starts at the first byte pas
 It put 64 poison bytes on each side of the input and claimed that caught over-writes without a
 sanitizer. Review measured it, and the claim was empty twice over:
 
-- **None of the three parsers writes to its input at all** — `expandsolution()` and
+- **None of the parsers writes to its input at all** — `expandsolution()` and
   `expandmsdatlevel()` both walk it through `unsigned char const *`, and `readleveldata()` never
   touches the buffer, reading into its own allocation instead. Whole-block `memcmp` before and after,
   on all twenty inputs: not one byte changed anywhere. The fences could never fire.

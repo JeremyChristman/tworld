@@ -59,10 +59,18 @@ FINDINGS="test/fuzz/findings"
 export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1"
 export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 
-# CMakeLists.txt supplies this for every non-Windows build; the targets compile
-# the source directly and never go through CMake. Same reasoning as
-# run-sanitizers.sh -- series.c calls stricmp() unconditionally at line 65.
-PORT="-Dstricmp=strcasecmp"
+# What CMakeLists.txt defines and a direct compile does not.
+#
+#   -Dstricmp   supplied for every non-Windows build; series.c calls stricmp()
+#               unconditionally, so without it the link fails.
+#   -DTWPLUSPLUS defined UNCONDITIONALLY by CMakeLists.txt:48 for the shipped
+#               build, and series.c branches on it in three places. None of
+#               those sites is inside a parser these targets reach, so nothing
+#               is currently mis-compiled -- but that is luck, not design, and
+#               it is exactly the argument that made the same flag load-bearing
+#               for series_test.c (see its header). Compile the world the
+#               released game is built in, not a neighboring one.
+PORT="-Dstricmp=strcasecmp -DTWPLUSPLUS"
 
 if ! command -v "$CC" > /dev/null 2>&1; then
     echo "no $CC on PATH -- libFuzzer needs clang; install it or set CC"

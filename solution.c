@@ -578,9 +578,23 @@ static int opensolutionfile(fileinfo *file, char const *datname, int writable)
 	filename = file->name;
     } else {
 	n = strlen(datname);
-	if (datname[n - 4] == '.' && tolower(datname[n - 3]) == 'd'
-				  && tolower(datname[n - 2]) == 'a'
-				  && tolower(datname[n - 1]) == 't')
+	/* MOD (Jeremy, jc-48): `n > 4`, matching the identical test in
+	 * createsolutionfilelist() 300 lines below, which has always had it.
+	 * Without it a name shorter than four characters indexes BEFORE the
+	 * buffer: `datname` is series->filebase, and the member sitting
+	 * immediately in front of it in gameseries is solheadersize, which is
+	 * not initialized until line 622 -- after this runs.
+	 *
+	 * findfiles() rejects nothing but a leading dot, so a level pack can
+	 * install a file simply named `dat`; with the right signature it becomes
+	 * a real gameseries. Then datname[-1] is read, and if that uninitialized
+	 * byte is '.' the suffix test PASSES, n becomes -1, and the two lines
+	 * below become x_alloc(buf, 4) followed by memcpy(buf, datname, (size_t)-1).
+	 * Upstream's. */
+	if (n > 4 && datname[n - 4] == '.'
+			&& tolower((unsigned char)datname[n - 3]) == 'd'
+			&& tolower((unsigned char)datname[n - 2]) == 'a'
+			&& tolower((unsigned char)datname[n - 1]) == 't')
 	    n -= 4;
 	x_alloc(buf, n + 5);
 	memcpy(buf, datname, n);
@@ -879,9 +893,9 @@ int createsolutionfilelist(gameseries const *series, int morethanone,
     s.count = 0;
     s.prefix = series->name;
     s.prefixlen = n = strlen(series->name);
-    if (n > 4 && s.prefix[n - 4] == '.' && tolower(s.prefix[n - 3]) == 'd'
-					&& tolower(s.prefix[n - 2]) == 'a'
-					&& tolower(s.prefix[n - 1]) == 't')
+    if (n > 4 && s.prefix[n - 4] == '.' && tolower((unsigned char)s.prefix[n - 3]) == 'd'
+					&& tolower((unsigned char)s.prefix[n - 2]) == 'a'
+					&& tolower((unsigned char)s.prefix[n - 1]) == 't')
 	s.prefixlen -= 4;
 
     if (!findfiles(savedir, &s, getsolutionfile) || !s.count)

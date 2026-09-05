@@ -53,8 +53,15 @@ a reply in days rather than hours.
 - Memory-safety defects in any of the parsers above, reachable from a file a user could plausibly
   download: out-of-bounds read or write, integer overflow in a length computation, unterminated
   string, `memcpy` with an attacker-influenced length.
-- Anything that writes outside the directories the program was pointed at, including path traversal
-  through a `.dac`'s `file=` directive or a solution filename.
+- Anything that **reads or writes outside the directories the program was pointed at** — path
+  traversal through a `.dac`'s `file=` directive or a solution filename, or a name that resolves to
+  a Windows device (`CON`, `LPT1`) rather than a file.
+
+  ⚠ Both halves of that were true of the `.dac` path until jc-48, and the honest description of the
+  read half is an arbitrary-file **open**, read-only: the bytes are parsed as level data, almost
+  always rejected, and there is no channel back to whoever wrote the `.dac`. This line previously
+  said only "writes", which promised more than the defect could do — the sort of overstatement that
+  costs credibility with a reporter who checks.
 - Anything that makes the program destroy a user's saved solutions.
 
 **Out of scope**
@@ -88,10 +95,14 @@ backport to. Fixes ship in the next tagged build.
   (the `sanitizers` job). This is not decoration: it found undefined behavior in the `.tws` seed and
   best-time reads (jc-46) **on its first run**, in a line nobody had reason to suspect, through a
   test that had been passing for weeks.
-- **The `.tws` and `.dat` parsers are fuzzed on every push** (the `fuzz` job, `test/run-fuzz.sh`) —
-  libFuzzer with ASan+UBSan over `expandsolution()`, `readleveldata()` and `expandleveldata()`, the
-  last of those deliberately ungated because its safety otherwise depends on a check in a different
-  file.
+- **Every untrusted-input parser is fuzzed on every push** (the `fuzz` job, `test/run-fuzz.sh`) —
+  libFuzzer with ASan+UBSan over `expandsolution()` (`.tws`), `readleveldata()` and
+  `expandleveldata()` (`.dat`), and `readconfigfile()` (`.dac`). `expandleveldata()` is deliberately
+  ungated, because its safety otherwise depends on a check in a different file.
+- ⚠ **The parser that had no test was the parser with the defects.** `readconfigfile()` was the last
+  one with no coverage of any kind; writing its first unit test in jc-48 immediately found a path
+  check that could not work on Windows and eleven `<ctype.h>` calls on a signed `char`. Coverage of
+  a surface is not a substitute for tooling, and tooling is not a substitute for coverage.
 - **Every input that ever mattered is committed and replayed.** `test/fuzz/corpus/` holds the seeds
   and every reproducer, and the ordinary unit suite replays all of them on both platforms
   (`test/tw_corpus.h`). A fuzzer that forgets what it found buys nothing; this is what turns a

@@ -691,6 +691,82 @@ exactly what's mine:
    now sized exactly to the input, and the replay asserts what it can actually prove: the input still
    parses without crashing, and the parser did not modify it. See `docs/adr/0011`.
 
+20. **The `.dac` parser: a path guard that did not guard, and eleven ctype calls on a signed char**
+   (`series.c`, `res.c`, `unslist.c`, `solution.c`, `tworld.c`, `test/series_test.c`,
+   `test/fuzz/fuzz_dac.c`). Both upstream's.
+
+   Neither was found by fuzzing or by a sanitizer. They were found by **writing the first unit test
+   `readconfigfile()` has ever had** — it was the last untrusted-input parser in the tree with no
+   coverage, listed as a known gap in `CLAUDE.md` §5, and the end-to-end layer covered its happy path
+   by accident. The very first malformed case wrote — `file = sub/dir/a.dat` — was accepted.
+
+   **The path guard.** `readconfigfile()` called `haspathname(datfilename)` to enforce its own
+   documented rule that "levelset filename may not contain a path". That function is wrong for this
+   job twice over:
+
+   * it tests `strchr(name, DIRSEP_CHAR)`, and `DIRSEP_CHAR` is a **backslash** on Windows — so a
+     forward slash passes, and Windows treats forward slashes as separators perfectly well; and
+   * it then `stat()`s the name and returns FALSE if nothing is there, so it answers *"is there an
+     existing file behind a path"*, not *"does this contain a path"*.
+
+   `openfileindir()` (`fileio.c:428`) makes the same backslash-only test, finds none, and takes its
+   **join** branch — `<datdir>` + separator + the name — so `file = ../../../x.dat` resolves cleanly
+   out of the data directory. The file is opened read-only and fed to `readseriesheader()`, so what
+   an attacker gets is mostly "not a valid data file"; the honest framing is that a guard written to
+   stop this did not stop it, rather than that the game could be made to leak secrets.
+
+   Fixed by testing for both separators directly at the call site rather than changing
+   `haspathname()`, which has six other callers relying on its existing (odd) semantics.
+
+   **Measured before tightening:** 0 of the maintainer's 598 real `.dac` files contain a separator in
+   their `file=` line, and the full corpus run — which opens every one of them — is byte-identical.
+   So the stricter rule refuses nothing that exists.
+
+   **The ctype calls.** `isspace()`, `tolower()` and `isalpha()` are defined only for arguments
+   representable as `unsigned char`, or `EOF`. `char` is **signed** on both toolchains here, so every
+   byte `>= 0x80` reached them as a negative int — undefined behavior, and on implementations that
+   index a table directly, an out-of-bounds read just before it. Eleven sites: six in the `.dac`
+   parser, three in `res.c` (which parses `res/rc`, the tileset config), one in `unslist.c`, one in
+   `solution.c`, and the level-name word-wrap in `tworld.c`.
+
+   **This is ordinary input, not an attack.** Level packs carry accented characters in level names
+   and filenames; `res/rc` names tileset files. `res.c:204` and `res.c:220` already had the cast, so
+   somebody knew once.
+
+   ⚠ **Nothing observable was broken.** All 256 byte values were run through
+   isspace/isalpha/tolower/toupper as signed and as unsigned on the shipping toolchain: zero
+   differing results. This removes undefined behavior; it does not repair a visible fault, and no
+   test can distinguish the two states. Twenty-two casts: `series.c` 6, `solution.c` 6 (its TWO
+   `.dat`-suffix comparisons), `tworld.c` 5, `res.c` 3, `unslist.c` 1, `fileio.c` 1.
+
+   `tworld.c` needed more than a cast: its argument is a command code, and the `Cmd` enum runs past
+   255 (`CmdReservedLast` is 511), so `isalpha()` could be handed a value that is neither a valid
+   `unsigned char` nor `EOF`. A range check now precedes it; 0–255 behaves exactly as before.
+
+   ⚠ **Three instances in `oshw-sdl` are deliberately untouched** — `sdlout.c:812` (`isprint`) and
+   `sdltext.c:110` and `:336` (`isspace`). Those files are not compiled by this fork, so a change
+   there could not be built or tested, and this repository does not ship edits it cannot verify.
+
+   Be precise about *why*, because the first version of this note was not: it said "oshw-sdl is not
+   built or shipped by this fork", and that is **too strong**. `oshw-qt/CMakeLists.txt:7-8` compiles
+   `../oshw-sdl/sdlsfx.c` into the shipping library. That one file simply has no ctype calls, so the
+   conclusion survives — but the reason is "these three files are not compiled", not "that directory
+   is not compiled".
+
+   **Replay-neutral, measured over the whole collection.** jc-47 against jc-48: **289 sets, 18,640
+   valid and 1,107 invalid under both**, and **0 of 303 per-set outputs differ**.
+
+   **How each changed file was actually verified**, since three of them have no unit test and saying
+   "it compiles" would not be an answer:
+
+   | File | What exercised it |
+   |---|---|
+   | `series.c` | 74 unit checks incl. 40 new `.dac` cases; the corpus run opens all 598 `.dac` files |
+   | `solution.c` | 1,207 unit checks; every `.tws` in the corpus run |
+   | `tworld.c` | the 12 end-to-end cases drive its command line; the wrap code renders level names in the playtest |
+   | `res.c` | **no unit test** — exercised by the GUI playtest, which loads `res/rc` to get its tileset |
+   | `unslist.c` | **no unit test** — exercised by the corpus run, which reads the `.ccx` extension files |
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:

@@ -157,10 +157,115 @@ static void corpus_report(twcorpusverdict v, char const *name)
 	      name, tw_corpus_why(v));
 }
 
+/* The .dac corpus, replayed through readconfigfile(). Same contract as above
+ * (docs/adr/0011): the fuzzer discovers on Linux, this remembers everywhere.
+ * The fuzz target uses fmemopen(); this uses a scratch file of its own -- a
+ * DIFFERENT one from the .dac unit cases below, so the two cannot tread on
+ * each other, for the same POSIX-only reason. */
+static char const *daccorpusscratch = "tw_daccorpus_test.dac";
+static int daccorpus_replayed = 0;
+static int daccorpus_parsed = 0;
+
+static void daccorpus_read(twcorpusinput const *in)
+{
+    gameseries	series;
+    fileinfo	file;
+    FILE       *f;
+
+    f = fopen(daccorpusscratch, "wb");
+    if (!f)
+	return;
+    if (fwrite(in->data, 1, (size_t)in->size, f) != (size_t)in->size) {
+	fclose(f);
+	remove(daccorpusscratch);
+	return;
+    }
+    fclose(f);
+
+    memset(&series, 0, sizeof series);
+    clearfileinfo(&file);
+    if (fileopen(&file, daccorpusscratch, "rb", NULL)) {
+	warn_count = 0;
+	errmsg_count = 0;
+	readconfigfile(&file, &series);
+	fileclose(&file, NULL);
+	++daccorpus_parsed;
+    }
+    remove(daccorpusscratch);
+}
+
+static void daccorpus_report(twcorpusverdict v, char const *name)
+{
+    ++daccorpus_replayed;
+    CHECK_MSG(v == TW_CORPUS_OK, "dac corpus input '%.80s': %s",
+	      name, tw_corpus_why(v));
+}
+
 static void put16(unsigned char *p, int v)
 {
     p[0] = (unsigned char)(v & 0xFF);
     p[1] = (unsigned char)((v >> 8) & 0xFF);
+}
+
+/* --- the .dac configuration parser --------------------------------------- *
+ *
+ * readconfigfile() had NO unit test until now, which CLAUDE.md section 5 listed
+ * as a known gap. It is the other half of the untrusted-input surface: every
+ * level set in a sets\ directory is reached through a .dac, and a .dac is a
+ * text file somebody else wrote. The end-to-end layer opens the stock ones, so
+ * the happy path was covered by accident; nothing covered a malformed one.
+ *
+ * The parser is unusual in being LINE-BASED TEXT rather than a binary record,
+ * which is why it needs its own harness and its own fuzz target -- it is the
+ * one parser here whose interesting inputs are not byte patterns.
+ */
+static char const *dacscratch = "tw_dac_test.dac";
+
+/* Write text as a .dac and run readconfigfile() over it. Returns the data-file
+ * name the parser reported, or NULL if it refused the file.
+ */
+/* 🔴 Counted, and asserted zero at the end of the .dac cases. readdac()
+ * returns NULL both when the PARSER refused the file and when the HARNESS could
+ * not stage it, and the nine `== NULL` assertions below cannot tell those
+ * apart -- so in a read-only working directory every one of them would pass
+ * without the parser running. That is the same conflation the leveldata corpus
+ * replay was fixed for last round; the counter is how it stays honest. */
+static int dac_harness_failures = 0;
+
+static char *readdac(char const *text, gameseries *series)
+{
+    fileinfo	file;
+    FILE       *f;
+    char       *r;
+    size_t	len;
+
+    len = strlen(text);
+    f = fopen(dacscratch, "wb");
+    if (!f) {
+	++dac_harness_failures;
+	return NULL;
+    }
+    if (fwrite(text, 1, len, f) != len) {
+	++dac_harness_failures;
+	fclose(f);
+	remove(dacscratch);
+	return NULL;
+    }
+    fclose(f);
+
+    memset(series, 0, sizeof *series);
+    clearfileinfo(&file);
+    if (!fileopen(&file, dacscratch, "rb", NULL)) {
+	++dac_harness_failures;
+	remove(dacscratch);
+	return NULL;
+    }
+    warn_count = 0;
+    errmsg_count = 0;
+    r = readconfigfile(&file, series);
+    fileclose(&file, NULL);
+    remove(dacscratch);
+    return r;
 }
 
 int main(void)
@@ -172,7 +277,7 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(33);
+    tw_expect_atleast(110);
 
     tw_case("every committed fuzz corpus input still reads safely");
     {
@@ -362,6 +467,330 @@ int main(void)
 	}
 	CHECK_MSG(h1 != 0, "the first level produced no hash");
 	CHECK_MSG(h1 != h2, "two different levels hashed identically (0x%lX)", h1);
+    }
+
+    /* ================================================================== *
+     * The .dac configuration parser. See the note above readdac().
+     * ================================================================== */
+
+    tw_case("every committed .dac fuzz corpus input still parses safely");
+    {
+	char dir[256];
+	int c;
+
+	CHECK_MSG(tw_corpus_dir("dac", dir, sizeof dir),
+		  "could not find test/fuzz/corpus/dac from the working"
+		  " directory -- the replay would have proved nothing");
+	if (dir[0]) {
+	    c = tw_corpus_run(dir, daccorpus_read, daccorpus_report);
+	    CHECK_MSG(c > 0, "corpus directory %.100s held no inputs", dir);
+	    CHECK_INT(daccorpus_replayed, c);
+	    CHECK_MSG(daccorpus_parsed == c,
+		      "readconfigfile() ran on only %d of %d corpus inputs",
+		      daccorpus_parsed, c);
+	}
+    }
+
+    tw_case("a minimal .dac names its data file");
+    {
+	gameseries s;
+	char *r = readdac("file = CCLP1.dat\n", &s);
+	CHECK_MSG(r != NULL, "a well-formed .dac was refused");
+	if (r)
+	    CHECK_STR(r, "CCLP1.dat");
+    }
+
+    tw_case("ruleset, lastlevel and the three flag directives are read");
+    {
+	gameseries s;
+	char *r;
+
+	r = readdac("file = a.dat\nruleset = ms\nlastlevel = 144\n", &s);
+	CHECK_MSG(r != NULL, "a valid ms .dac was refused");
+	CHECK_INT(s.ruleset, Ruleset_MS);
+	CHECK_INT(s.final, 144);
+
+	/* Mixed case, because the parser lowercases both name and value. */
+	r = readdac("file = a.dat\nRuleSet = LyNx\n", &s);
+	CHECK_MSG(r != NULL, "a mixed-case ruleset was refused");
+	CHECK_INT(s.ruleset, Ruleset_Lynx);
+
+	r = readdac("file = a.dat\nusepasswords = n\n", &s);
+	CHECK_MSG(r != NULL, "usepasswords = n was refused");
+	CHECK_INT(s.gsflags & GSF_IGNOREPASSWDS, GSF_IGNOREPASSWDS);
+
+	r = readdac("file = a.dat\nusepasswords = y\n", &s);
+	CHECK_INT(s.gsflags & GSF_IGNOREPASSWDS, 0);
+
+	r = readdac("file = a.dat\nfixlynx = y\n", &s);
+	CHECK_INT(s.gsflags & GSF_LYNXFIXES, GSF_LYNXFIXES);
+
+	r = readdac("file = a.dat\nfileinsetsdir = y\n", &s);
+	CHECK_INT(s.gsflags & GSF_DATFORDACSERIESDIR, GSF_DATFORDACSERIESDIR);
+	(void)r;
+    }
+
+    tw_case("comments and blank lines are skipped, not parsed");
+    {
+	gameseries s;
+	char *r = readdac("file = a.dat\n"
+			  "# a comment\n"
+			  "\n"
+			  "   \t  \n"
+			  "   # an indented comment\n"
+			  "ruleset = lynx\n", &s);
+	CHECK_MSG(r != NULL, "comments or blank lines were treated as syntax errors");
+	CHECK_INT(s.ruleset, Ruleset_Lynx);
+    }
+
+    tw_case("a .dac that is wrong is REFUSED, not half-accepted");
+    {
+	gameseries s;
+	/* 🔴 These are the cases that matter for a file somebody else wrote.
+	 * Each must return NULL -- a parser that accepts a malformed config and
+	 * carries on with a partly-filled gameseries is how a level set loads
+	 * with the wrong ruleset, which silently invalidates every solution
+	 * recorded against it. */
+	CHECK_MSG(readdac("ruleset = ms\n", &s) == NULL,
+		  "a .dac with no 'file =' first line was accepted");
+	/* BOTH separators, and that is not belt-and-braces. With only the
+	 * forward-slash case here, deleting the backslash arm of the fix left
+	 * this whole file green -- measured. A .dac written on either platform
+	 * can be read on the other, so both arms are load-bearing. */
+	CHECK_MSG(readdac("file = sub/dir/a.dat\n", &s) == NULL,
+		  "a .dac naming a forward-slash path was accepted");
+	CHECK_MSG(readdac("file = sub\\dir\\a.dat\n", &s) == NULL,
+		  "a .dac naming a backslash path was accepted");
+	CHECK_MSG(readdac("file = ../../../x.dat\n", &s) == NULL,
+		  "a .dac naming a relative parent path was accepted");
+	/* No separator is needed to reach somewhere unintended on Windows:
+	 * CON, NUL, COM1 and LPT1 resolve to the DEVICE from inside any
+	 * directory, extension ignored. jc-42 guarded tileset names against
+	 * exactly this and level sets were left open. */
+	CHECK_MSG(readdac("file = LPT1\n", &s) == NULL,
+		  "a .dac naming a device was accepted");
+	CHECK_MSG(readdac("file = com1.dat\n", &s) == NULL,
+		  "a .dac naming a device WITH an extension was accepted");
+	CHECK_MSG(readdac("file = NUL\n", &s) == NULL,
+		  "a .dac naming NUL was accepted");
+	CHECK_MSG(readdac("file = a.dat\nnosuchdirective = 1\n", &s) == NULL,
+		  "an unknown directive was accepted");
+	CHECK_MSG(readdac("file = a.dat\nruleset = klingon\n", &s) == NULL,
+		  "an invalid ruleset was accepted");
+	CHECK_MSG(readdac("file = a.dat\nlastlevel = 0\n", &s) == NULL,
+		  "lastlevel = 0 was accepted");
+	CHECK_MSG(readdac("file = a.dat\nlastlevel = -5\n", &s) == NULL,
+		  "a negative lastlevel was accepted");
+	CHECK_MSG(readdac("file = a.dat\nlastlevel = 12x\n", &s) == NULL,
+		  "lastlevel with trailing garbage was accepted");
+	CHECK_MSG(readdac("file = a.dat\nthisline has no equals sign\n", &s) == NULL,
+		  "a line with no '=' was accepted");
+	CHECK_MSG(readdac("", &s) == NULL, "an empty .dac was accepted");
+    }
+
+    tw_case("a .dac with high-bit bytes does not misbehave");
+    {
+	/* 🔴 THE ctype TRAP. readconfigfile() calls isspace() and tolower() on
+	 * a plain `char`, which is SIGNED on both toolchains this builds with.
+	 * Any byte >= 0x80 therefore reaches those functions as a NEGATIVE int,
+	 * which is undefined behavior -- the argument must be representable as
+	 * unsigned char, or EOF.
+	 *
+	 * Level packs really do carry accented characters, so this is ordinary
+	 * input rather than an attack. These cases do not assert a particular
+	 * verdict for the file (either refusing it or reading it is defensible);
+	 * they assert that the parser RETURNS, does not crash, and does not
+	 * produce a garbage ruleset.
+	 *
+	 * ⚠ THEY ARE NOT A REGRESSION NET FOR THE (unsigned char) CASTS, and an
+	 * earlier version of this comment claimed they were. Measured: reverting
+	 * all six casts in series.c leaves this file green. It cannot be
+	 * otherwise -- every one of the 256 byte values gives the same answer
+	 * through ctype signed or unsigned on both shipping toolchains, so there
+	 * is no observable difference to assert. The casts are hardening against
+	 * undefined behavior, verified by inspection; these cases are a crash
+	 * net. Do not mistake the second for the first. */
+	gameseries s;
+	char *r;
+
+	/* Asserted EXACTLY, not "looks plausible". The first version of this
+	 * case checked `strlen(r) < 256`, which cannot fail: filegetline() caps
+	 * the line at 254 characters, so the name can never reach 256 whatever
+	 * the parser does. Measured with a deliberately shrunk destination
+	 * buffer, that check stayed green through a 215-byte overflow. */
+	r = readdac("file = \xE9t\xE9.dat\n", &s);
+	CHECK_MSG(r != NULL, "a high-bit filename was refused outright");
+	if (r)
+	    CHECK_STR(r, "\xE9t\xE9.dat");
+
+	r = readdac("file = a.dat\n\xE9\xE9\xE9 = 1\n", &s);
+	CHECK_MSG(r == NULL, "a high-bit directive name was accepted");
+
+	r = readdac("file = a.dat\n\xA0ruleset = ms\n", &s);
+	CHECK_MSG(r == NULL || s.ruleset == Ruleset_MS || s.ruleset == Ruleset_None,
+		  "a high-bit leading byte produced a garbage ruleset (%d)", s.ruleset);
+
+	r = readdac("file = a.dat\nruleset = \xE9s\n", &s);
+	CHECK_MSG(r == NULL, "a high-bit ruleset value was accepted");
+    }
+
+    tw_case("a line at and past the buffer boundary is handled");
+    {
+	/* filegetline() reads at most sizeof buf - 1 = 255 bytes and then
+	 * discards to end of line. The sscanf conversions below it have no
+	 * width specifiers, so their safety depends entirely on that limit --
+	 * which is worth pinning, because it is the same shape as jc-44 (a
+	 * buffer that is safe only because of a bound in a different place). */
+	gameseries s;
+	char line[600];
+	char *r;
+	int i;
+
+	memset(line, 0, sizeof line);
+	strcpy(line, "file = ");
+	for (i = 7 ; i < 500 ; ++i)
+	    line[i] = 'a';
+	line[500] = '\n';
+	line[501] = '\0';
+	/* 🔴 EXACTLY 247, and that number is the whole point of the case.
+	 * filegetline() is handed *len = 255, so fgets stores at most 254
+	 * characters; "file = " is 7 of them, leaving 247 for the name. The
+	 * destination is char[256], so the real headroom on that un-widthed
+	 * `sscanf(buf, "file = %[^\n\r]", datfilename)` is EIGHT bytes, and it
+	 * exists only because of a cap in a different function.
+	 *
+	 * An earlier version asserted `strlen(r) < 256`, which is unfalsifiable
+	 * -- 247 is always less than 256. Shrinking datfilename to char[32]
+	 * overflows a static by 215 bytes and that check stayed green. */
+	r = readdac(line, &s);
+	CHECK_MSG(r != NULL, "an over-long filename was refused outright");
+	if (r)
+	    CHECK_INT((int)strlen(r), 247);
+
+	memset(line, 0, sizeof line);
+	strcpy(line, "file = a.dat\n");
+	for (i = 13 ; i < 500 ; ++i)
+	    line[i] = 'b';
+	line[500] = '\n';
+	line[501] = '\0';
+	r = readdac(line, &s);
+	CHECK_MSG(r == NULL, "an over-long directive line was accepted");
+    }
+
+    tw_case("a line that exactly fills the buffer does not eat the next one");
+    {
+	/* 🔴 filegetline() (fileio.c:220) tests `buf[n] != '\n'` where n is
+	 * strlen(buf) -- so it indexes the NUL TERMINATOR, which is never a
+	 * newline. The condition degenerates to "the buffer filled", and a line
+	 * that filled it exactly, newline included, takes the discard-to-end-of-
+	 * line branch and swallows the WHOLE NEXT LINE.
+	 *
+	 * That is not cosmetic here. The line eaten below is `ruleset = ms`, and
+	 * losing it leaves series->ruleset at Ruleset_None, whereupon
+	 * readseriesheader() (series.c:189) falls back to the .dat's own
+	 * signature. A set can load under the WRONG RULESET from a .dac that
+	 * looks perfectly fine -- and that silently invalidates every solution
+	 * recorded against it, which is the worst outcome this program has.
+	 *
+	 * Latent: it needs a line of exactly the boundary length. filegetline()
+	 * is called here with *len = 255 and fgets stores at most 254
+	 * characters, so the boundary is 254 including the newline. 252 and 253
+	 * are checked either side of it so a future change to the buffer size
+	 * cannot quietly move the cliff without turning this red. */
+	gameseries s;
+	char buf[700];
+	char *r, *q;
+	int i, pad;
+
+	for (pad = 252 ; pad <= 254 ; ++pad) {
+	    q = buf;
+	    memcpy(q, "file = a.dat\n", 13);
+	    q += 13;
+	    *q++ = '#';
+	    for (i = 1 ; i < pad - 1 ; ++i)
+		*q++ = 'x';
+	    *q++ = '\n';
+	    strcpy(q, "ruleset = ms\n");
+
+	    r = readdac(buf, &s);
+	    CHECK_MSG(r != NULL, "a %d-byte comment line got the file refused", pad);
+	    CHECK_MSG(s.ruleset == Ruleset_MS,
+		      "a comment line of exactly %d bytes swallowed the"
+		      " 'ruleset = ms' line after it -- ruleset came back %d",
+		      pad, s.ruleset);
+	}
+    }
+
+    tw_case("both settings of every flag directive are honored");
+    {
+	/* The `= y` side of each was covered above; these are the CLEAR
+	 * branches, which nothing reached. usepasswords has both already. */
+	gameseries s;
+
+	readdac("file = a.dat\nfixlynx = n\n", &s);
+	CHECK_INT(s.gsflags & GSF_LYNXFIXES, 0);
+	readdac("file = a.dat\nfileinsetsdir = n\n", &s);
+	CHECK_INT(s.gsflags & GSF_DATFORDACSERIESDIR, 0);
+    }
+
+    tw_case("an INDENTED directive is refused, and that is a real inconsistency");
+    {
+	/* Pinning current behavior, not endorsing it. readconfigfile() skips
+	 * leading whitespace into `p` (series.c:499) and then scans **buf**
+	 * (series.c:502), so `%[^= \t]` matches zero characters and an indented
+	 * directive is a syntax error -- while an indented COMMENT works,
+	 * because that check does use `p`.
+	 *
+	 * unslist.c:165 performs the identical skip and then scans `p`, so the
+	 * two configuration parsers in this tree disagree about indentation.
+	 * Left alone deliberately: changing it would make files the game
+	 * currently refuses start loading, and no real .dac needs it. Recorded
+	 * so the next person finds a pinned decision rather than a surprise. */
+	gameseries s;
+	CHECK_MSG(readdac("file = a.dat\n   ruleset = ms\n", &s) == NULL,
+		  "an indented directive was accepted -- if that was deliberate,"
+		  " update this case and unslist.c's matching skip");
+	CHECK_MSG(readdac("file = a.dat\n   # indented comment\nruleset = ms\n",
+			  &s) != NULL,
+		  "an indented COMMENT was refused; only directives should be");
+    }
+
+    tw_case("isreservedfilename knows a Windows device from a level set");
+    {
+	/* This moved out of res.c in jc-48, where it had guarded tileset names
+	 * since jc-42 with no test of any kind. It is testable here because
+	 * series_test.c compiles fileio.c -- which is half the reason for
+	 * moving it. Polarity: TRUE means the name IS reserved. */
+	CHECK_MSG(isreservedfilename("CON"), "CON not recognized");
+	CHECK_MSG(isreservedfilename("nul"), "lowercase nul not recognized");
+	CHECK_MSG(isreservedfilename("CoM1"), "mixed-case COM1 not recognized");
+	CHECK_MSG(isreservedfilename("LPT9"), "LPT9 not recognized");
+	/* The extension is ignored, because "COM1.dat" resolves to the device. */
+	CHECK_MSG(isreservedfilename("COM1.dat"), "COM1.dat not recognized");
+	CHECK_MSG(isreservedfilename("aux.bmp"), "aux.bmp not recognized");
+	/* And ordinary names are NOT swept up -- the failure mode that would
+	 * quietly make real level sets vanish. */
+	CHECK_MSG(!isreservedfilename("CCLP1.dat"), "CCLP1.dat rejected");
+	CHECK_MSG(!isreservedfilename("CONCERT.dat"), "CONCERT.dat rejected");
+	CHECK_MSG(!isreservedfilename("COM10"), "COM10 rejected (only 1-9 exist)");
+	CHECK_MSG(!isreservedfilename("NULL.dat"), "NULL.dat rejected");
+	CHECK_MSG(!isreservedfilename(""), "the empty name rejected");
+	CHECK_MSG(!isreservedfilename("GAP'sSub.dat"),
+		  "the one exotic name in the maintainer's 598 files rejected");
+	/* Longer than the internal base[16] buffer: must not overflow, and is
+	 * far too long to be a device name. */
+	CHECK_MSG(!isreservedfilename("averyverylongfilenameindeed.dat"),
+		  "an over-long name was treated as a device");
+    }
+
+    tw_case("every .dac case above actually reached the parser");
+    {
+	/* The assertion that stops all of the `== NULL` expectations above from
+	 * passing for the wrong reason. See the note above readdac(). */
+	CHECK_MSG(dac_harness_failures == 0,
+		  "%d .dac case(s) could not be staged to a scratch file, so"
+		  " their results say nothing about the parser",
+		  dac_harness_failures);
     }
 
     return tw_end();
