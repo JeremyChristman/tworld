@@ -1455,6 +1455,48 @@ static struct {
  {0,    0,      0},
 };
 
+/* MOD (Jeremy, jc-49): bounds-safe reads of movelaws[] by a cell's BOTTOM id.
+ *
+ * 🔴 movelaws[] has exactly 64 entries, one per TERRAIN id -- but a cell's
+ * BOTTOM layer can hold a CREATURE, and creature ids start at Chip == 64. So
+ * `movelaws[cellat(p)->bot.id]` reads past the end of the array the moment the
+ * lower layer holds one, by up to 47 entries (the highest such id is 111).
+ *
+ * That is NOT an exotic malformed-file case. Scanning the maintainer's whole
+ * collection -- 328 .dat files, 31,090 levels -- 5,743 of them (18%) put such a
+ * tile in the lower layer, and that includes CC1 itself and every one of
+ * CCLP1-5 and CCLXP2. Ordinary, official level data.
+ *
+ * Three call sites indexed this way, all added by THIS FORK during the desync
+ * work (FIX_KEEPSLOT_OCCUPANT, jc-17 era) rather than inherited from upstream:
+ * two in canmakemove() and one inside a TRACE_DESYNC block. Found by the MS
+ * engine fuzz target on its first run, as an UndefinedBehaviorSanitizer
+ * out-of-bounds report at mslogic.c:1970.
+ *
+ * ⚠ WHAT THE OUT-OF-RANGE ANSWER SHOULD BE is a judgment, and the honest
+ * position is that there is no "correct" one to restore: the old behavior read
+ * whatever bytes followed the array in .rodata, which is undefined and could
+ * differ between compilers or builds. Any deterministic answer is an
+ * improvement on that. Zero -- "this terrain refuses every direction" -- is
+ * chosen because the predicate these guard asks is "would the terrain
+ * underneath have refused too?", and a cell whose bottom layer is a creature
+ * has no terrain that permits anything.
+ *
+ * Whether that matches what the garbage happened to say is not assumed: it is
+ * measured against the full solution corpus before shipping.
+ */
+#define	MOVELAWCOUNT	((int)(sizeof movelaws / sizeof *movelaws))
+
+static int movelaw_block(int id)
+{
+    return (id >= 0 && id < MOVELAWCOUNT) ? movelaws[id].block : 0;
+}
+
+static int movelaw_creature(int id)
+{
+    return (id >= 0 && id < MOVELAWCOUNT) ? movelaws[id].creature : 0;
+}
+
 /* Including the flag CMM_NOLEAVECHECK in a call to canmakemove()
  * indicates that the tile the creature is moving out of is
  * automatically presumed to permit such movement. CMM_NOEXPOSEWALLS
@@ -1917,7 +1959,7 @@ static int canmakemove(creature const* cr, int dir, int flags) {
              * SuperCC gives 2,29 its move. Keeping the slot removes the shift, so
              * the skip lands where it was meant to. */
             if (id != Chip && id != Swimming_Chip
-                    && !(movelaws[cellat(to)->bot.id].block & dir)
+                    && !(movelaw_block(cellat(to)->bot.id) & dir)
                     && cellat(to)->bot.id != CloneMachine)
                 cmm_keepslot = TRUE;
 #endif
@@ -1967,7 +2009,7 @@ static int canmakemove(creature const* cr, int dir, int flags) {
              * so a cloner underneath makes the guard PASS regardless, tryEnter runs,
              * `sliding` is cleared and the creature DOES drop. movelaws[CloneMachine]
              * refuses, so without this exclusion the predicate keeps the slot there. */
-            if ((!(movelaws[cellat(to)->bot.id].creature & dir)
+            if ((!(movelaw_creature(cellat(to)->bot.id) & dir)
 #ifndef NO_FIX_KEEPSLOT_FIRE
                  /* MOD (Jeremy): FIRE refuses BUGS and WALKERS, which movelaws does not know.
                   *
@@ -3803,7 +3845,7 @@ static void floormovements_of_blocks_and_monsters(void) /* split into two */
                         (int)currenttime(), cr->id,
                         (int)(cr->pos % CXGRID), (int)(cr->pos / CXGRID), slipdir,
                         cellat(dp)->top.id, cellat(dp)->bot.id,
-                        !!(movelaws[cellat(dp)->bot.id].creature & slipdir),
+                        !!(movelaw_creature(cellat(dp)->bot.id) & slipdir),
                         keepslot ? "KEEP" : "DROP");
             }
 #endif

@@ -21,6 +21,45 @@ stay attached to something someone can see.
 
 ---
 
+## jc-49 — 2026-09-05
+
+### Fixed
+
+- 🔴 **`movelaws[]` was indexed out of bounds on ordinary levels.** The array has exactly **64
+  entries, one per terrain id** — but a cell's *bottom* layer can hold a **creature**, and creature
+  ids start at `Chip == 64`. So `movelaws[cellat(to)->bot.id]` read past the end by up to 47 entries
+  (the highest such id is 111), and used whatever followed the array in `.rodata` as a movement rule.
+
+  **This is not an exotic malformed-file case.** Scanning the whole collection — **328 `.dat` files,
+  31,090 levels — 5,743 of them (18%)** put such a tile in a lower layer, including **CC1 itself and
+  every one of CCLP1–5 and CCLXP2**. Ordinary, official level data.
+
+  **It is this fork's own defect, not upstream's.** All three call sites were added during the
+  desync work (`FIX_KEEPSLOT_OCCUPANT`, jc-17 era); `git log -L` puts them on commits `c69ed2b`,
+  `42537ae` and `5d076b3`. Two are in `canmakemove()`; the third is inside a `TRACE_DESYNC` block and
+  so never in a shipped binary.
+
+  ⚠ **There is no "correct" old behavior to preserve** — the old read was undefined and could differ
+  between compilers or builds, which means replay was never guaranteed stable across toolchains for
+  these levels. Any deterministic answer is an improvement. Zero (*"this terrain refuses every
+  direction"*) is chosen because the predicate asks "would the terrain underneath have refused too?",
+  and a cell whose bottom layer is a creature has no terrain that permits anything.
+
+  **Replay-neutral, measured rather than assumed:** jc-48 against jc-49 — **289 sets, 18,640 valid /
+  1,107 invalid under both, 0 of 303 per-set outputs differ.** Whatever the out-of-bounds read was
+  picking up, no recorded solution depended on it.
+
+### Notes
+
+- ⭐ **Found by the new MS-engine fuzz target on its first run**, as a UBSan out-of-bounds report at
+  `mslogic.c:1970`, about one second in. That is three consecutive finds by tooling nobody pointed at
+  a specific line: jc-46 by UBSan, jc-47 by LeakSanitizer, jc-49 by the engine fuzzer.
+- 🔴 **And it is the first defect found by fuzzing the ENGINES rather than the parsers** — the class
+  the parser targets structurally cannot reach. jc-45 was the same shape and had to be found by hand.
+- The reproducer is committed as `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature` and replayed
+  by the unit suite. Mutation-proven locally: with the fix, 8 corpus inputs run clean; reverted to the
+  raw index, the same input dies with `SIGILL` under `-fsanitize-undefined-trap-on-error`.
+
 ## Unreleased
 
 Nothing here changes the executable. It rides along with the next release that does.

@@ -783,6 +783,43 @@ exactly what's mine:
    Both claims were plausible and neither was checked. Verify what exercises a file before writing
    it down, or the table becomes a way of *feeling* covered.
 
+21. **`movelaws[]` indexed out of bounds by a cell's bottom layer** (`mslogic.c`). **This fork's
+   own**, not upstream's — and the first defect found by fuzzing the *engine* rather than a parser.
+
+   `movelaws[]` has exactly **64 entries, one per terrain id**. A cell's bottom layer can hold a
+   **creature**, and creature ids begin at `Chip == 64`, so `movelaws[cellat(to)->bot.id]` reads past
+   the array by up to 47 entries — the highest such id is 111 — and uses whatever follows it in
+   `.rodata` as a movement rule.
+
+   **Ordinary level data, not a crafted file.** Scanning the maintainer's collection: **328 `.dat`
+   files, 31,090 levels, 5,743 of them (18%)** have a lower-layer tile that overflows the array —
+   **CC1 itself and every one of CCLP1–5 and CCLXP2** among them. 48 of the 256 file tile bytes map
+   to an id ≥ 64.
+
+   Three call sites, all added by this fork during the desync work (`FIX_KEEPSLOT_OCCUPANT`,
+   jc-17 era — commits `c69ed2b`, `42537ae`, `5d076b3`). Two are in `canmakemove()`; the third is
+   inside `#ifdef TRACE_DESYNC` and is never in a shipped binary. All three now go through
+   `movelaw_block()` / `movelaw_creature()`, which range-check the id.
+
+   ⚠ **There was no "correct" old behavior to preserve.** The old read was undefined, and what it
+   returned depended on whatever the linker put after the array — so replay was never guaranteed
+   stable across compilers or builds for these levels. That is a stronger argument for fixing it than
+   any particular replacement value. Zero — *"this terrain refuses every direction"* — was chosen
+   because the predicate asks "would the terrain underneath have refused too?", and a cell whose
+   bottom layer is a creature has no terrain that permits anything.
+
+   **Replay-neutral, measured over the whole collection.** jc-48 against jc-49: **289 sets, 18,640
+   valid and 1,107 invalid under both**, and **0 of 303 per-set outputs differ**. Whatever the
+   out-of-bounds read was picking up, no recorded solution depended on it.
+
+   ⭐ **How it was found matters as much as the fix.** The MS engine fuzz target hit it about one
+   second into its first run, as a UBSan out-of-bounds report at `mslogic.c:1970`. The four parser
+   targets could never have reached it: they stop at "the file was refused", and this needed a level
+   that loads *and* a creature that tries to move. jc-45 was the same shape and had to be found by a
+   person reading the code. The reproducer is committed as
+   `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature`; reverting the fix makes it die with
+   `SIGILL` under `-fsanitize-undefined-trap-on-error`, which runs on Windows.
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:

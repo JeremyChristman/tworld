@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-48
+  Tile World  --  Jeremy Christman's fork                    build jc-49
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,35 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-49  --  A misread lookup in the MS engine, on ordinary levels
+-----------------------------------------------------------------
+
+  * THE ENGINE WAS READING PAST THE END OF ONE OF ITS OWN TABLES. When a
+    creature tries to move onto a square that already has something on
+    it, the MS engine asks a small table what the ground underneath
+    would allow. That table has one row per kind of ground -- and if the
+    square's lower layer happened to hold a creature rather than ground,
+    the engine looked up a row that does not exist and used whatever
+    happened to be in memory after the table.
+
+  * THIS IS NOT AN EXOTIC CASE. Every level pack checked was affected:
+    of 31,090 levels across 328 files, 5,743 -- about one in five --
+    have such a square, and that includes the original Chip's Challenge
+    and every one of CCLP1 through CCLP5. The lookup now stops at the
+    edge of the table and gives a definite answer instead of a leftover
+    one.
+
+  * NOTHING ABOUT PLAY CHANGES, and it was measured rather than assumed:
+    303 solution files across 289 level sets -- 18,640 solutions that
+    replay correctly and 1,107 that do not -- give byte-for-byte
+    identical results before and after. Whatever the old lookup was
+    picking up, no recorded solution depended on it.
+
+  * THIS ONE IS THE FORK'S OWN, not inherited. It came in with the
+    solution-desync work several builds ago, and it was found the first
+    time the project pointed a fuzzer at the game engine rather than at
+    its file readers.
 
 jc-48  --  Two fixes in how level-set configuration files are read
 -------------------------------------------------------------------

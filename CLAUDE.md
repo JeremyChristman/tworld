@@ -503,6 +503,25 @@ parser, was the next thing with none, and it now has `test/qt/ccmetadata_test.cp
 defect — the level index really is bounds-checked and Qt does the parsing — and **"we looked and it
 was fine" is a result worth having**, because until it existed nobody could say so.
 
+**Fixed in jc-49 — and this one is THIS FORK'S, not upstream's.** `movelaws[]` has exactly 64
+entries, one per *terrain* id, but a cell's **bottom layer can hold a creature**, and creature ids
+start at `Chip == 64`. So `movelaws[cellat(to)->bot.id]` read up to 47 entries past the array and
+used whatever followed it in `.rodata` as a movement rule. Not exotic: **5,743 of 31,090 real levels
+(18%) do this, including CC1 and every CCLP.** All three sites came in with the desync work
+(`FIX_KEEPSLOT_OCCUPANT`, jc-17 era) and now go through `movelaw_block()`/`movelaw_creature()`.
+Replay-neutral: 0 of 303 outputs changed. See `FORK.md` item 21.
+
+⭐ **Found by the MS-engine fuzz target one second into its first run** — the third consecutive find
+by tooling nobody aimed at a line (jc-46 UBSan, jc-47 LSan, jc-49 the engine fuzzer), and the first
+from fuzzing an **engine** rather than a parser. A parser target structurally could not reach it: it
+needs a level that *loads* and a creature that *tries to move*. jc-45 was the same shape and had to
+be found by hand.
+
+⚠ **When you fix an out-of-bounds read, do not assume there is a correct old value to preserve.** The
+old read here was undefined — what it returned depended on what the linker put after the array, so
+replay was never guaranteed stable across toolchains for these levels. Pick the defensible answer and
+**measure it against the corpus**, which is what settled this one.
+
 What follows is what is still live.
 
 ### 8.1 `-v` cannot work as documented
