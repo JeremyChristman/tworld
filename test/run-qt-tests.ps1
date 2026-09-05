@@ -78,10 +78,27 @@ if (-not (Test-Path $pkgconfig)) { Skip "no pkg-config at $pkgconfig" }
 # Qt5Gui is needed for QColor, which CCMetaData.h includes. Ask pkg-config
 # rather than hardcoding include paths, so this keeps working across Qt updates.
 $modules = "Qt5Xml Qt5Gui Qt5Core"
-$cflags = (& $pkgconfig --cflags $modules.Split(" ") 2>$null)
-if ($LASTEXITCODE -ne 0 -or -not $cflags) { Skip "pkg-config does not know $modules - Qt5 not installed?" }
-$libs = (& $pkgconfig --libs $modules.Split(" ") 2>$null)
-if ($LASTEXITCODE -ne 0 -or -not $libs) { Skip "pkg-config gave no libs for $modules" }
+# 🔴 DO NOT PUT `2>$null` ON THESE, and do not let ErrorActionPreference stay
+# "Stop" across them. This is the PowerShell 5.1 trap CLAUDE.md warns about:
+# redirecting a NATIVE command's stderr wraps each line in a NativeCommandError,
+# and with ErrorActionPreference = "Stop" that THROWS -- so a machine without Qt
+# never reached the Skip below, it aborted the whole script with a failure.
+#
+# That is not hypothetical. It broke the jc-49 RELEASE workflow, whose runner
+# installs qt5-static for the shipping build and has no pkg-config metadata for
+# Qt5Xml. pkg-config printed "Package Qt5Xml was not found", PowerShell turned
+# that into a terminating error, and run-tests.ps1 reported a failed layer for a
+# machine that should simply have skipped.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$cflags = & $pkgconfig --cflags $modules.Split(" ")
+$cflagsOk = ($LASTEXITCODE -eq 0)
+$libs = & $pkgconfig --libs $modules.Split(" ")
+$libsOk = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prevEAP
+
+if (-not $cflagsOk -or -not $cflags) { Skip "pkg-config does not know $modules - Qt5 development files not installed" }
+if (-not $libsOk -or -not $libs)     { Skip "pkg-config gave no libs for $modules" }
 
 $tests = Get-ChildItem -Path $qtDir -Filter "*_test.cpp" | Sort-Object Name
 if ($Filter) { $tests = $tests | Where-Object { $_.Name -like "*$Filter*" } }
