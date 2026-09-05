@@ -200,7 +200,8 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **11 unit runs, 17,265 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
+Current state: **12 unit runs, 17,328 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks;
+1,806 golden-master digests; 13 NO_FIX_* witnesses; 0 failures.**
 
 A third layer runs on Windows but not from `run-tests.ps1`, because it needs no test harness at all
 — it links the engines the way `tworld2` does and drives real level data:
@@ -334,6 +335,12 @@ misreading in the parser is faithfully reproduced and never caught.
 
 ### What is NOT covered — read this before trusting a green run
 
+- ~~`play.c` has no unit test~~ — **closed**: `test/play_test.c`, 63 checks over 35 cases,
+  0% → 26.6% lines. It installs a **fake engine** so that `play.c`'s own decisions are observable
+  rather than the engine's, and it is where the §3.5 property is finally pinned: **`doturn()` ignores
+  its `cmd` argument entirely during a replay.** ⚠ One case is deliberately narrower than it looks —
+  the death-counter ceiling is enforced twice, so the case pins the *behavior*, not either guard; the
+  case says so.
 - ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 79
   checks over 21 cases, 0% → 55.4% lines. ⚠ Read its header before adding to it: Lynx commits a
   creature's **position when the move begins**, not when it ends, and `advancegame()` withholds the
@@ -411,8 +418,9 @@ uninstrumented executable, so what they reach is not counted and these figures u
 | `solution.c` | 47.7% | **30.1%** |
 | `mslogic.c` | 44.8% | **33.3%** |
 | `fileio.c` | 40.1% | **31.3%** |
+| `play.c` | 26.6% | **33.8%** |
 | `series.c` | 19.3% | **24.4%** |
-| **overall** | 46.9% | **38.8%** |
+| **overall** | 45.6% | **38.7%** |
 
 ⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
 has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented

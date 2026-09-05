@@ -25,6 +25,58 @@ stay attached to something someone can see.
 
 Nothing here changes the executable. It rides along with the next release that does.
 
+### Fixed — `run-tests.ps1` did not run the two layers that watch the engine
+
+**A green local suite meant less than it looked.** `run-tests.ps1` ran unit, e2e and Qt; the golden
+master and the `NO_FIX_*` matrix — both built specifically to catch an engine change — were reachable
+only by running their scripts directly or by pushing to CI. A contributor could edit `mslogic.c`, run
+the documented entry point, get "all green", and never touch either.
+
+Both are now in the default set (`-Golden` and `-NoFix` narrow to one). They need a compiler but no
+built executable and no Qt, and together they cost about fifteen seconds. Verified: with a fix
+switched off in the engine, the top-level runner now exits 1 and names the failing layer.
+
+⚠ That verification also showed why the two are **not** redundant — the mutation tripped `nofix` and
+left `golden` green, because `NO_FIX_TRAP_REFRESH` is one of the 30 toggles the golden master cannot
+distinguish over real levels.
+
+### Added — the first unit test for `play.c`
+
+`play.c` is 565 lines and had **no unit test**: only the end-to-end layer touched it, with two
+solutions, through the whole program. It is the seam between a stored solution and an engine —
+`doturn()` decides every tick whether the command came from the player or from a recorded move list,
+when a replay has overrun its own end, and what gets appended to the move list that becomes a `.tws`.
+A defect there does not crash; it silently records or replays the wrong thing.
+
+- **`test/play_test.c`** — 63 checks over 35 cases. `play.c` **0% → 26.6% lines, 33.8% branches**.
+- 🔴 **It installs a FAKE engine, deliberately.** Driving a real one would test the engine, which
+  three other layers already do better. The fake records what `currentinput` held when it was called,
+  which makes *play.c's own decisions* observable — including the fact that **`doturn()` ignores its
+  `cmd` argument entirely during a replay**, the property CLAUDE.md §3.5's warning rests on and that
+  nothing had ever pinned.
+- Covers: live input and `CmdPreserve`; move recording and the `lastmove` reset; replay delivery and
+  index advance; the "got ahead of saved solution" warning; overrun against `besttime` including
+  `timeoffset`; the `MAXIMUM_TICK_COUNT` ceiling; stepping arithmetic including the MS `n &= ~3` mask;
+  the death counter's read clamp, write clamp, saturation and suppression; and `prepareplayback()`'s
+  refusal paths — jc-47's site.
+- **Mutation-proven, 7 mutations:** removing the `CmdPreserve` guard, the replay-recording guard, the
+  `lastmove` reset, the overrun check, the MS stepping mask, or the death-count read clamp each turns
+  the suite red.
+
+⚠ **The seventh mutation was NOT caught, and the test now says so.** Removing the `if (n <
+DEATHCOUNT_MAX)` guard inside `recorddeath()` changes nothing observable, because `setdeathcount()`
+clamps again on the way in. Removing **both** does fail (3 checks). So that case pins the ceiling as a
+*behavior*, not the particular guard implementing it — written into the case rather than left for
+someone to over-read a green run.
+
+⚠ **Overall coverage fell 46.9% → 45.6% while the suite grew**, for the third time and the same
+reason: `play.c`'s 297 lines entered the denominator at 26.6%. Read the per-file column.
+
+**Noted, not fixed:** `writesteppingstring(buf, stepping)` ignores its `stepping` argument and
+formats `state.stepping` instead (`play.c:220`). Harmless today — both call sites pass exactly that —
+but the signature promises something it does not do. Upstream's; left alone under the
+don't-reformat-upstream rule and recorded in the test header so it is not rediscovered as a mystery.
+
 ### Added — the `NO_FIX_*` differential matrix: 13 of 32 engine toggles are now provably live
 
 `mslogic.c` carries **32 `NO_FIX_*` toggles**, each isolating one engine fix from the jc-2..jc-29
