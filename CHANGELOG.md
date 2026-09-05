@@ -21,7 +21,17 @@ stay attached to something someone can see.
 
 ---
 
-## jc-49 — 2026-09-05
+## jc-50 — 2026-09-05
+
+> ⚠ **There is no jc-49 release, and the tag exists.** This fix was first tagged `jc-49`, and the
+> release workflow failed at its Tests step: `test/run-qt-tests.ps1` probed pkg-config with `2>$null`
+> under `ErrorActionPreference = "Stop"`, and PowerShell 5.1 turns a native command's stderr into a
+> terminating error — so on the release runner, which has no pkg-config metadata for Qt5, an intended
+> *skip* became a *failure*. Nothing was ever published as jc-49.
+>
+> The tag could not be moved onto the fix: the `refs/tags/jc-*` ruleset refused the force-push,
+> which is precisely what it is there for. So the fix ships as jc-50 and `jc-49` remains a tag with
+> no release. That is the honest outcome, and cheaper than weakening the rule.
 
 ### Fixed
 
@@ -45,7 +55,7 @@ stay attached to something someone can see.
   direction"*) is chosen because the predicate asks "would the terrain underneath have refused too?",
   and a cell whose bottom layer is a creature has no terrain that permits anything.
 
-  **Replay-neutral, measured rather than assumed:** jc-48 against jc-49 — **289 sets, 18,640 valid /
+  **Replay-neutral, measured rather than assumed:** jc-48 against jc-50 — **289 sets, 18,640 valid /
   1,107 invalid under both, 0 of 303 per-set outputs differ.** Whatever the out-of-bounds read was
   picking up, no recorded solution depended on it.
 
@@ -53,7 +63,7 @@ stay attached to something someone can see.
 
 - ⭐ **Found by the new MS-engine fuzz target on its first run**, as a UBSan out-of-bounds report at
   `mslogic.c:1970`, about one second in. That is three consecutive finds by tooling nobody pointed at
-  a specific line: jc-46 by UBSan, jc-47 by LeakSanitizer, jc-49 by the engine fuzzer.
+  a specific line: jc-46 by UBSan, jc-47 by LeakSanitizer, jc-50 by the engine fuzzer.
 - 🔴 **And it is the first defect found by fuzzing the ENGINES rather than the parsers** — the class
   the parser targets structurally cannot reach. jc-45 was the same shape and had to be found by hand.
 - The reproducer is committed as `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature` and replayed

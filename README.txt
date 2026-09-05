@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-49
+  Tile World  --  Jeremy Christman's fork                    build jc-50
 ==============================================================================
 
   1. What this is
@@ -443,7 +443,7 @@ nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
 
-jc-49  --  A misread lookup in the MS engine, on ordinary levels
+jc-50  --  A misread lookup in the MS engine, on ordinary levels
 -----------------------------------------------------------------
 
   * THE ENGINE WAS READING PAST THE END OF ONE OF ITS OWN TABLES. When a

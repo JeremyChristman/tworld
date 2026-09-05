@@ -1455,7 +1455,7 @@ static struct {
  {0,    0,      0},
 };
 
-/* MOD (Jeremy, jc-49): bounds-safe reads of movelaws[] by a cell's BOTTOM id.
+/* MOD (Jeremy, jc-50): bounds-safe reads of movelaws[] by a cell's BOTTOM id.
  *
  * 🔴 movelaws[] has exactly 64 entries, one per TERRAIN id -- but a cell's
  * BOTTOM layer can hold a CREATURE, and creature ids start at Chip == 64. So

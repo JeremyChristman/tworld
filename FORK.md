@@ -808,7 +808,7 @@ exactly what's mine:
    because the predicate asks "would the terrain underneath have refused too?", and a cell whose
    bottom layer is a creature has no terrain that permits anything.
 
-   **Replay-neutral, measured over the whole collection.** jc-48 against jc-49: **289 sets, 18,640
+   **Replay-neutral, measured over the whole collection.** jc-48 against jc-50: **289 sets, 18,640
    valid and 1,107 invalid under both**, and **0 of 303 per-set outputs differ**. Whatever the
    out-of-bounds read was picking up, no recorded solution depended on it.
 

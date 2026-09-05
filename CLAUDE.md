@@ -503,7 +503,7 @@ parser, was the next thing with none, and it now has `test/qt/ccmetadata_test.cp
 defect — the level index really is bounds-checked and Qt does the parsing — and **"we looked and it
 was fine" is a result worth having**, because until it existed nobody could say so.
 
-**Fixed in jc-49 — and this one is THIS FORK'S, not upstream's.** `movelaws[]` has exactly 64
+**Fixed in jc-50 — and this one is THIS FORK'S, not upstream's.** `movelaws[]` has exactly 64
 entries, one per *terrain* id, but a cell's **bottom layer can hold a creature**, and creature ids
 start at `Chip == 64`. So `movelaws[cellat(to)->bot.id]` read up to 47 entries past the array and
 used whatever followed it in `.rodata` as a movement rule. Not exotic: **5,743 of 31,090 real levels
@@ -512,7 +512,7 @@ used whatever followed it in `.rodata` as a movement rule. Not exotic: **5,743 o
 Replay-neutral: 0 of 303 outputs changed. See `FORK.md` item 21.
 
 ⭐ **Found by the MS-engine fuzz target one second into its first run** — the third consecutive find
-by tooling nobody aimed at a line (jc-46 UBSan, jc-47 LSan, jc-49 the engine fuzzer), and the first
+by tooling nobody aimed at a line (jc-46 UBSan, jc-47 LSan, jc-50 the engine fuzzer), and the first
 from fuzzing an **engine** rather than a parser. A parser target structurally could not reach it: it
 needs a level that *loads* and a creature that *tries to move*. jc-45 was the same shape and had to
 be found by hand.
@@ -531,7 +531,7 @@ What follows is what is still live.
 reaches `endmovement()` with a socket destination without passing that gate — a slide or teleport
 path is the suspect; it was not pinned down.
 
-Found by `fuzz_mslogic` ~43 s in, on the run right after jc-49 fixed the first engine finding. The
+Found by `fuzz_mslogic` ~43 s in, on the run right after jc-50 fixed the first engine finding. The
 reproducer is committed at `test/fuzz/known-findings/mslogic-socket-assert`, deliberately **outside**
 the corpus so the unit suite does not die on it — read that directory's README before touching it.
 
