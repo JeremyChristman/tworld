@@ -185,7 +185,7 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **10 unit runs, 17,169 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
+Current state: **11 unit runs, 17,233 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -286,7 +286,12 @@ misreading in the parser is faithfully reproduced and never caught.
 
 ### What is NOT covered — read this before trusting a green run
 
-- **The Lynx engine (`lxlogic.c`) has no unit test at all.** `mslogic_test.c` covers MS only.
+- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 64
+  checks over 19 cases, 0% → 49.1% lines. ⚠ Read its header before adding to it: Lynx commits a
+  creature's **position when the move begins**, not when it ends, and `advancegame()` withholds the
+  result for a **13-tick endgame timer** after the level is decided. Both make naive tick arithmetic
+  look like engine bugs. And **never use `chipisalive()` from a test** — it is `id == Chip`, which is
+  false whenever Chip is `Pushing_Chip`, i.e. straining against a wall while perfectly alive.
 - **The row-32 cloner glitch is only half covered.** `mslogic_test.c` pins the *loading* half
   (`readpos()` keeping `(x, 32)` distinct from `POS_INVALID`), which is unconditional. The half that
   `NO_FIX_ROW32_CLONER` actually guards — what happens when such a cloner **fires** — is not tested:
@@ -323,13 +328,20 @@ uninstrumented executable, so what they reach is not counted and these figures u
 |---|---|---|
 | `random.c` | 100.0% | **100.0%** |
 | `generic/dirinput.c` | 100.0% | **97.8%** |
-| `encoding.c` | 78.4% | **70.1%** |
+| `encoding.c` | 82.7% | **72.4%** |
 | `generic/in.c` | 55.7% | **50.9%** |
-| `solution.c` | 42.4% | **27.4%** |
+| `lxlogic.c` | 49.1% | **40.7%** |
+| `solution.c` | 47.7% | **30.1%** |
+| `fileio.c` | 40.1% | **31.3%** |
 | `mslogic.c` | 38.1% | **26.1%** |
-| `fileio.c` | 30.6% | **16.7%** |
-| `series.c` | 9.7% | **8.0%** |
-| **overall** | 37.4% | **28.3%** |
+| `series.c` | 19.3% | **24.4%** |
+| **overall** | 42.6% | **34.0%** |
+
+⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
+has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented
+lines against `mslogic.c`'s 1,650, and its core movement paths are dense rather than spread across
+thirty-two `NO_FIX_*` branches. The cheapest way to move `mslogic.c` is still the differential matrix
+described below.
 
 **Read the branch column.** An emulator is mostly conditionals, and a line count flatters an
 unexercised `switch` badly.

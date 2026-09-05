@@ -62,10 +62,15 @@
 #include	"tw_test.h"
 #include	"tw_fixture.h"
 
-/* The high-fidelity flag, declared extern in logic.h and defined in tworld.c.
- * Left FALSE: pedantic mode changes several of the behaviors asserted below,
- * and a test that silently ran in the other mode would be measuring a
- * configuration almost nobody plays.
+/* The high-fidelity flag, declared extern in logic.h. Left FALSE: pedantic mode
+ * changes several of the behaviors asserted below, and a test that silently ran
+ * in the other mode would be measuring a configuration almost nobody plays.
+ *
+ * ⚠ This comment used to say the flag is "defined in tworld.c". It is not --
+ * lxlogic.c:54 defines it, as tworld.c:96 itself points out. Defining it HERE
+ * is correct only because lxlogic.c is not in this translation unit; the Lynx
+ * test (test/lxlogic_test.c) must not, and gets a redefinition error if it
+ * tries. Fixed when that test was written, which is what surfaced it.
  */
 int	pedanticmode = 0;
 

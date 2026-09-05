@@ -25,6 +25,44 @@ stay attached to something someone can see.
 
 Nothing here changes the executable. It rides along with the next release that does.
 
+### Added — the Lynx engine has a test
+
+`lxlogic.c` is 2,045 lines and had **zero coverage of any kind**. It was the largest hole in the
+suite, and not a hypothetical one: the maintainer's collection holds **909 recorded Lynx solutions**,
+every one of which depends on this file behaving exactly as it does.
+
+- **`test/lxlogic_test.c`** — 64 checks over 19 cases: movement and timing, walls, water, fire,
+  bombs, the exit, the clock, chips and the socket, dirt, gravel, block pushing, ice, force floors,
+  a level with no Chip, and an off-grid creature entry.
+- **`lxlogic.c` coverage went from 0% to 49.1% lines / 40.7% branches** — making it the
+  best-covered engine in the tree, ahead of `mslogic.c`'s 38.1%. Overall coverage 37.4% → **42.6%**
+  lines, 28.3% → **34.0%** branches. Baseline updated.
+- Mutation-proven three ways: making water non-fatal, opening the socket with chips outstanding, and
+  removing the exit's `completed()` each turn the suite red.
+
+🔴 **These are characterization tests on purpose.** For an engine with recorded solutions,
+"different" and "wrong" are the same thing — a change here does not produce a bug report, it
+silently stops somebody's solution replaying. The corpus differential remains the instrument that
+*decides* whether an engine change is safe; this is the fast half that says **which rule** broke.
+
+**Three Lynx facts that make naive tick arithmetic look like engine bugs**, all found the hard way
+and now documented in the test's header:
+
+- A creature's **position is committed when its move begins**, not when the animation ends.
+- `advancegame()` withholds the verdict for a **13-tick endgame timer** after the level is decided;
+  a case that ran 16 ticks after reaching the exit saw 0 and looked like a defect.
+- ⚠ **`chipisalive()` must not be used from a test.** It is `id == Chip`, and between ticks Chip's id
+  is legitimately `Pushing_Chip` whenever he is straining against a wall — so it reports "not alive"
+  for a Chip in perfect health. The engine's own single use of it is safe; an outside observer's is
+  not.
+
+### Fixed — another comment that was wrong
+
+- `test/mslogic_test.c` said `pedanticmode` is "defined in `tworld.c`". It is defined in
+  **`lxlogic.c:54`**, as `tworld.c:96` itself points out. Defining it in the MS test is correct only
+  because `lxlogic.c` is not in that translation unit — writing the Lynx test surfaced this, because
+  doing the same there is a redefinition error.
+
 ### Added — the first test of anything in `oshw-qt/`
 
 Applying jc-48's lesson immediately: **the next thing with no coverage** was `CCMetaData.cpp`, the
