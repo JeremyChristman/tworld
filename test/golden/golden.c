@@ -83,16 +83,9 @@
  * side benefit of compiling exactly what ships.
  */
 
-#include	<stdio.h>
-#include	<stdlib.h>
-#include	<string.h>
-#include	<setjmp.h>
-
-#include	"../../defs.h"
-#include	"../../state.h"
-#include	"../../logic.h"
-#include	"../../encoding.h"
-#include	"../../random.h"
+/* The engine driver, the state digest and the die()-does-not-return surface
+ * all live here, shared with test/nofix/nofix.c so the two cannot drift. */
+#include	"tw_engine_digest.h"
 
 /* How far to drive each level. 400 ticks is 100 of Chip's moves in the MS
  * ruleset (he gets one every four): enough for a random walker to reach the
@@ -110,33 +103,6 @@
 #ifndef	WALKS_PER_LEVEL
 #define	WALKS_PER_LEVEL		1
 #endif
-
-/* ---------------------------------------------------------------- hashing -- */
-
-typedef unsigned long long u64;
-
-/* FNV-1a, 64-bit. Eight lines and no dependencies. It is not chosen for
- * strength -- nothing here is adversarial, the digest only has to change when
- * the state does. */
-#define	FNV_OFFSET	14695981039346656037ULL
-#define	FNV_PRIME	1099511628211ULL
-
-static void hash_byte(u64 *h, unsigned int b)
-{
-    *h ^= (u64)(b & 0xFF);
-    *h *= FNV_PRIME;
-}
-
-static void hash_int(u64 *h, long v)
-{
-    /* Fixed width and byte order, so a digest computed on one machine matches
-     * one computed on another. Going through unsigned long makes the shift of
-     * a negative value defined rather than implementation-defined. */
-    unsigned long u = (unsigned long)v;
-    int i;
-    for (i = 0 ; i < 4 ; ++i)
-	hash_byte(h, (unsigned int)((u >> (i * 8)) & 0xFF));
-}
 
 /* ------------------------------------------------------------ the walker -- */
 
@@ -158,115 +124,18 @@ static u64 walk_next(void)
     return walkstate * 2685821657736338717ULL;
 }
 
-/* ------------------------------------------------- the error surface, stubbed */
-
-/* A warning is EXPECTED here -- plenty of shipped levels have bad tiles -- so
- * warn_ counts rather than prints.
- *
- * 🔴 die_ MUST NOT RETURN, AND MUST NOT EXIT EITHER. Both halves matter:
- *
- *   not exit    a level that trips an engine assert has to be RECORDED as
- *               such, not take the whole run down with it. That is not
- *               hypothetical -- it is exactly what jc-51 was, and a run that
- *               aborted on the first one would have hidden every level after.
- *
- *   not return  in the shipped program die() calls exit(), so the engines are
- *               written on the assumption that control never comes back. A
- *               stub that simply sets a flag and returns lets the engine carry
- *               on through a state it has just declared impossible -- past
- *               `_assert(!"lookupblock() called on blockless location")`, for
- *               instance, straight into the deref that assert exists to
- *               prevent. That is a crash in the harness masquerading as a
- *               finding in the engine.
- *
- * longjmp is the honest emulation: control leaves the engine immediately and
- * does not come back, exactly as exit() would.
- *
- * ⚠ The cost, stated plainly: the jump abandons whatever the engine had
- * allocated for that level. That is why every level gets a FRESH engine and a
- * shutdown() -- the leak is bounded by one level, and no state crosses into
- * the next. Do not "optimize" the per-level startup away. */
-char const     *err_cfile_ = 0;
-unsigned long	err_lineno_ = 0;
-
-static int	warn_count = 0;
-static int	died = 0;
-static jmp_buf	diejmp;
-static int	dieready = 0;
-
-void warn_(char const *fmt, ...) { (void)fmt; ++warn_count; }
-void errmsg_(char const *pfx, char const *fmt, ...) { (void)pfx; (void)fmt; }
-
-void die_(char const *fmt, ...)
-{
-    (void)fmt;
-    died = 1;
-    if (dieready) {
-	dieready = 0;
-	longjmp(diejmp, 1);
-    }
-    /* Outside a level -- nothing has set a landing pad, so there is nothing
-     * sensible to do but stop. Reaching here is itself a bug in this file. */
-    fprintf(stderr, "die() outside a level run\n");
-    exit(2);
-}
-
-/* ------------------------------------------------------- state digesting -- */
-
-/* Hash what a player could observe, plus the bookkeeping that decides what
- * happens next.
- *
- * ⚠ FIELD BY FIELD, NEVER memcpy OF THE STRUCT. gamestate contains padding,
- * and padding bytes are indeterminate: hashing them would make the digest
- * depend on the compiler's layout choices and on whatever happened to be in
- * memory, which is the kind of "test" that fails on somebody else's machine
- * for no reason and then gets deleted. */
-static void hash_state(u64 *h, gamestate const *st, int result)
-{
-    creature const *cr;
-    int i;
-
-    hash_int(h, st->currenttime);
-    hash_int(h, st->chipsneeded);
-    hash_int(h, st->statusflags);
-    hash_int(h, st->lastmove);
-    hash_int(h, st->xviewpos);
-    hash_int(h, st->yviewpos);
-    hash_int(h, st->timeoffset);
-    hash_int(h, result);
-    for (i = 0 ; i < 4 ; ++i) {
-	hash_int(h, st->keys[i]);
-	hash_int(h, st->boots[i]);
-    }
-
-    /* The map, including the fork's virtual row 32 -- the MSCC row-32 cloner
-     * glitch writes there, and a change to that path must show up here. */
-    for (i = 0 ; i < CXGRID * (CYGRID + 1) ; ++i) {
-	hash_byte(h, st->map[i].top.id);
-	hash_byte(h, st->map[i].top.state);
-	hash_byte(h, st->map[i].bot.id);
-	hash_byte(h, st->map[i].bot.state);
-    }
-
-    /* The creature list, walked the way generic/tile.c:497 walks it: id == 0
-     * terminates. That is the renderer's convention and the only one reachable
-     * from outside; the engines' private working lists are not. */
-    if (st->creatures) {
-	for (cr = st->creatures ; cr->id ; ++cr) {
-	    hash_byte(h, cr->id);
-	    hash_byte(h, cr->dir);
-	    hash_byte(h, cr->hidden);
-	    hash_byte(h, cr->state);
-	    hash_byte(h, cr->tdir);
-	    hash_int(h, cr->pos);
-	    hash_int(h, cr->moving);
-	    hash_int(h, cr->frame);
-	}
-    }
-    hash_byte(h, 0xFF);		/* terminator, so list LENGTH is part of it */
-}
-
 /* ------------------------------------------------------------- the drive -- */
+
+/* The move source handed to tw_run_level(): one command per MS move, drawn
+ * from the walker rather than from the engine's own PRNG. */
+static int golden_nextmove(int step, void *ctx)
+{
+    static int const cmds[8] = {
+	NIL, CmdNorth, CmdWest, CmdSouth, CmdEast, CmdNorth, CmdEast, NIL
+    };
+    (void)step; (void)ctx;
+    return cmds[walk_next() & 7];
+}
 
 /* Run one level through one engine and return its digest. *outcome receives a
  * short word for how it ended, committed alongside the digest because "the
@@ -276,112 +145,17 @@ static u64 runlevel(gamelogic *logic, gamestate *st, gamesetup *setup,
 		    unsigned char *data, int size, int number, int ruleset,
 		    int walknum, char const **outcome, int *ticksrun)
 {
-    static int const cmds[8] = {
-	NIL, CmdNorth, CmdWest, CmdSouth, CmdEast, CmdNorth, CmdEast, NIL
-    };
-    /* 🔴 STATIC, NOT AUTOMATIC, AND THAT IS NOT AN ACCIDENT. After a longjmp,
-     * an automatic variable in the function that called setjmp has an
-     * INDETERMINATE value unless it is volatile -- so a plain `u64 h` would
-     * hold garbage on exactly the levels that trip an assert, which are the
-     * ones worth recording. Static storage is untouched by longjmp, and unlike
-     * `volatile u64` it leaves `&h` a plain `u64 *` for hash_state.
-     * Single-threaded, one level at a time; there is nothing to race. */
-    static u64	h;
-    static int	result;
-    static int	ticks;
-    int		t;
-
-    h = FNV_OFFSET;
-    result = 0;
-    ticks = 0;
-    died = 0;
-    *ticksrun = 0;
-
-    memset(setup, 0, sizeof *setup);
-    setup->number = number;
-    setup->time = 0;
-    setup->leveldata = data;
-    setup->levelsize = size;
-
-    memset(st->map, 0, sizeof st->map);
-    st->game = setup;
-    st->ruleset = ruleset;
-    st->replay = -1;
-    st->currenttime = -1;
-    st->timeoffset = 0;
-    st->currentinput = NIL;
-    st->lastmove = NIL;
-    st->initrndslidedir = NIL;
-    st->stepping = -1;
-    st->statusflags = 0;
-    st->soundeffects = 0;
-    st->timelimit = 0;
-    /* solution.c is not linked; nothing here records moves, because replay
-     * stays -1 and the recording happens in doturn(), not in the engine. */
-    st->moves.list = NULL;
-    st->moves.count = 0;
-    st->moves.allocated = 0;
-    /* A fixed seed per level. NOT the walker's -- this one feeds the ENGINE's
-     * random draws, and it must be identical on every run. */
-    restartprng(&st->mainprng, 0x5EED0000UL + (unsigned long)number);
-
-    /* The landing pad. Everything from here to the end of the tick loop runs
-     * with die() wired to come back to this line instead of returning into an
-     * engine that has just declared its own state impossible. */
-    if (setjmp(diejmp)) {
-	dieready = 0;
-	*ticksrun = ticks;
-	*outcome = "DIED";
-	/* No endgame() call: the engine was abandoned mid-tick and asking it
-	 * to tidy up would run more of the code that just failed. The caller's
-	 * shutdown() is what releases it. */
-	return h;
-    }
-    dieready = 1;
-
-    if (!expandleveldata(st)) {
-	dieready = 0;
-	*outcome = "badlevel";
-	return 0;
-    }
-    if (!(*logic->initgame)(logic)) {
-	dieready = 0;
-	*outcome = "initfailed";
-	return 0;
-    }
-
     /* Seeded from the level number AND the ruleset, so the two engines get
      * different streams on the same level. Giving them the same one is a worse
      * test: identical input tends to wedge both walkers against one wall. */
-    walk_seed(0xA5A5A5A5ULL * (u64)(number + 1) + (u64)ruleset + (u64)walknum * 7919ULL);
+    walk_seed(0xA5A5A5A5ULL * (u64)(number + 1) + (u64)ruleset
+	      + (u64)walknum * 7919ULL);
 
-    hash_state(&h, st, 0);
-    for (t = 0 ; t < TICKS_PER_LEVEL ; ++t) {
-	/* One command held for four ticks, which is one MS move. Re-drawing
-	 * every tick would mostly cancel itself out and walk nowhere. */
-	if ((t & 3) == 0)
-	    st->currentinput = (short)cmds[walk_next() & 7];
-	st->currenttime = t;
-	result = (*logic->advancegame)(logic);
-	++ticks;
-	hash_state(&h, st, result);
-	if (result)
-	    break;
-    }
-    dieready = 0;
-    *ticksrun = ticks;
-
-    if (died)
-	*outcome = "DIED";
-    else if (result > 0)
-	*outcome = "won";
-    else if (result < 0)
-	*outcome = "lost";
-    else
-	*outcome = "running";
-
-    (*logic->endgame)(logic);
-    return h;
+    return tw_run_level(logic, st, setup, data, size, number, ruleset,
+			/* the ENGINE's seed, fixed per level: */
+			0x5EED0000UL + (unsigned long)number,
+			TICKS_PER_LEVEL, golden_nextmove, NULL,
+			outcome, ticksrun);
 }
 
 /* ------------------------------------------------------- the .dat reader -- */

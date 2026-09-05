@@ -25,6 +25,57 @@ stay attached to something someone can see.
 
 Nothing here changes the executable. It rides along with the next release that does.
 
+### Added — the `NO_FIX_*` differential matrix: 13 of 32 engine toggles are now provably live
+
+`mslogic.c` carries **32 `NO_FIX_*` toggles**, each isolating one engine fix from the jc-2..jc-29
+desync project so a future investigation can put the old behavior back ([ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md)).
+They are the machinery this entire fork was built with, and **nothing tested any of them.** ADR 0002
+named that risk exactly — *"deleting one changes no shipped behavior, so nothing fails, until the
+next desync investigation needs the switch that is gone"* — and it had already come true: two of the
+32 did not compile.
+
+- **`test/nofix/nofix.c`** generates a 9×9 room packed with the furniture the toggles concern, plays
+  a short deterministic game, and hashes the result. The search runs the same input through a fix-on
+  and a fix-off build and keeps the first seed where they **differ**. Such a seed is a **witness**:
+  proof the fix is live and reachable.
+- **13 of the 32 now have a committed witness**, in `test/nofix/nofix-matrix.tsv`, replayed by the
+  new **`nofix` CI job** on every push. The check asserts both digests are unchanged **and that the
+  two still differ** — the last clause is the one with teeth. Runners: `test\run-nofix.ps1` and
+  `test/run-nofix.sh`.
+- 🔴 **Witnesses are searched for, not hand-written**, and [ADR 0012](docs/adr/0012-engine-toggles-need-a-differential-witness.md)
+  says why: a fixture written from a `MOD` comment tests the comment. The search found
+  `NO_FIX_KEEPSLOT_OCCUPANT` at seed 132,433 and `NO_FIX_CONTROLLERDIR_STALLED` at 744,176 — nowhere
+  anybody would have thought to construct.
+
+**How the number moved, measured at each step.** The golden master over all 903 real levels
+distinguishes **2**. Raising its ticks 400 → 2000 and its walks 1 → 4 → 12 each found **nothing
+more**. Generating small packed rooms found **1**. Adding **deliberately stacked cells** — a creature
+or block placed on top of machinery, which is what nearly every one of these fixes is actually about
+— took it to **13**. The limit was never search effort; it was that random play does not *construct*
+a tank on a cloner.
+
+⚠ **A blank row is a statement about the search, not the fix.** All 32 were separately confirmed to
+change the preprocessed source, so none is dead code, and a blank is never grounds for deleting one.
+`nofix -stats` reports which arrangements the generator is actually producing, so "never built it"
+can be told apart from "built it and nothing changed".
+
+### Fixed — two `NO_FIX_*` toggles that could not be switched on at all
+
+Found by building all 32 one at a time, which nobody had ever done. Both this fork's own.
+
+- **`NO_FIX_RFF_DRAW_ONCE`** — `rff_keepdir` was declared under `#ifdef FIX_RFF_DRAW_ONCE` but also
+  written by the `FIX_RFF_CHIP_REARM` block, so disabling the first left an orphaned write:
+  *"'rff_keepdir' undeclared"*.
+- **`NO_FIX_TELEPORT_STALE_FG`** — same shape: `prepush_destfloor` declared under one teleport toggle
+  and read under `FIX_TELEPORT_BROKEN_DYNAMIC`.
+
+Each declaration is now guarded by **either** toggle, matching the existing idiom at `mslogic.c:1183`.
+**Shipped behavior is unchanged** — at the defaults the declaration is present either way, and all
+1,806 golden-master digests are identical across the change. **All 32 build now.**
+
+⚠ Both pairs later turned up sharing a witness seed exactly (1109 and 3624), which is not a
+coincidence: they are the same pairs whose declarations were tangled, and they touch the same path.
+
 ### Added — a golden-master snapshot of both engines, and CI can finally see an engine change
 
 **Until now nothing in CI could detect an engine behavior change.** All six jobs went green on a
@@ -57,26 +108,6 @@ wanders: a random walker does not *construct* a block resting on a teleport or a
 Those need designed fixtures — the `NO_FIX_*` differential matrix, which this does not replace. It
 catches **gross** engine change (a mutation to Chip's idle timer moved 577 of 1,806 rows): a smoke
 alarm, not an audit. `run-corpus.ps1` still decides whether a release ships.
-
-### Fixed — two engine toggles that could not be switched on at all
-
-Building all 32 toggles one at a time for that matrix found **two that did not compile**, both this
-fork's own, and both invisible until someone needed the switch:
-
-- **`NO_FIX_RFF_DRAW_ONCE`** — `rff_keepdir` was declared under `#ifdef FIX_RFF_DRAW_ONCE` but also
-  written by the `FIX_RFF_CHIP_REARM` block, so disabling the first left an orphaned write:
-  *"'rff_keepdir' undeclared"*.
-- **`NO_FIX_TELEPORT_STALE_FG`** — same shape: `prepush_destfloor` declared under one teleport
-  toggle and read under `FIX_TELEPORT_BROKEN_DYNAMIC`.
-
-Each declaration is now guarded by **either** toggle, matching the existing idiom at `mslogic.c:1183`.
-**Shipped behavior is unchanged** — with both fixes at their defaults the declaration is present
-either way, and the 1,806 golden digests are byte-identical across the change.
-
-⚠ **This is precisely the rot [ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md) exists to
-prevent.** The toggles are kept so a future desync investigation can flip one; a toggle that cannot
-be flipped is decoration, not scaffolding. Nothing would have reported it until somebody reached for
-one of those two switches mid-investigation, years from now. **All 32 now build.**
 
 
 ## jc-51 — 2026-09-05

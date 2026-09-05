@@ -33,6 +33,7 @@ powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build       # build firs
 powershell -ExecutionPolicy Bypass -File package.ps1                # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1         # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1        # engine snapshot; run after ANY engine edit
+powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1         # NO_FIX_* toggles; run after engine edits
 ```
 
 Machine-readable results: `run-tests.ps1 -ResultsPath test-results` writes JUnit XML and JSON. Exit

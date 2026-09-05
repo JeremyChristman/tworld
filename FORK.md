@@ -878,6 +878,7 @@ do the Linux-only sanitizer and fuzz layers.
 | unit | `test/run-tests.ps1` | a C compiler | one module at a time: the RNG, the `.tws` codec, the MS engine, the keyboard arbitration |
 | end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
 | golden master | `test/run-golden.ps1` | a C compiler | 🔴 **the only automated check that can see an engine behavior change**: all 903 committed levels through BOTH engines, deterministic input, gamestate hashed every tick |
+| differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 32 `NO_FIX_*` desync toggles**: for 13 of them, a committed input that provably tells a fix-on build from a fix-off one |
 
 As of 2026-09-05: **11 unit runs / 17,265 checks, 12 end-to-end cases / 35 checks, and 1 Qt run / 90
 checks, 0 failures.**

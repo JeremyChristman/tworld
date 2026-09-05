@@ -1,3 +1,5 @@
+powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1           # NO_FIX_* differential matrix
+powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1 -Search   # REDISCOVER witnesses (slow, deliberate)
 # Tile World — agent brief
 
 You are working in **Jeremy Christman's fork of Tile World 2**, a C/C++ desktop emulator of the
@@ -50,6 +52,8 @@ powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock in
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit layer
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1          # golden-master engine snapshot
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1 -Update  # REWRITE the baseline (deliberate)
+powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1           # NO_FIX_* differential matrix
+powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1 -Search   # REDISCOVER witnesses (slow, deliberate)
 ```
 
 Two more, neither of which is PowerShell:
@@ -183,6 +187,7 @@ a by-hand comparison found the script had been silent about that class the whole
 | `data/`, `sets/` | Upstream's redistributable community level packs. See ADR 0005 |
 | `test/` | The test suite. See §5 |
 | `test/golden/` | The golden-master engine snapshot and its committed baseline |
+| `test/nofix/` | The `NO_FIX_*` differential matrix: which engine toggles are provably live |
 | `docs/adr/` | Why the surprising things here are deliberate |
 
 ---
@@ -214,6 +219,16 @@ A third layer runs on Windows but not from `run-tests.ps1`, because it needs no 
   1,806 rows). It is a smoke alarm, not an audit, and **`run-corpus.ps1` still decides a release.**
   Read the header of `test/golden/golden.c` before changing anything there; `-Update` rewrites the
   baseline and is a deliberate act, not a way to make a red run go green.
+
+- **`test\run-nofix.ps1`** — the **`NO_FIX_*` differential matrix** (the `nofix` job). For each of
+  the 32 engine toggles it asks whether any input tells a fix-on build apart from a fix-off one.
+  **13 have such a witness**, committed in `test/nofix/nofix-matrix.tsv` and replayed on every push;
+  the check asserts both digests are unchanged *and that the two still differ*.
+
+  🔴 **It is the only check on the desync machinery.** Those toggles are opt-out macros, so a broken
+  one changes no shipped behavior and nothing goes red — two of them had already rotted to the point
+  of not compiling. `-Search` rediscovers witnesses and takes about half an hour; the check is
+  seconds. See [`docs/adr/0012`](docs/adr/0012-engine-toggles-need-a-differential-witness.md).
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -330,22 +345,31 @@ misreading in the parser is faithfully reproduced and never caught.
   `NO_FIX_ROW32_CLONER` actually guards — what happens when such a cloner **fires** — is not tested:
   building that file with `-DNO_FIX_ROW32_CLONER` still passes every case. That was measured, and
   **the golden master does not catch it either** — it was measured there too.
-- 🔴 **30 of the 32 `NO_FIX_*` toggles still have no differential test, and that is now a MEASURED
-  number rather than an impression.** Every toggle was built separately and run against the
-  golden-master baseline: it detects **two** — `NO_FIX_BLUE_BUTTON_TIMING` (26 rows) and
-  `NO_FIX_CHIP_ONTO_CLONER` (1 row). Raising the golden master's tick count 400 → 2000 and its walk
-  count 1 → 4 → 12 each detected **nothing further**.
+- 🔴 **19 of the 32 `NO_FIX_*` toggles have no differential witness — down from 30, and every number
+  here is measured.** `test/nofix/` searches for an input whose result differs between a fix-on and a
+  fix-off build; such an input is a **witness** that the fix is live and reachable, and the 13 found
+  so far are committed in `test/nofix/nofix-matrix.tsv` and re-checked by CI on every push. See
+  [`docs/adr/0012`](docs/adr/0012-engine-toggles-need-a-differential-witness.md).
 
-  **Do not try to fix this by turning those knobs up.** The limit is not how far the walker wanders:
-  a random walker does not *construct* a block resting on a teleport, a tank on a cloner, or a
-  creature in a trap whose button is pressed this tick. Those are arranged, not stumbled into.
-  **Designed fixtures are the only thing that will move this number** — compiling one purpose-built
-  test both ways, per toggle. That is still the cheapest large win available in this repository, and
-  it is still undone.
+  **What moved the number, and what did not.** The golden master over all 903 real levels finds
+  **2**. Raising its tick count 400 → 2000 and its walk count 1 → 4 → 12 each found **nothing
+  further** — the limit is the shape of the input, not its quantity, because a random walk through a
+  real level never *constructs* a block on a teleport or a tank on a cloner. Generating 9×9 rooms
+  packed with that furniture found **13**. The single biggest step was **deliberately stacking**
+  cells — a creature or block placed on top of machinery — which is what nearly every one of these
+  fixes is actually about; before that the same search found **1**.
 
-  ⭐ The sweep did pay for itself once already: **two toggles turned out not to compile at all**
-  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`), each declaring its state variable under one
-  toggle and reading it under another. See §8. All 32 build now.
+  ⚠ **A blank row is a statement about the SEARCH, not about the fix.** All 32 were separately
+  confirmed to change the preprocessed source, so none is dead code, and a blank is never grounds for
+  deleting a fix. `nofix -stats` reports what arrangements the generator is producing, which is how
+  to tell "never built it" from "built it and nothing changed" before drawing any conclusion.
+
+  ⭐ The sweep paid for itself twice over. **Two toggles turned out not to compile at all**
+  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`) — see §8; all 32 build now. And two *pairs*
+  share a witness seed exactly (`RFF_DRAW_ONCE`/`RFF_CHIP_REARM` at 1109,
+  `TELEPORT_STALE_FG`/`TELEPORT_BROKEN_DYNAMIC` at 3624), which is a real signal rather than a
+  coincidence: each pair is the pair whose declarations were tangled together, and they touch the
+  same path.
 - **No GUI is tested**, still — the score table's column spans, the color picker, the tileset menu,
   the death counter are all verified by hand. But `oshw-qt/` is no longer *entirely* uncovered:
   `test/qt/ccmetadata_test.cpp` covers `CCMetaData.cpp`, the `.ccx` parser, with 90 checks. That is

@@ -1,0 +1,48 @@
+# The NO_FIX_* differential matrix. See docs/adr/0012 and test/nofix/nofix.c.
+#
+# A WITNESS is one generated input whose result differs between a build with the
+# fix ON (the default, what ships) and one with it OFF (-DNO_FIX_x). It is proof
+# that the fix is LIVE and REACHABLE -- not proof that it is correct. The
+# correctness argument for every one of these is in FORK.md, measured against
+# SuperCC over a real solution corpus.
+#
+# A row of '-' means the search did not find such an input within its budget
+# (1,000,000 generated seeds). That is a statement about the SEARCH, not about
+# the fix: all 32 toggles were separately confirmed to change the preprocessed
+# source, so none is dead code. A blank row is NEVER grounds for deleting a fix.
+#
+# Rebuild with:  powershell -File test\run-nofix.ps1 -Search
+# Check with:    powershell -File test\run-nofix.ps1   (or test/run-nofix.sh)
+#toggle	seed	digest_fix_on	digest_fix_off	outcome	ticks
+NO_FIX_BLOCKED_MOVE_REDRAW	6205	4a9671e1055ce041	bc1e93c633aaefbe	lost	73
+NO_FIX_BLUE_BUTTON_TIMING	11205	96a227e17cb5e93b	0c9202656d30bf27	lost	53
+NO_FIX_BOUNCE_REFACE	-	-	-	-	-
+NO_FIX_BROKEN_TELEPORT_SLIDE	12351	4c598cd1747f1389	bd21dd7b590a6694	lost	45
+NO_FIX_CHIP_ONTO_BURIED_BLOCK	-	-	-	-	-
+NO_FIX_CHIP_ONTO_CLONER	78	2af4e676ba2aac89	3798e5006aaa86d1	won	63
+NO_FIX_CHIP_PICKUP_ON_BLOCK	-	-	-	-	-
+NO_FIX_CHIP_START_FOREGROUND	-	-	-	-	-
+NO_FIX_CLICK_EARLY	-	-	-	-	-
+NO_FIX_CLONER_TEMPLATE_ON_DEATH	644003	c0cd89fee70b2416	4b149d81b7c8faad	lost	13
+NO_FIX_CONTROLLERDIR_STALLED	744176	ea3b463757713ee8	83b6950d4ae4f7d2	lost	177
+NO_FIX_KEEPSLOT_BLOCK_OCCUPANT	-	-	-	-	-
+NO_FIX_KEEPSLOT_FIRE	-	-	-	-	-
+NO_FIX_KEEPSLOT_OCCUPANT	132433	ab95ba2f2454e5c8	b877c62e948be910	lost	73
+NO_FIX_KEY_CLEARS_GOAL	-	-	-	-	-
+NO_FIX_MONSTERLIST_CHIP_TILES	-	-	-	-	-
+NO_FIX_PUSH_CANTLEAVE	-	-	-	-	-
+NO_FIX_RFF_CHIP_REARM	1109	091b4037ca56ede5	d95dd7e2ba4e0f6e	lost	85
+NO_FIX_RFF_DRAW_ONCE	1109	091b4037ca56ede5	d95dd7e2ba4e0f6e	lost	85
+NO_FIX_RFF_TELEPORT_BOUNCE	10572	00cc269aee7a240d	0a08b2f4f98f7f41	running	320
+NO_FIX_ROW32_CLONER	-	-	-	-	-
+NO_FIX_SLIDE_FACING	-	-	-	-	-
+NO_FIX_STACKED_CREATURE_CULL	-	-	-	-	-
+NO_FIX_TANK_IN_TRAP_STALL	-	-	-	-	-
+NO_FIX_TANK_ON_CLONER	-	-	-	-	-
+NO_FIX_TELEPORT_BLOCK_ONTO_CHIP	-	-	-	-	-
+NO_FIX_TELEPORT_BROKEN_DYNAMIC	3624	2e3cd3d87325eb31	0c57e314adb4683f	lost	13
+NO_FIX_TELEPORT_DEFER_BUTTONS	-	-	-	-	-
+NO_FIX_TELEPORT_EXIT_CHIP_TILE	-	-	-	-	-
+NO_FIX_TELEPORT_STALE_FG	3624	2e3cd3d87325eb31	0c57e314adb4683f	lost	13
+NO_FIX_TRAP_REFRESH	2182	aee67eb6f2b3a681	d1f400e525043df1	running	320
+NO_FIX_TRAP_SHUT_BEHIND	-	-	-	-	-

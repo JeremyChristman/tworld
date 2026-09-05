@@ -283,6 +283,32 @@ jobs:
           echo "level files: $dats"
           test -n "$dats" || { echo "::error::no level data found"; exit 1; }
           ./golden -check $dats
+
+  # The NO_FIX_* differential matrix: for each recorded witness, build the
+  # engine with the fix ON and with it OFF and prove one generated input still
+  # tells them apart.
+  #
+  # 🔴 THIS IS THE ONLY CHECK ON THE DESYNC MACHINERY. mslogic.c carries 32
+  # NO_FIX_* toggles -- the switches the whole jc-2..jc-29 project was built
+  # with -- and until this existed nothing tested any of them. They are opt-out
+  # macros, so a broken one changes no shipped behavior and nothing goes red;
+  # it is discovered years later by whoever reaches for the switch. Two of them
+  # had already rotted to the point of not compiling.
+  #
+  # ⚠ Blank rows in the matrix are toggles the search could not distinguish.
+  # They are reported, never asserted on: a blank says the search failed to
+  # build the arrangement, not that the fix is dead. See test/nofix/nofix.c.
+  nofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Every recorded witness still tells the two builds apart
+        run: |
+          set -o pipefail
+          chmod +x test/run-nofix.sh
+          ./test/run-nofix.sh
+
   # Builds the real program and drives it through its GUI-free command line.
   # The DYNAMIC Qt flavor deliberately: it is a fraction of the build time of
   # the static one and runs the same code. The static build is what ships, and
