@@ -524,6 +524,22 @@ replay was never guaranteed stable across toolchains for these levels. Pick the 
 
 What follows is what is still live.
 
+🔴 **OPEN, AND THE `fuzz` JOB IS RED BECAUSE OF IT — do not silence that.**
+`_assert(chipsneeded() == 0)` in `endmovement()`'s `Socket` case (`mslogic.c:3240`) can fail, so
+`die()` runs and **the shipped game exits** with "internal error: failed sanity check". **Upstream's**
+(`929d9c6`, the 2.3.1 import). `canmakemove()` gates socket entry at `mslogic.c:1822`, so something
+reaches `endmovement()` with a socket destination without passing that gate — a slide or teleport
+path is the suspect; it was not pinned down.
+
+Found by `fuzz_mslogic` ~43 s in, on the run right after jc-49 fixed the first engine finding. The
+reproducer is committed at `test/fuzz/known-findings/mslogic-socket-assert`, deliberately **outside**
+the corpus so the unit suite does not die on it — read that directory's README before touching it.
+
+⚠ **It is unfixed on purpose.** The assert says the state is impossible; the fuzzer proved it is not.
+Deciding what should happen instead — refuse the move, open the socket anyway, or fail gracefully —
+changes MS engine **semantics** on a path every recorded solution depends on. That needs a deliberate
+decision and a corpus differential, not a quick patch.
+
 ### 8.1 `-v` cannot work as documented
 
 The option string at `tworld.c:2205` is `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v`
