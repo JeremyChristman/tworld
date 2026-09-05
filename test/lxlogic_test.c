@@ -296,7 +296,7 @@ int main(void)
     int		r;
 
     tw_begin("lxlogic");
-    tw_expect_atleast(75);
+    tw_expect_atleast(79);
 
     /* ================================================================== *
      * The level loads at all.
@@ -471,6 +471,31 @@ int main(void)
 	runticks(4, CmdEast);
 	CHECK_INT(teststate.chipsneeded, 0);
 	CHECK_INT(chipx(), 10);
+    }
+
+    tw_case("a level demanding 65,532 chips locks the socket, it does not die (jc-51)");
+    {
+	/* The same defect the MS engine had, fixed here at the same time -- see
+	 * the fuller note in test/mslogic_test.c. chipsneeded is a SIGNED short
+	 * filled from an UNSIGNED 16-bit .dat field, so 65,532 arrives as -4;
+	 * the gate asked `> 0` and let Chip through, and lxlogic.c asserts
+	 * `chipsneeded() == 0` in TWO places (1388 and 1464), each of which
+	 * calls die() and exits the shipped game.
+	 *
+	 * Fixed in both engines together, because "the MS one was fixed and the
+	 * Lynx one was not" is exactly how a two-engine codebase drifts. */
+	openroom(&lv);
+	lv.chips = 65532;
+	fix_settop(&lv, 10, 9, FIX_SOCKET);
+	CHECK_MSG(startlevel(&lv), "setup failed");
+	CHECK_MSG(teststate.chipsneeded < 0,
+		  "the fixture did not produce a negative chipsneeded (%d); this"
+		  " case is testing nothing", (int)teststate.chipsneeded);
+	r = runticks(16, CmdEast);
+	CHECK_MSG(chipx() == 9,
+		  "Chip entered a socket with a negative chip count, reaching"
+		  " x=%d", chipx());
+	CHECK_MSG(r == 0, "the level ended (r=%d) rather than locking the socket", r);
     }
 
     tw_case("a socket refuses Chip until every chip is collected");

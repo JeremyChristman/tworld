@@ -300,7 +300,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(117);
+    tw_expect_atleast(122);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -422,6 +422,43 @@ int main(void)
     CHECK_INT(teststate.chipsneeded, 0);
 
     /* ================================================================== */
+    tw_case("a level demanding 65,532 chips locks the socket, it does not die (jc-51)");
+    {
+	/* 🔴 chipsneeded is a SIGNED short (state.h:251) filled from an UNSIGNED
+	 * 16-bit field in the .dat (encoding.c:187), so a level declaring 32768
+	 * or more required chips arrives NEGATIVE.
+	 *
+	 * The two tests then disagreed: canmakemove()'s gate asked
+	 * `chipsneeded() > 0` and let Chip onto the socket, and endmovement()'s
+	 * Socket case asserts `chipsneeded() == 0` and called die() -- which in
+	 * the shipped program EXITS THE GAME. A downloaded level could kill Tile
+	 * World by putting Chip on a socket.
+	 *
+	 * Both are now `!= 0`. For every non-negative count the two are the same
+	 * test, so no sane level changed. Found by the MS engine fuzz target; the
+	 * reproducer is test/fuzz/corpus/mslogic/socket-negative-chipsneeded.
+	 *
+	 * ⚠ This case cannot fail by crashing politely -- if the fix regresses,
+	 * die() runs and the whole test binary exits. That is still a detection
+	 * (the runner reports a failed run) but there will be no per-case report,
+	 * so do not go looking for a tidy assertion failure. */
+	fix_init(&lv);
+	fix_border(&lv);
+	lv.chips = 65532;			/* -4 as a signed short */
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_SOCKET);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.chipsneeded < 0,
+		  "the fixture did not produce a negative chipsneeded (%d); this"
+		  " case is testing nothing", (int)teststate.chipsneeded);
+	r = runticks(16, CmdEast);
+	CHECK_MSG(chipx() == 5,
+		  "Chip entered a socket with a negative chip count, reaching"
+		  " x=%d -- the gate and the assertion disagree again", chipx());
+	CHECK_MSG(r == 0, "the level ended (r=%d) rather than simply locking"
+			  " the socket", r);
+    }
+
     tw_case("a socket refuses Chip until every chip is collected");
     fix_init(&lv);
     fix_border(&lv);

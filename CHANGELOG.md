@@ -21,58 +21,76 @@ stay attached to something someone can see.
 
 ---
 
-## jc-50 — 2026-09-05
-
-> ⚠ **There is no jc-49 release, and the tag exists.** This fix was first tagged `jc-49`, and the
-> release workflow failed at its Tests step: `test/run-qt-tests.ps1` probed pkg-config with `2>$null`
-> under `ErrorActionPreference = "Stop"`, and PowerShell 5.1 turns a native command's stderr into a
-> terminating error — so on the release runner, which has no pkg-config metadata for Qt5, an intended
-> *skip* became a *failure*. Nothing was ever published as jc-49.
->
-> The tag could not be moved onto the fix: the `refs/tags/jc-*` ruleset refused the force-push,
-> which is precisely what it is there for. So the fix ships as jc-50 and `jc-49` remains a tag with
-> no release. That is the honest outcome, and cheaper than weakening the rule.
+## jc-51 — 2026-09-05
 
 ### Fixed
 
-- 🔴 **`movelaws[]` was indexed out of bounds on ordinary levels.** The array has exactly **64
-  entries, one per terrain id** — but a cell's *bottom* layer can hold a **creature**, and creature
-  ids start at `Chip == 64`. So `movelaws[cellat(to)->bot.id]` read past the end by up to 47 entries
-  (the highest such id is 111), and used whatever followed the array in `.rodata` as a movement rule.
+- 🔴 **A level declaring 32,768 or more chips could kill the running program**, in **both engines**.
+  `state.chipsneeded` is a **signed** `short` (`state.h:251`) filled from the `.dat`'s **unsigned**
+  16-bit word (`encoding.c:187`), so any level asking for `0x8000` or more chips arrives **negative**.
 
-  **This is not an exotic malformed-file case.** Scanning the whole collection — **328 `.dat` files,
-  31,090 levels — 5,743 of them (18%)** put such a tile in a lower layer, including **CC1 itself and
-  every one of CCLP1–5 and CCLXP2**. Ordinary, official level data.
+  Two predicates then disagree about the same state. The socket gate asks `chipsneeded() > 0`
+  (`mslogic.c:1846`, `lxlogic.c:790`) — false for a negative count, so **the socket opens for a level
+  whose requirement was never met**. Moments later `endmovement()`'s `Socket` case asserts
+  `chipsneeded() == 0` (`mslogic.c:3264`, and `lxlogic.c:1399`/`:1475`) — also false, so `_assert`
+  calls `die()` and **the shipped game exits** with *"internal error: failed sanity check"*. Not a
+  wrong result on screen: the process terminates.
 
-  **It is this fork's own defect, not upstream's.** All three call sites were added during the
-  desync work (`FIX_KEEPSLOT_OCCUPANT`, jc-17 era); `git log -L` puts them on commits `c69ed2b`,
-  `42537ae` and `5d076b3`. Two are in `canmakemove()`; the third is inside a `TRACE_DESYNC` block and
-  so never in a shipped binary.
+  Both gates now ask **`chipsneeded() != 0`**, which agrees with the assert. The socket stays locked,
+  which is the defensible answer for a level demanding an unreachable number of chips.
 
-  ⚠ **There is no "correct" old behavior to preserve** — the old read was undefined and could differ
-  between compilers or builds, which means replay was never guaranteed stable across toolchains for
-  these levels. Any deterministic answer is an improvement. Zero (*"this terrain refuses every
-  direction"*) is chosen because the predicate asks "would the terrain underneath have refused too?",
-  and a cell whose bottom layer is a creature has no terrain that permits anything.
+  ⚠ **For every non-negative count the two predicates are identical**, so no sane level can observe
+  the change. That is the whole safety argument, and it was still measured rather than trusted:
+  **289 sets, 0 of 303 per-set outputs differ.**
 
-  **Replay-neutral, measured rather than assumed:** jc-48 against jc-50 — **289 sets, 18,640 valid /
-  1,107 invalid under both, 0 of 303 per-set outputs differ.** Whatever the out-of-bounds read was
-  picking up, no recorded solution depended on it.
+  **Upstream's** (`929d9c6`, the 2.3.1 import). **No real level reaches it:** the collection was
+  scanned — **31,090 levels across 393 `.dat` files, zero** asking for 32,768 chips or more. It takes
+  a damaged or hand-crafted file, which is exactly what found it.
 
 ### Notes
 
-- ⭐ **Found by the new MS-engine fuzz target on its first run**, as a UBSan out-of-bounds report at
-  `mslogic.c:1970`, about one second in. That is three consecutive finds by tooling nobody pointed at
-  a specific line: jc-46 by UBSan, jc-47 by LeakSanitizer, jc-50 by the engine fuzzer.
-- 🔴 **And it is the first defect found by fuzzing the ENGINES rather than the parsers** — the class
-  the parser targets structurally cannot reach. jc-45 was the same shape and had to be found by hand.
-- The reproducer is committed as `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature` and replayed
-  by the unit suite. Mutation-proven locally: with the fix, 8 corpus inputs run clean; reverted to the
-  raw index, the same input dies with `SIGILL` under `-fsanitize-undefined-trap-on-error`.
+- ⭐ **This is the finding jc-50's notes listed as OPEN and left unfixed on purpose**, with the `fuzz`
+  job red because of it. It was deferred because it sits on a path every recorded solution depends on
+  and deserved a decision rather than a patch. Diagnosing it took tracing the reproducer rather than
+  reading the assert: the suspicion recorded at the time was *"a slide or teleport path"* reaching
+  `endmovement()` around the gate. **That was wrong.** Nothing bypasses the gate — the gate itself
+  says yes, because the count is negative.
+- The reproducer moved from `test/fuzz/known-findings/mslogic-socket-assert` into the replayed corpus
+  as `test/fuzz/corpus/mslogic/socket-negative-chipsneeded`, per
+  [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md) — **a finding
+  is not fixed until its input is committed and replayed.** `known-findings/` is now empty of
+  findings, and the `fuzz` job should return to green.
+- Both engine tests gained a case (`mslogic_test.c` 122 checks / 29 cases, `lxlogic_test.c` 79 / 21).
+  **Mutation-proven:** with the gate reverted to `> 0`, both test binaries `die()` and the runner
+  reports `[no-result]`; with the fix, both are green.
+- 🔴 **The underlying type mismatch is untouched, deliberately.** `chipsneeded` is still a signed
+  `short` holding an unsigned file value. Widening it changes a struct every engine path reads, for a
+  case no real level reaches; making the parser reject `>= 0x8000` would refuse a file upstream
+  accepts. Fixing the *disagreement between the two predicates* is the minimal change that makes the
+  program safe, and it is the one that could be measured against the corpus.
 
-## Unreleased
+### Repository work folded into this release
 
-Nothing here changes the executable. It rides along with the next release that does.
+None of what follows changes the executable; it accumulated under **Unreleased** while jc-50 was the
+current build and ships with jc-51 under the rule that a build tag stays attached to something
+someone can see.
+
+### Changed — the corpus instrument now watches stderr too
+
+`test/run-corpus.ps1` records each set's stdout **and** stderr, and until now compared only stdout.
+Verifying jc-51 by hand turned up that **29 of 303 sets printed different warnings between the two
+builds and the script said "IDENTICAL"**. Every one was a moved `__LINE__` — `err.c` stamps the
+source line into every message, so adding a *comment* to `mslogic.c` changes 29 files' worth of
+output. Harmless. **"Nothing noticed" was the finding**, not the diff.
+
+- `.err` is now compared after normalizing the two things that change for reasons that are not
+  behavior: the `[path/file.c:NNN]` stamp, and the scratch corpus directory's per-run GUID, which
+  appears inside file-name messages.
+- 🔴 **Advisory, deliberately: it reports but does not fail the run.** No recorded solution's verdict
+  depends on a warning, and failing a release over a reworded message is how a script gets ignored.
+  The `.out` comparison remains the byte-for-byte desync gate that sets the exit code.
+- Mutation-proven: injecting two fabricated warning lines into a recording makes the check name both
+  sets while the verdict stays `IDENTICAL` and the exit code stays 0.
 
 ### Added — both engines are fuzzed
 
@@ -177,6 +195,55 @@ and it was fine" is worth having; until now nobody could say it.
   the reasoning kept: verify what exercises a file before writing it down.
 - A stray carriage return in `CLAUDE.md` (`test<CR>un-e2e.ps1`) from an old `sed` whose `\r` was
   taken as an escape. Repository swept; no other text file has one.
+
+## jc-50 — 2026-09-05
+
+> ⚠ **There is no jc-49 release, and the tag exists.** This fix was first tagged `jc-49`, and the
+> release workflow failed at its Tests step: `test/run-qt-tests.ps1` probed pkg-config with `2>$null`
+> under `ErrorActionPreference = "Stop"`, and PowerShell 5.1 turns a native command's stderr into a
+> terminating error — so on the release runner, which has no pkg-config metadata for Qt5, an intended
+> *skip* became a *failure*. Nothing was ever published as jc-49.
+>
+> The tag could not be moved onto the fix: the `refs/tags/jc-*` ruleset refused the force-push,
+> which is precisely what it is there for. So the fix ships as jc-50 and `jc-49` remains a tag with
+> no release. That is the honest outcome, and cheaper than weakening the rule.
+
+### Fixed
+
+- 🔴 **`movelaws[]` was indexed out of bounds on ordinary levels.** The array has exactly **64
+  entries, one per terrain id** — but a cell's *bottom* layer can hold a **creature**, and creature
+  ids start at `Chip == 64`. So `movelaws[cellat(to)->bot.id]` read past the end by up to 47 entries
+  (the highest such id is 111), and used whatever followed the array in `.rodata` as a movement rule.
+
+  **This is not an exotic malformed-file case.** Scanning the whole collection — **328 `.dat` files,
+  31,090 levels — 5,743 of them (18%)** put such a tile in a lower layer, including **CC1 itself and
+  every one of CCLP1–5 and CCLXP2**. Ordinary, official level data.
+
+  **It is this fork's own defect, not upstream's.** All three call sites were added during the
+  desync work (`FIX_KEEPSLOT_OCCUPANT`, jc-17 era); `git log -L` puts them on commits `c69ed2b`,
+  `42537ae` and `5d076b3`. Two are in `canmakemove()`; the third is inside a `TRACE_DESYNC` block and
+  so never in a shipped binary.
+
+  ⚠ **There is no "correct" old behavior to preserve** — the old read was undefined and could differ
+  between compilers or builds, which means replay was never guaranteed stable across toolchains for
+  these levels. Any deterministic answer is an improvement. Zero (*"this terrain refuses every
+  direction"*) is chosen because the predicate asks "would the terrain underneath have refused too?",
+  and a cell whose bottom layer is a creature has no terrain that permits anything.
+
+  **Replay-neutral, measured rather than assumed:** jc-48 against jc-50 — **289 sets, 18,640 valid /
+  1,107 invalid under both, 0 of 303 per-set outputs differ.** Whatever the out-of-bounds read was
+  picking up, no recorded solution depended on it.
+
+### Notes
+
+- ⭐ **Found by the new MS-engine fuzz target on its first run**, as a UBSan out-of-bounds report at
+  `mslogic.c:1970`, about one second in. That is three consecutive finds by tooling nobody pointed at
+  a specific line: jc-46 by UBSan, jc-47 by LeakSanitizer, jc-50 by the engine fuzzer.
+- 🔴 **And it is the first defect found by fuzzing the ENGINES rather than the parsers** — the class
+  the parser targets structurally cannot reach. jc-45 was the same shape and had to be found by hand.
+- The reproducer is committed as `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature` and replayed
+  by the unit suite. Mutation-proven locally: with the fix, 8 corpus inputs run clean; reverted to the
+  raw index, the same input dies with `SIGILL` under `-fsanitize-undefined-trap-on-error`.
 
 ## jc-48 — 2026-09-05
 

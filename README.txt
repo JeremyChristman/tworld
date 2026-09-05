@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-50
+  Tile World  --  Jeremy Christman's fork                    build jc-51
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,45 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-51  --  A damaged level could shut the game down outright
+--------------------------------------------------------------
+
+  * THE GAME COULD EXIT WITH "INTERNAL ERROR" ON A BAD LEVEL FILE. Every
+    level says how many chips Chip has to collect before the socket will
+    let him through. The game stored that number in a place that can only
+    hold values up to 32,767, while the level file is allowed to say up to
+    65,535 -- so a level asking for more than 32,767 chips arrived as a
+    NEGATIVE number of chips still needed.
+
+    Nothing then held Chip back. The socket asks "are there still chips to
+    collect?" by testing whether the count is greater than zero, and a
+    negative count is not, so the socket opened for a level whose
+    requirement had never been met. A moment later a second check inside
+    the engine -- one that says the count must be exactly zero by the time
+    Chip steps through -- found that it was not, and the game shut itself
+    down with "internal error: failed sanity check". Not a wrong answer on
+    screen: the program exits, and anything unsaved goes with it.
+
+    Both checks now ask the same question, "is the count anything other
+    than zero", so the socket simply stays locked, which is what a level
+    demanding an impossible number of chips should do anyway.
+
+  * NO LEVEL YOU OWN DOES THIS. Every .dat file in the maintainer's
+    collection was scanned -- 31,090 levels across 393 files -- and not one
+    asks for 32,768 chips or more. It takes a damaged or hand-crafted file
+    to get there, which is exactly how it was found.
+
+  * FOR EVERY SANE LEVEL THE BEHAVIOR IS UNCHANGED, because for any count
+    of zero or more, "greater than zero" and "not zero" are the same
+    question. Both engines got the same fix -- MS and Lynx -- and it was
+    measured rather than assumed: 303 solution files across 289 level sets
+    give byte-for-byte identical results before and after.
+
+  * THIS WAS THE KNOWN, UNFIXED PROBLEM listed in the jc-50 notes. It was
+    left alone at the time on purpose: it sits on a path every recorded
+    solution depends on, and it deserved a deliberate decision rather than
+    a quick patch. This is that decision.
 
 jc-50  --  A misread lookup in the MS engine, on ordinary levels
 -----------------------------------------------------------------

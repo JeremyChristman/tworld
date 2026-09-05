@@ -1819,7 +1819,31 @@ static int canmakemove(creature const* cr, int dir, int flags) {
 #endif
         if (!(movelaws[floor].chip & dir))
             return FALSE;
-        if (floor == Socket && chipsneeded() > 0)
+        /* MOD (Jeremy, jc-51): `!= 0`, not `> 0`, so this agrees with the
+         * assertion that follows it in endmovement().
+         *
+         * 🔴 chipsneeded CAN BE NEGATIVE. state.h declares it `short` -- signed
+         * -- and encoding.c:187 fills it with readword(), an UNSIGNED 16-bit
+         * field straight out of the .dat. A level declaring 32768 or more
+         * required chips therefore arrives here as a negative number.
+         *
+         * The two tests then disagreed. This gate asked `> 0` and let Chip
+         * through; endmovement()'s Socket case asserts `chipsneeded() == 0` and
+         * called die() -- which in the shipped program EXITS THE GAME with
+         * "internal error: failed sanity check". A downloaded level could kill
+         * Tile World by putting Chip on a socket.
+         *
+         * For every non-negative count `> 0` and `!= 0` are the same test, so
+         * no sane level changes behavior at all. A malformed one now finds the
+         * socket simply locked, which is the right answer for a level that
+         * demands 65,532 chips. Upstream's; found by the MS engine fuzz target.
+         *
+         * ⚠ The root cause is the signed/unsigned mismatch at the parser, and
+         * it is deliberately NOT "fixed" there: clamping the value would change
+         * what chipsneeded IS for such levels, and the corpus cannot say what
+         * that should be. Making the two predicates agree removes the crash
+         * without inventing a number. */
+        if (floor == Socket && chipsneeded() != 0)
             return FALSE;
         if (isdoor(floor) && !possession(floor))
             return FALSE;

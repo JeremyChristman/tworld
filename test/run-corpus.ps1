@@ -30,6 +30,29 @@ random.c OR solution.c. A green unit suite says nothing about replay.
 generic\dirinput.c produces a byte-identical corpus result no matter how broken
 it is. Hand playtesting is the only oracle there. See CLAUDE.md section 3.5.
 
+TWO STREAMS, TWO STANDARDS
+
+Each set is recorded twice: <set>.out is the program's stdout, <set>.err its
+stderr. They are compared differently on purpose.
+
+  .out  THE VERDICT. It names which levels were judged invalid, so a swap of
+        one valid solution for one invalid -- which the totals would hide
+        completely -- shows up here. Compared byte for byte, and a difference
+        FAILS the run. This is the desync check.
+
+  .err  THE WARNINGS: bad tiles, invalid creature locations, password
+        mismatches. Compared after normalizing two things that change for
+        reasons that are not behavior -- err.c stamps __LINE__ into every
+        message, so adding a COMMENT to a source file moves it, and the
+        scratch directory's name is fresh per run and appears inside
+        file-name messages. ADVISORY: it is reported but does not fail the
+        run, because no recorded solution's verdict depends on a warning.
+
+The .err comparison was added in jc-51, after a by-hand diff found that 29 of
+303 sets printed different warnings between two builds and nothing in this
+script noticed. Every one of those turned out to be a moved __LINE__ -- but
+"nothing noticed" was the finding.
+
 WHERE THE CORPUS COMES FROM
 
 -Corpus should point at a Chip's Challenge folder containing sets\, data\ and
@@ -118,10 +141,50 @@ function Compare-Runs([string]$a, [string]$b) {
         if ($ha -ne $hb) { $differing += $f.Name }
     }
 
+    # The per-set STDERR, compared separately and advisorily. It carries the
+    # warnings -- bad tiles, invalid creature locations, password mismatches --
+    # so a change in what the program COMPLAINS about is a real signal about
+    # parser or engine behavior, and nothing else in this repository watches it.
+    #
+    # Two things in that text change for reasons that are not behavior, and both
+    # are normalized away or every run would report hundreds of false hits:
+    #
+    #   [C:/.../mslogic.c:4416]   err.c stamps __LINE__ into every message, so
+    #                             adding a COMMENT to a source file moves it.
+    #   tworld-corpus-<32 hex>    the scratch copy's directory name is fresh per
+    #                             run and appears inside file-name messages.
+    #
+    # 🔴 This is ADVISORY and deliberately does NOT change the exit code. A
+    # warning is not a verdict: no recorded solution's pass/fail depends on it,
+    # and failing a release over a reworded message would train people to ignore
+    # this script. Read it, explain it, then ship.
+    $errDiffering = @()
+    foreach ($f in (Get-ChildItem -LiteralPath $a -Filter *.err -File)) {
+        $other = Join-Path $b $f.Name
+        if (-not (Test-Path $other)) { $errDiffering += "$($f.Name) (missing in the other run)"; continue }
+        $na = ((Get-Content -LiteralPath $f.FullName -Raw) -replace '\[[^\]]*\.c:\d+\]', '[SRC]') -replace 'tworld-corpus-[0-9a-f]{32}', 'tworld-corpus-SCRATCH'
+        $nb = ((Get-Content -LiteralPath $other   -Raw) -replace '\[[^\]]*\.c:\d+\]', '[SRC]') -replace 'tworld-corpus-[0-9a-f]{32}', 'tworld-corpus-SCRATCH'
+        if ($na -ne $nb) { $errDiffering += $f.Name }
+    }
+    $errCount = (Get-ChildItem -LiteralPath $a -Filter *.err -File).Count
     Write-Host ""
     if ($differing.Count -eq 0) {
         Write-Host ("  IDENTICAL: 0 of {0} per-set outputs differ" -f (Get-ChildItem -LiteralPath $a -Filter *.out -File).Count) -ForegroundColor Green
         Write-Host "  No recorded solution changed its verdict."
+    Write-Host ""
+    if ($errDiffering.Count -eq 0) {
+        Write-Host ("  warnings: identical across all {0} set(s)" -f $errCount) -ForegroundColor Green
+    } else {
+        Write-Host ("  warnings: {0} of {1} set(s) print something different (ADVISORY, not a verdict):" -f $errDiffering.Count, $errCount) -ForegroundColor Yellow
+        foreach ($d in ($errDiffering | Select-Object -First 12)) {
+            Write-Host "    $d" -ForegroundColor Yellow
+        }
+        if ($errDiffering.Count -gt 12) {
+            Write-Host ("    ... and {0} more" -f ($errDiffering.Count - 12)) -ForegroundColor Yellow
+        }
+        Write-Host "  Explain these before shipping. They are not desyncs, but they are a behavior change."
+    }
+
         return 0
     }
     Write-Host ("  {0} set(s) DIFFER:" -f $differing.Count) -ForegroundColor Red
@@ -139,6 +202,20 @@ function Compare-Runs([string]$a, [string]$b) {
     Write-Host ""
     Write-Host "  A difference here means a recorded solution changed its verdict." -ForegroundColor Red
     Write-Host "  That is a desync. Do not ship it without understanding exactly why." -ForegroundColor Red
+    Write-Host ""
+    if ($errDiffering.Count -eq 0) {
+        Write-Host ("  warnings: identical across all {0} set(s)" -f $errCount) -ForegroundColor Green
+    } else {
+        Write-Host ("  warnings: {0} of {1} set(s) print something different (ADVISORY, not a verdict):" -f $errDiffering.Count, $errCount) -ForegroundColor Yellow
+        foreach ($d in ($errDiffering | Select-Object -First 12)) {
+            Write-Host "    $d" -ForegroundColor Yellow
+        }
+        if ($errDiffering.Count -gt 12) {
+            Write-Host ("    ... and {0} more" -f ($errDiffering.Count - 12)) -ForegroundColor Yellow
+        }
+        Write-Host "  Explain these before shipping. They are not desyncs, but they are a behavior change."
+    }
+
     return 1
 }
 

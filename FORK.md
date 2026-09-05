@@ -820,6 +820,52 @@ exactly what's mine:
    `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature`; reverting the fix makes it die with
    `SIGILL` under `-fsanitize-undefined-trap-on-error`, which runs on Windows.
 
+22. **A negative chip count opened the socket and then killed the program** (`mslogic.c`,
+   `lxlogic.c`). **Upstream's** (`929d9c6`, the 2.3.1 import), present in **both** engines.
+
+   `state.chipsneeded` is a **signed** `short` (`state.h:251`). `encoding.c:187` fills it with
+   `readword()`, an **unsigned** 16-bit read straight out of the `.dat`. So a level whose header asks
+   for `0x8000` or more chips arrives as a **negative** number of chips still needed — and two
+   predicates that are meant to describe the same condition then disagree about it:
+
+   | Site | Asks | Negative count |
+   |---|---|---|
+   | `canmakemove()`, `mslogic.c:1846` / `lxlogic.c:790` | `chipsneeded() > 0` | **false** → socket opens |
+   | `endmovement()`, `mslogic.c:3264`; `lxlogic.c:1399`, `:1475` | `chipsneeded() == 0` | **false** → `_assert` fails |
+
+   The gate lets Chip onto a socket whose requirement was never met, and the assert immediately
+   objects. `_assert` calls `die()`, so **the shipped program exits** with *"internal error: failed
+   sanity check"* — the failure is not a wrong tile or a bad score, it is the process going away.
+
+   Both gates now ask **`chipsneeded() != 0`**, which is the same question the assert asks.
+
+   🔴 **The recorded suspicion was wrong, and that is the lesson.** jc-50's notes filed this as
+   *"something reaches `endmovement()` with a socket destination without passing that gate — a slide
+   or teleport path is the suspect."* Nothing bypasses the gate. **The gate itself says yes.** Reading
+   an assert tells you which invariant broke; only tracing the reproducer tells you why, and the two
+   answers here pointed at different files.
+
+   **Why this fix and not a better one.** The type mismatch is left alone deliberately. Widening
+   `chipsneeded` touches a struct every engine path reads, for a case no real level reaches; making
+   `expandleveldata()` reject `>= 0x8000` would refuse a file upstream accepts, and rejection is a
+   user-visible policy change. Making the two predicates agree is the minimal change that removes the
+   crash — and, unlike the alternatives, it is provably behavior-preserving: **for every non-negative
+   count, `> 0` and `!= 0` are the same predicate.** The defect needs the one input for which they
+   differ.
+
+   **No real level reaches it.** The whole collection was scanned for a chips-required word `>= 32768`
+   — **31,090 levels across 393 `.dat` files, zero hits.** It takes a damaged or hand-crafted file.
+
+   **Replay-neutral, measured anyway:** **289 sets, 0 of 303 per-set outputs differ.** The argument
+   above says the corpus *cannot* move; running it is what turns that from an argument into a fact.
+
+   ⭐ **Found by the MS engine fuzz target ~43 s into the run right after jc-50**, and left OPEN
+   through jc-50 on purpose, with the `fuzz` job red — it sits on a path every recorded solution
+   depends on and deserved a deliberate decision. The reproducer has moved from
+   `test/fuzz/known-findings/mslogic-socket-assert` — now empty of findings — into the replayed
+   corpus as `test/fuzz/corpus/mslogic/socket-negative-chipsneeded`. Both engine tests carry a case
+   for it; reverting either gate to `> 0` makes both test binaries `die()`.
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point**, and it runs two layers:
@@ -829,10 +875,13 @@ exactly what's mine:
 | unit | `test/run-tests.ps1` | a C compiler | one module at a time: the RNG, the `.tws` codec, the MS engine, the keyboard arbitration |
 | end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
 
-As of 2026-09-04: **10 unit runs / 17,034 checks and 12 end-to-end cases / 35 checks, 0 failures.**
+As of 2026-09-05: **11 unit runs / 17,265 checks, 12 end-to-end cases / 35 checks, and 1 Qt run / 90
+checks, 0 failures.**
 Machine-readable results with `-ResultsPath test-results` (JUnit XML + JSON). Coverage, unit layer
-only, is measured by `coverage.ps1`: **28.2% of branches overall**, from 100% of `random.c` down to
-0% of `fileio.c` (which is compiled in but never called by any case). `verify-defaults.ps1` checks
+only, is measured by `coverage.ps1`: **46.9% of lines and 38.8% of branches overall**, from 100% of
+`random.c` down to 19.3% of `series.c` (which is compiled into a test aimed at two of its functions,
+so its several hundred lines of series enumeration count against it without being aimed at).
+`verify-defaults.ps1` checks
 that the stock `tw_settings.ini` in `package.ps1` still declares every setting `settings.cpp` does —
 it did not, for two releases.
 

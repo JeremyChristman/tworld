@@ -776,7 +776,18 @@ static int canmakemove(creature const *cr, int dir, int flags)
     if (cr->id == Chip) {
 	if (!(movelaws[floor].chip & dir))
 	    return FALSE;
-	if (floor == Socket && chipsneeded() > 0)
+	/* MOD (Jeremy, jc-51): `!= 0`, not `> 0` -- the identical mismatch the MS
+	 * engine had, and the Lynx engine asserts `chipsneeded() == 0` in two
+	 * places (lxlogic.c:1388 and :1464). chipsneeded is a SIGNED short filled
+	 * from an UNSIGNED 16-bit .dat field, so a level demanding 32768 or more
+	 * chips arrives negative, passes a `> 0` gate, and then trips an assert
+	 * that calls die() -- exiting the shipped game.
+	 *
+	 * Identical behavior for every non-negative count; see the fuller note at
+	 * the matching line in mslogic.c. Fixed here at the same time because
+	 * "the MS one was fixed and the Lynx one was not" is exactly how a
+	 * two-engine codebase drifts. */
+	if (floor == Socket && chipsneeded() != 0)
 	    return FALSE;
 	if (isdoor(floor) && !possession(floor))
 	    return FALSE;

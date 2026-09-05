@@ -1,12 +1,12 @@
 # Coverage baseline, unit layer only. Regenerate with coverage.ps1 -UpdateBaseline.
 # A FLOOR, not a grade. Raising a number here is progress; lowering one needs a reason.
 file	lines	linesHit	branches	branchesHit
-encoding.c	139	115	87	63
+encoding.c	139	125	87	72
 fileio.c	242	97	150	47
 generic/dirinput.c	33	33	45	44
 generic/in.c	167	93	167	85
-lxlogic.c	1073	527	1008	410
-mslogic.c	1650	629	1486	388
+lxlogic.c	1073	594	1008	467
+mslogic.c	1654	741	1494	498
 random.c	43	43	8	8
 series.c	570	110	311	76
 solution.c	444	212	309	93

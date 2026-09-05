@@ -152,6 +152,13 @@ run says *nothing* about `generic/in.c`, `generic/dirinput.c`, or anything else 
 jc-43 was byte-identical to jc-42 across 303 sets and 18,734 solutions, and that was expected rather
 than reassuring. Hand playtesting and `test\input_test.c` are the only oracles for that class.
 
+⚠ **And read BOTH streams it records.** Each set is saved as `<set>.out` (the verdict — which levels
+were judged invalid) and `<set>.err` (the warnings). Only `.out` sets the exit code; `.err` is
+compared **advisorily**, after normalizing `err.c`'s `[file.c:NNN]` stamp and the scratch directory's
+per-run GUID. That normalization is not cosmetic: **adding a comment to `mslogic.c` moves `__LINE__`
+and changes 29 of 303 sets' stderr**, which is what a raw diff shows you. jc-51 added the check after
+a by-hand comparison found the script had been silent about that class the whole time.
+
 ---
 
 ## 4. Repo map
@@ -185,7 +192,7 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **11 unit runs, 17,233 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
+Current state: **11 unit runs, 17,265 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -291,8 +298,8 @@ misreading in the parser is faithfully reproduced and never caught.
 
 ### What is NOT covered — read this before trusting a green run
 
-- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 64
-  checks over 19 cases, 0% → 49.1% lines. ⚠ Read its header before adding to it: Lynx commits a
+- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 79
+  checks over 21 cases, 0% → 55.4% lines. ⚠ Read its header before adding to it: Lynx commits a
   creature's **position when the move begins**, not when it ends, and `advancegame()` withholds the
   result for a **13-tick endgame timer** after the level is decided. Both make naive tick arithmetic
   look like engine bugs. And **never use `chipisalive()` from a test** — it is `id == Chip`, which is
@@ -315,9 +322,15 @@ misreading in the parser is faithfully reproduced and never caught.
   two shipped defects immediately (a path guard that could not work on Windows, and eleven ctype
   calls on a signed `char`). It has 40 unit checks and a fuzz target now. The lesson is the cheapest
   one in this file: **the parser with no test was the parser with the bugs.**
-- **Neither engine is fuzzed, only the parsers.** A crash reachable from a malformed level that gets
-  *past* `readleveldata()` and into `mslogic.c` or `lxlogic.c` would not be found by anything here.
-  jc-45's defect was exactly that shape and was found by hand.
+- ~~**Neither engine is fuzzed, only the parsers.**~~ — **closed**: `test/fuzz/fuzz_mslogic.c` and
+  `fuzz_lxlogic.c` load a level *and play it*, which is the class a parser target structurally cannot
+  reach — a file that is **accepted** and then breaks the engine. It paid for itself twice
+  immediately: **jc-50** (one second into the first run) and **jc-51** (43 s into the next). jc-45 was
+  the same shape and had to be found by hand.
+  ⚠ **What is still uncovered is the other ruleset's depth.** Both targets exist, but `mslogic.c` sits
+  at 44.8% lines with thirty-two `NO_FIX_*` branches largely unexercised; the fuzzer reaches what a
+  short random move plan reaches. The `NO_FIX_*` differential matrix below is still the cheapest way
+  to move it.
 
 ### Coverage — what the suite actually reaches
 
@@ -333,33 +346,41 @@ uninstrumented executable, so what they reach is not counted and these figures u
 |---|---|---|
 | `random.c` | 100.0% | **100.0%** |
 | `generic/dirinput.c` | 100.0% | **97.8%** |
-| `encoding.c` | 82.7% | **72.4%** |
+| `encoding.c` | 89.9% | **82.8%** |
 | `generic/in.c` | 55.7% | **50.9%** |
-| `lxlogic.c` | 49.1% | **40.7%** |
+| `lxlogic.c` | 55.4% | **46.3%** |
 | `solution.c` | 47.7% | **30.1%** |
+| `mslogic.c` | 44.8% | **33.3%** |
 | `fileio.c` | 40.1% | **31.3%** |
-| `mslogic.c` | 38.1% | **26.1%** |
 | `series.c` | 19.3% | **24.4%** |
-| **overall** | 42.6% | **34.0%** |
+| **overall** | 46.9% | **38.8%** |
 
 ⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
 has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented
-lines against `mslogic.c`'s 1,650, and its core movement paths are dense rather than spread across
+lines against `mslogic.c`'s 1,654, and its core movement paths are dense rather than spread across
 thirty-two `NO_FIX_*` branches. The cheapest way to move `mslogic.c` is still the differential matrix
 described below.
 
 **Read the branch column.** An emulator is mostly conditionals, and a line count flatters an
 unexercised `switch` badly.
 
-Three of these deserve explanation rather than embarrassment. **`series.c` at 8%** and **`fileio.c`
-at 15%** are each compiled into a test for one function apiece — `readleveldata()` and the file
-primitives it needs — so the other five hundred lines of series enumeration and `.dac` handling count
-against them without being aimed at. **`mslogic.c` at 25.4%** is 4,800 lines of two rulesets' worth
-of creature behavior against a suite that walks Chip around; it was 0% before this suite existed, and
-the cheapest way to move it a long way is the `NO_FIX_*` differential matrix described above.
+⭐ **The engine fuzz corpora are why `mslogic.c` and `encoding.c` moved so far in jc-51** — 38.1% →
+44.8% and 82.7% → 89.9% lines, with branches up 7 points apiece. Nobody wrote a case aimed at those
+lines. `mslogic_test.c` and `lxlogic_test.c` each replay their fuzz corpus through the real engine,
+so **every reproducer a fuzzer finds becomes permanent coverage of whatever path it happened to
+reach.** That is a second, unadvertised return on the corpus discipline in
+[`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
+
+Two of these deserve explanation rather than embarrassment. **`series.c` at 19.3%** and **`fileio.c`
+at 40.1%** are each compiled into a test aimed at a couple of functions — `readleveldata()`,
+`readconfigfile()`, and the file primitives they need — so the other five hundred lines of series
+enumeration count against them without being aimed at. **`mslogic.c` at 44.8%** is 4,800 lines of two
+rulesets' worth of creature behavior against a suite that walks Chip around; it was 0% before this
+suite existed, and the cheapest way to move it further is the `NO_FIX_*` differential matrix
+described above.
 
 ⚠ **The overall figure went DOWN between jc-44's first and second coverage runs, from 30.2% to
-27.7%, while the suite grew.** Nothing regressed: adding `series_test.c` pulled `series.c`'s 558
+27.7%, while the suite grew.** Nothing regressed: adding `series_test.c` pulled `series.c`'s 570
 lines into the denominator at 8%. That is exactly why the per-file column is the one to read, and why
 `-CheckBaseline` compares files individually rather than the total.
 
@@ -522,23 +543,28 @@ old read here was undefined — what it returned depended on what the linker put
 replay was never guaranteed stable across toolchains for these levels. Pick the defensible answer and
 **measure it against the corpus**, which is what settled this one.
 
+**Fixed in jc-51 — the finding jc-50 shipped with OPEN.** `chipsneeded` is a **signed** `short`
+(`state.h:251`) filled from the `.dat`'s **unsigned** 16-bit word (`encoding.c:187`), so a level
+demanding `0x8000` chips or more arrives **negative**. `canmakemove()` gated the socket on
+`chipsneeded() > 0` — false for a negative count, **so the socket opened** — and `endmovement()` then
+asserted `chipsneeded() == 0`, which is also false, so `die()` ran and **the shipped game exited**.
+Both gates now ask `chipsneeded() != 0`. **Upstream's** (`929d9c6`). Both engines. No real level
+reaches it: 31,090 levels across 393 `.dat` files, zero asking 32,768 or more. Replay-neutral: 0 of
+303 outputs differ. See `FORK.md` item 22.
+
+🔴 **The suspicion recorded here was wrong, and it pointed at the wrong file.** This entry used to
+say "something reaches `endmovement()` with a socket destination without passing that gate — a slide
+or teleport path is the suspect." **Nothing bypasses the gate; the gate itself says yes.** An assert
+tells you which invariant broke. Only tracing the reproducer tells you why — and when a value can be
+negative, check the *type* before you go looking for an exotic control-flow path.
+
+⚠ **The type mismatch is still there, deliberately.** `chipsneeded` remains a signed `short` holding
+an unsigned file value. Widening it touches a struct every engine path reads; rejecting the file in
+`expandleveldata()` would refuse input upstream accepts. Making the two predicates agree is the
+minimal fix, and the only one that is provably behavior-preserving — **for every non-negative count,
+`> 0` and `!= 0` are the same predicate.**
+
 What follows is what is still live.
-
-🔴 **OPEN, AND THE `fuzz` JOB IS RED BECAUSE OF IT — do not silence that.**
-`_assert(chipsneeded() == 0)` in `endmovement()`'s `Socket` case (`mslogic.c:3240`) can fail, so
-`die()` runs and **the shipped game exits** with "internal error: failed sanity check". **Upstream's**
-(`929d9c6`, the 2.3.1 import). `canmakemove()` gates socket entry at `mslogic.c:1822`, so something
-reaches `endmovement()` with a socket destination without passing that gate — a slide or teleport
-path is the suspect; it was not pinned down.
-
-Found by `fuzz_mslogic` ~43 s in, on the run right after jc-50 fixed the first engine finding. The
-reproducer is committed at `test/fuzz/known-findings/mslogic-socket-assert`, deliberately **outside**
-the corpus so the unit suite does not die on it — read that directory's README before touching it.
-
-⚠ **It is unfixed on purpose.** The assert says the state is impossible; the fuzzer proved it is not.
-Deciding what should happen instead — refuse the move, open the socket anyway, or fail gracefully —
-changes MS engine **semantics** on a path every recorded solution depends on. That needs a deliberate
-decision and a corpus differential, not a quick patch.
 
 ### 8.1 `-v` cannot work as documented
 
