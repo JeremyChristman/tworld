@@ -21,6 +21,64 @@ stay attached to something someone can see.
 
 ---
 
+## Unreleased
+
+Nothing here changes the executable. It rides along with the next release that does.
+
+### Added — a golden-master snapshot of both engines, and CI can finally see an engine change
+
+**Until now nothing in CI could detect an engine behavior change.** All six jobs went green on a
+push that silently broke replay: the entire automated replay gate was **one** end-to-end case
+driving a synthesized set with a single valid and a single invalid solution. The instrument that
+can answer the question — `test/run-corpus.ps1` — needs the maintainer's private collection and his
+desktop, and runs by hand. Meanwhile **903 levels sat committed in `data/`** doing nothing as an
+oracle.
+
+- **`test/golden/golden.c`** drives every committed level through **both engines** with a
+  deterministic move stream and hashes the whole gamestate after every tick — **1,806 digests over
+  903 levels in 1.6 s**. `test/golden/engine-snapshot.tsv` holds the baseline; `-check` recomputes
+  and fails on any difference. Runners: `test\run-golden.ps1` and the new **`golden` CI job**.
+- 🔴 **The move stream uses its own PRNG, never `random.c`.** The engines draw from `random.c` for
+  blob movement and random slides, so an input drawn from it would make a change to `random.c`
+  alter every level's *input* as well as its output — and the resulting diff could not distinguish
+  a behavior change from a different walk.
+- **The job runs on Linux although the baseline is committed from a Windows build**, so a green run
+  is also a standing check that the digests are reproducible across compilers and platforms. That
+  is what keeps the hashing honest about struct padding and undefined shifts.
+- Each row carries **outcome and tick count beside the digest**, which turned out to matter
+  immediately: when the digest formula changed, all 1,806 digests moved while every outcome and
+  tick count stayed identical — telling the two cases apart at a glance.
+
+🔴 **What it does NOT cover, measured rather than assumed.** Every one of the 32 `NO_FIX_*` engine
+toggles was built separately and checked against the baseline. **It detects two of them**
+(`NO_FIX_BLUE_BUTTON_TIMING`, `NO_FIX_CHIP_ONTO_CLONER`). Raising the tick count 400 → 2000 and the
+walk count 1 → 4 → 12 each detected **nothing further**. The limit is not how far the walker
+wanders: a random walker does not *construct* a block resting on a teleport or a tank on a cloner.
+Those need designed fixtures — the `NO_FIX_*` differential matrix, which this does not replace. It
+catches **gross** engine change (a mutation to Chip's idle timer moved 577 of 1,806 rows): a smoke
+alarm, not an audit. `run-corpus.ps1` still decides whether a release ships.
+
+### Fixed — two engine toggles that could not be switched on at all
+
+Building all 32 toggles one at a time for that matrix found **two that did not compile**, both this
+fork's own, and both invisible until someone needed the switch:
+
+- **`NO_FIX_RFF_DRAW_ONCE`** — `rff_keepdir` was declared under `#ifdef FIX_RFF_DRAW_ONCE` but also
+  written by the `FIX_RFF_CHIP_REARM` block, so disabling the first left an orphaned write:
+  *"'rff_keepdir' undeclared"*.
+- **`NO_FIX_TELEPORT_STALE_FG`** — same shape: `prepush_destfloor` declared under one teleport
+  toggle and read under `FIX_TELEPORT_BROKEN_DYNAMIC`.
+
+Each declaration is now guarded by **either** toggle, matching the existing idiom at `mslogic.c:1183`.
+**Shipped behavior is unchanged** — with both fixes at their defaults the declaration is present
+either way, and the 1,806 golden digests are byte-identical across the change.
+
+⚠ **This is precisely the rot [ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md) exists to
+prevent.** The toggles are kept so a future desync investigation can flip one; a toggle that cannot
+be flipped is decoration, not scaffolding. Nothing would have reported it until somebody reached for
+one of those two switches mid-investigation, years from now. **All 32 now build.**
+
+
 ## jc-51 — 2026-09-05
 
 ### Fixed

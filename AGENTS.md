@@ -32,6 +32,7 @@ powershell -ExecutionPolicy Bypass -File run-tests.ps1              # unit + end
 powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build       # build first
 powershell -ExecutionPolicy Bypass -File package.ps1                # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1         # stock ini vs. settings.cpp
+powershell -ExecutionPolicy Bypass -File test\run-golden.ps1        # engine snapshot; run after ANY engine edit
 ```
 
 Machine-readable results: `run-tests.ps1 -ResultsPath test-results` writes JUnit XML and JSON. Exit
@@ -75,8 +76,11 @@ with a `TESTLANG:` comment and says why. Extra flags go in a `TESTFLAGS:` commen
 executed, which is what catches a test function that has silently stopped being called. Raise it when
 you add cases; **never lower it to make a run pass.**
 
-`CLAUDE.md` §5 lists what is deliberately **not** covered — the Lynx engine, the GUI, 31 of the 32
-`NO_FIX_*` toggles. Read it before claiming a green run means more than it does.
+`CLAUDE.md` §5 lists what is deliberately **not** covered — the GUI, and **30 of the 32 `NO_FIX_*`
+toggles** (a measured number: the golden master detects two, and raising its tick or walk count was
+tried and detected nothing further). The Lynx engine is no longer on that list: `test/lxlogic_test.c`
+covers it and the golden master drives it over all 903 committed levels. Read §5 before claiming a
+green run means more than it does.
 
 ## Style
 

@@ -48,6 +48,8 @@ powershell -ExecutionPolicy Bypass -File test\run-qt-tests.ps1        # the oshw
 powershell -ExecutionPolicy Bypass -File package.ps1                  # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit layer
+powershell -ExecutionPolicy Bypass -File test\run-golden.ps1          # golden-master engine snapshot
+powershell -ExecutionPolicy Bypass -File test\run-golden.ps1 -Update  # REWRITE the baseline (deliberate)
 ```
 
 Two more, neither of which is PowerShell:
@@ -180,6 +182,7 @@ a by-hand comparison found the script had been silent about that class the whole
 | `oshw-sdl/` | The SDL front end. Not built or shipped by this fork |
 | `data/`, `sets/` | Upstream's redistributable community level packs. See ADR 0005 |
 | `test/` | The test suite. See §5 |
+| `test/golden/` | The golden-master engine snapshot and its committed baseline |
 | `docs/adr/` | Why the surprising things here are deliberate |
 
 ---
@@ -193,6 +196,24 @@ run-tests.ps1              entry point: unit, then end-to-end
 ```
 
 Current state: **11 unit runs, 17,265 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks; 0 failures.**
+
+A third layer runs on Windows but not from `run-tests.ps1`, because it needs no test harness at all
+— it links the engines the way `tworld2` does and drives real level data:
+
+- **`test\run-golden.ps1`** — the **golden-master engine snapshot** (the `golden` job). Every level
+  in every committed `.dat`, through **both engines**, driven by a deterministic move stream and
+  hashed: **1,806 digests over 903 levels in 1.6 s**, recorded in
+  `test/golden/engine-snapshot.tsv`.
+
+  🔴 **It is the only thing in CI that can see an engine behavior change.** Before it existed, the
+  entire automated replay gate was one end-to-end case with a single valid and a single invalid
+  solution, and a push that altered engine behavior went green everywhere.
+
+  ⚠ **Know its reach before quoting it: 2 of 32 `NO_FIX_*` toggles, measured** — and neither more
+  ticks nor more walks helps. It catches gross change (a mutation to Chip's idle timer moved 577 of
+  1,806 rows). It is a smoke alarm, not an audit, and **`run-corpus.ps1` still decides a release.**
+  Read the header of `test/golden/golden.c` before changing anything there; `-Update` rewrites the
+  baseline and is a deliberate act, not a way to make a red run go green.
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -307,10 +328,24 @@ misreading in the parser is faithfully reproduced and never caught.
 - **The row-32 cloner glitch is only half covered.** `mslogic_test.c` pins the *loading* half
   (`readpos()` keeping `(x, 32)` distinct from `POS_INVALID`), which is unconditional. The half that
   `NO_FIX_ROW32_CLONER` actually guards — what happens when such a cloner **fires** — is not tested:
-  building that file with `-DNO_FIX_ROW32_CLONER` still passes every case. That was measured.
-- **The other 31 `NO_FIX_*` toggles have no differential test.** Each is a documented behavior
-  difference with a known direction, and compiling one test both ways would be a real oracle. Nobody
-  has done it.
+  building that file with `-DNO_FIX_ROW32_CLONER` still passes every case. That was measured, and
+  **the golden master does not catch it either** — it was measured there too.
+- 🔴 **30 of the 32 `NO_FIX_*` toggles still have no differential test, and that is now a MEASURED
+  number rather than an impression.** Every toggle was built separately and run against the
+  golden-master baseline: it detects **two** — `NO_FIX_BLUE_BUTTON_TIMING` (26 rows) and
+  `NO_FIX_CHIP_ONTO_CLONER` (1 row). Raising the golden master's tick count 400 → 2000 and its walk
+  count 1 → 4 → 12 each detected **nothing further**.
+
+  **Do not try to fix this by turning those knobs up.** The limit is not how far the walker wanders:
+  a random walker does not *construct* a block resting on a teleport, a tank on a cloner, or a
+  creature in a trap whose button is pressed this tick. Those are arranged, not stumbled into.
+  **Designed fixtures are the only thing that will move this number** — compiling one purpose-built
+  test both ways, per toggle. That is still the cheapest large win available in this repository, and
+  it is still undone.
+
+  ⭐ The sweep did pay for itself once already: **two toggles turned out not to compile at all**
+  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`), each declaring its state variable under one
+  toggle and reading it under another. See §8. All 32 build now.
 - **No GUI is tested**, still — the score table's column spans, the color picker, the tileset menu,
   the death counter are all verified by hand. But `oshw-qt/` is no longer *entirely* uncovered:
   `test/qt/ccmetadata_test.cpp` covers `CCMetaData.cpp`, the `.ccx` parser, with 90 checks. That is
@@ -563,6 +598,25 @@ an unsigned file value. Widening it touches a struct every engine path reads; re
 `expandleveldata()` would refuse input upstream accepts. Making the two predicates agree is the
 minimal fix, and the only one that is provably behavior-preserving — **for every non-negative count,
 `> 0` and `!= 0` are the same predicate.**
+
+**Fixed, unreleased — two `NO_FIX_*` toggles that could not be switched on at all.** This fork's own.
+`rff_keepdir` was declared under `#ifdef FIX_RFF_DRAW_ONCE` but also written by the
+`FIX_RFF_CHIP_REARM` block; `prepush_destfloor` was declared under `NO_FIX_TELEPORT_STALE_FG` but
+also read under `FIX_TELEPORT_BROKEN_DYNAMIC`. So `-DNO_FIX_RFF_DRAW_ONCE` and
+`-DNO_FIX_TELEPORT_STALE_FG` each dropped a declaration while leaving a use standing, and
+`mslogic.c` **did not compile**. Each declaration is now guarded by *either* toggle. Shipped
+behavior is unchanged — at the defaults the declaration is present either way, and all 1,806 golden
+digests are identical across the change. **All 32 toggles build now.**
+
+🔴 **This is the rot [ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md) exists to prevent,
+and it had already set in.** The toggles are kept precisely so a future desync investigation can
+flip one. Two of them were unflippable, and **nothing in the repository would have said so** — not
+the unit suite, not the fuzzers, not CI — until somebody reached for one of those switches
+mid-investigation, years from now, and lost an afternoon to a compile error in code they had not
+touched. Found only because the golden-master work built all 32 one at a time.
+
+⚠ **The general lesson: `#ifdef` scaffolding is untested code, and untested code rots.** If you add
+a `NO_FIX_*`, build with it defined at least once before committing. It costs one command.
 
 What follows is what is still live.
 

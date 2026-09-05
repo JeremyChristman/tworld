@@ -242,6 +242,47 @@ jobs:
           ./build-linux/tworld2 -V | head -3
           ./build-linux/tworld2 -V | grep -q "jc-" || { echo "::error::-V did not report a build tag"; exit 1; }
 
+
+  # The golden-master engine snapshot: every committed level, both engines,
+  # driven by a deterministic move stream and hashed.
+  #
+  # 🔴 THIS IS THE ONLY JOB THAT CAN SEE AN ENGINE BEHAVIOR CHANGE. Before it
+  # existed the entire automated replay gate was one end-to-end case with a
+  # single valid and a single invalid solution, and a push that altered engine
+  # behavior went green across every job.
+  #
+  # It runs on Linux deliberately, even though the maintainer develops on
+  # Windows: the digests are committed from a Windows build, so a green run
+  # here is also a standing check that the snapshot is REPRODUCIBLE ACROSS
+  # COMPILERS AND PLATFORMS. That is not decoration -- it is what proves the
+  # hashing avoids struct padding and undefined shifts, which is the usual way
+  # a scheme like this quietly becomes machine-specific.
+  #
+  # ⚠ Know what it does NOT cover before trusting it: measured, it detects 2 of
+  # the 32 NO_FIX_* engine toggles, and raising the tick or walk count was tried
+  # and bought nothing. See test/golden/golden.c. run-corpus.ps1, over the
+  # maintainer's real solution collection, is still what decides a release.
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build the golden-master driver
+        run: |
+          gcc -std=gnu11 -Wall -Wextra -Werror \
+              -Wno-unused-value -Wno-unused-variable \
+              -O2 -I. -o golden \
+              test/golden/golden.c mslogic.c lxlogic.c encoding.c random.c
+
+      # The .dat list is sorted and passed explicitly: the baseline is
+      # positional, so a shell glob's ordering is part of the contract.
+      - name: The engines still behave exactly as recorded
+        run: |
+          set -o pipefail
+          dats=$(ls data/*.dat | sort | tr '\n' ' ')
+          echo "level files: $dats"
+          test -n "$dats" || { echo "::error::no level data found"; exit 1; }
+          ./golden -check $dats
   # Builds the real program and drives it through its GUI-free command line.
   # The DYNAMIC Qt flavor deliberately: it is a fraction of the build time of
   # the static one and runs the same code. The static build is what ships, and

@@ -1171,7 +1171,23 @@ static int cmm_keepslot = FALSE;
 static int bounceretry = FALSE;
 #endif
 
-#ifdef FIX_RFF_DRAW_ONCE
+/* MOD (Jeremy): guarded by EITHER toggle, not just FIX_RFF_DRAW_ONCE.
+ *
+ * 🔴 This used to say `#ifdef FIX_RFF_DRAW_ONCE` alone, and FIX_RFF_CHIP_REARM
+ * also writes rff_keepdir (in floormovements_of_chip). So a build with
+ * -DNO_FIX_RFF_DRAW_ONCE dropped the declaration while leaving that write
+ * standing, and mslogic.c DID NOT COMPILE: "'rff_keepdir' undeclared".
+ *
+ * That is exactly the rot ADR 0002 exists to prevent. These toggles are kept so
+ * a future desync investigation can flip one; a toggle that cannot be flipped
+ * is not scaffolding, it is decoration -- and nothing would have reported it
+ * until somebody needed the switch, years from now, mid-investigation.
+ * Found by building all 32 toggles one at a time for the golden-master
+ * coverage matrix; two of the 32 failed. See test/golden/golden.c.
+ *
+ * Shipped behavior is unchanged: with both fixes at their defaults the
+ * declaration is present either way. The idiom matches line 1183 below. */
+#if defined(FIX_RFF_DRAW_ONCE) || defined(FIX_RFF_CHIP_REARM)
 /* Set (to the post-move slip direction) only across the SUCCESSFUL-bounce re-arm,
  * where Tile World would otherwise draw a second random direction for a single
  * move. NIL everywhere else, so every other path keeps drawing exactly as before. */
@@ -3156,7 +3172,15 @@ static int startmovement(creature* cr, int dir) {
  * is also the only place where a creature can be added to the slip
  * list.
  */
-#ifndef NO_FIX_TELEPORT_STALE_FG
+/* MOD (Jeremy): guarded by EITHER teleport toggle, not just NO_FIX_TELEPORT_STALE_FG.
+ *
+ * 🔴 This used to say `#ifndef NO_FIX_TELEPORT_STALE_FG` alone, while the
+ * FIX_TELEPORT_BROKEN_DYNAMIC block in endmovement() also READS
+ * prepush_destfloor. So a build with -DNO_FIX_TELEPORT_STALE_FG dropped the
+ * declaration and left that read standing, and mslogic.c DID NOT COMPILE:
+ * "'prepush_destfloor' undeclared". Same defect and same reasoning as
+ * rff_keepdir above -- see the note there. Shipped behavior is unchanged. */
+#if !defined(NO_FIX_TELEPORT_STALE_FG) || !defined(NO_FIX_TELEPORT_BROKEN_DYNAMIC)
 /* MOD (Jeremy), step 2 of the JacquesS2 #7 pair: the destination's top tile as it stood BEFORE
  * this move pushed anything off it.
  *
