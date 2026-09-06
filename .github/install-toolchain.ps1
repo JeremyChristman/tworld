@@ -80,10 +80,31 @@ not a version bump to wave through.
 "@
 }
 
-if ($Extra.Count -gt 0) {
-    Write-Host ("also installing: {0}" -f ($Extra -join ", "))
-    & $pacman -S --needed --noconfirm @Extra
-    if ($LASTEXITCODE -ne 0) { throw "pacman failed installing the extra packages (exit $LASTEXITCODE)" }
+# 🔴 SPLIT ON COMMAS OURSELVES. PowerShell only expands `-Extra a,b,c` into an
+# array when the call comes from inside PowerShell. Invoked the way CI does it --
+# `powershell -File install-toolchain.ps1 -Extra a,b,c`, a native command line --
+# the whole thing arrives as ONE string and binds to [string[]] as a single
+# element. pacman then reports `target not found: a,b,c` and the job fails at the
+# extras having already installed the pinned compiler correctly, which reads like
+# a mirror problem and is not one. Measured on the first CI run of this script.
+#
+# Splitting here handles both call styles, so the script behaves the same whether
+# a human runs it from a PowerShell prompt or a workflow runs it from cmd.
+$packages = @()
+foreach ($e in $Extra) {
+    foreach ($one in ($e -split ",")) {
+        $one = $one.Trim()
+        if ($one -ne "") { $packages += $one }
+    }
+}
+
+if ($packages.Count -gt 0) {
+    Write-Host ("also installing {0} package(s): {1}" -f $packages.Count, ($packages -join ", "))
+    & $pacman -S --needed --noconfirm @packages
+    if ($LASTEXITCODE -ne 0) {
+        throw ("pacman failed installing the extra packages (exit {0}): {1}" -f
+               $LASTEXITCODE, ($packages -join ", "))
+    }
 }
 
 # 🔴 VERIFY, DO NOT ASSUME. `pacman -U` can be a no-op if a NEWER gcc is already
