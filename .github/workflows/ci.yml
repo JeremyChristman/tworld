@@ -285,7 +285,11 @@ jobs:
   # and the parts of tworld.c and generic/tile.c that have no unit coverage at
   # all.
   #
-  # 🔴 IT GATES ON `error` SEVERITY ONLY, AND THAT IS DELIBERATE. This is a C
+  # 🔴 IT RUNS CPPCHECK TWICE: a report pass that prints everything and cannot
+  # fail, and a gate pass that enables only `error`. One run cannot do both --
+  # --error-exitcode fires on ANY enabled diagnostic, not only on severity=error.
+  #
+  # GATING ON `error` SEVERITY ONLY IS DELIBERATE. This is a C
   # codebase from 2001 carrying an upstream fork's worth of idiom, and turning
   # on every cppcheck style rule would produce hundreds of findings nobody
   # intends to act on. A red X nobody can act on is how a build gets ignored --
@@ -313,16 +317,15 @@ jobs:
       # Everything the shipped program compiles, minus the SDL front end (this
       # fork does not build it -- see CLAUDE.md section 4) and minus the tests,
       # which deliberately do odd things like #including a .c file.
-      - name: cppcheck (gates on error severity)
+      - name: cppcheck
         run: |
           set -o pipefail
           # ⚠ STRIP COMMENTS AND BLANK LINES BEFORE HANDING THE LIST OVER.
           # This cppcheck rejects BOTH with "Failed to add suppression. No id."
           # and exits non-zero -- which reads exactly like a code finding and is
-          # not one. It cost two CI runs to pin down. The committed file keeps
-          # its comments, because a suppression without a stated reason is a
-          # finding somebody hid rather than judged; cppcheck just never sees
-          # them.
+          # not one. The committed file keeps its comments, because a
+          # suppression without a stated reason is a finding somebody hid rather
+          # than judged; cppcheck just never sees them.
           grep -vE '^\s*(#|$)' .cppcheck-suppressions > /tmp/cppcheck-supp.txt || true
           supp=""
           if [ -s /tmp/cppcheck-supp.txt ]; then
@@ -330,21 +333,30 @@ jobs:
             echo "suppressions in effect:"
             sed 's/^/  /' /tmp/cppcheck-supp.txt
           fi
-          cppcheck \
-            --enable=warning,performance,portability \
-            --inline-suppr \
-            $supp \
-            --error-exitcode=1 \
-            --std=c99 \
-            --platform=win64 \
-            -DWIN32 -D__GNUC__ \
-            -I . \
-            --suppress=missingInclude \
-            --suppress=missingIncludeSystem \
-            --suppress=unmatchedSuppression \
-            *.c generic/*.c 2>&1 | tee cppcheck.log
+
+          common="--inline-suppr $supp --std=c99 --platform=win64 -DWIN32 -D__GNUC__ -I .
+                  --suppress=missingInclude --suppress=missingIncludeSystem
+                  --suppress=unmatchedSuppression"
+
+          # PASS 1, REPORT ONLY. Everything cppcheck will say, printed for
+          # anyone reading the log, and never allowed to fail the job.
           echo ""
-          echo "cppcheck finished with no error-severity findings"
+          echo "===== full report (warning / performance / portability) ====="
+          cppcheck --enable=warning,performance,portability $common \
+                   *.c generic/*.c 2>&1 || true
+
+          # PASS 2, THE GATE. 🔴 TWO PASSES, AND THE REASON IS A TRAP WORTH
+          # KNOWING: --error-exitcode fires on ANY enabled diagnostic, not only
+          # on severity=error. A single run with --enable=warning and
+          # --error-exitcode=1 therefore gates on warnings too, which is exactly
+          # what this job set out NOT to do -- it failed that way on its third
+          # run. cppcheck enables only `error` by default, so the gate is a run
+          # with no --enable at all.
+          echo ""
+          echo "===== gate (error severity only) ====="
+          cppcheck $common --error-exitcode=1 *.c generic/*.c 2>&1 | tee gate.log
+          echo ""
+          echo "no error-severity findings"
 
   # The NO_FIX_* differential matrix: for each recorded witness, build the
   # engine with the fix ON and with it OFF and prove one generated input still
