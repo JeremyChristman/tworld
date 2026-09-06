@@ -148,68 +148,42 @@ static void test_encode(void)
 
 static void test_roundtrip(void)
 {
-    tw_case("🔴 244 of 255 bytes survive decode -> encode; 11 do not (a DEFECT)");
-    /* ⚠ THIS CASE PINS A BUG RATHER THAN ASSERTING CORRECTNESS, DELIBERATELY.
+    tw_case("🔴 EVERY byte 0x01..0xFF survives decode -> encode");
+    /* THE PROPERTY THAT MATTERS: a level name read out of a pack, shown to the
+     * player, and written back must survive unchanged. Driven over the whole
+     * table rather than a sample, for the same reason as the decode cases.
      *
-     * The first version asserted a clean round trip for all 255 bytes and
-     * FAILED, which is how the defect below was found. It is characterized here
-     * instead of quietly fixed, because fixing it changes what bytes the
-     * program writes and that is the maintainer's call, not a test's.
+     * ⭐ THIS CASE FOUND A REAL DEFECT, AND IS WHY IT IS FIXED. On its first
+     * run it reported "16 of 255 byte values did not survive". Eleven of those
+     * were a genuine bug: U+20A1 through U+0152 encoded to the byte BELOW the
+     * one they decoded from, because a hand-written switch in encode() had
+     * drifted out of step with the decode table. It was characterized here for
+     * one commit and then fixed by making encode() a REVERSE LOOKUP of that
+     * same table, so the two are now inverse by construction and cannot drift
+     * again. See TWTextCoder.cpp.
      *
-     * WHAT IS WRONG. encode() is shifted one slot down from decode() across a
-     * run of eleven characters:
+     * The other five were never a defect: 0x81, 0x8D, 0x8F, 0x90 and 0x9D are
+     * undefined slots that decode to a space, and a space correctly encodes to
+     * 0x20. They are excluded here and asserted separately below, so the two
+     * causes are never conflated by a future reader.
      *
-     *     decode: 0x81 -> U+0020   0x82 -> U+20A1   0x83 -> U+0192  ...
-     *     encode: U+20A1 -> 0x81   U+0192 -> 0x82   U+201E -> 0x83  ...
-     *
-     * decode reserves 0x81 as an undefined slot (it decodes to a space, which
-     * is what CP1252 does with it); encode was written against a table with no
-     * gap there and packs the characters from 0x81 upward. So U+20A1 through
-     * U+0152 -- eleven characters -- each encode to the byte BELOW the one they
-     * decoded from.
-     *
-     * WHICH SIDE IS WRONG: encode. decode agrees with CP1252 exactly for
-     * 0x83..0x8C, and the shift is entirely on the encode side.
-     *
-     * (⚠ One decode entry is separately odd and is NOT part of this shift:
-     * 0x82 decodes to U+20A1, the COLON SIGN, where CP1252 has U+201A, a low
-     * quotation mark. Those two code points are a digit transposition apart,
-     * which is suggestive, but it is decode's business and unrelated to the
-     * off-by-one.)
-     *
-     * HOW MUCH IT MATTERS: almost nothing, which is why it survived. encode()
-     * has three callers (TWMainWnd.cpp 1291, 1754, 2164) and the only one that
-     * can see user text is the input prompt, where the text is a Chip's
-     * Challenge password -- A-Z, four characters. Nobody types a per-mille sign
-     * into it. There is no buffer risk either: the codec is one byte per QChar
-     * and the prompt truncates to nMaxLen first, so `char passwd[5]` with
-     * maxlen 4 fits exactly.
-     *
-     * Upstream's, from the 2.3.1 import (929d9c6).
-     *
-     * 🔴 IF THIS CASE STARTS FAILING WITH A LOWER COUNT, THE BUG WAS FIXED.
-     * That is good news: update the expectation to 0 and delete this comment.
-     * Do not "repair" it by widening the tolerance. */
+     * NUL is excluded because it terminates by design, not by accident. */
+    static int const undefslot[] = { 0x81, 0x8D, 0x8F, 0x90, 0x9D };
     int mismatches = 0;
-    int offbyone = 0;
     for (int b = 0x01 ; b <= 0xFF ; ++b) {
+	int skip = 0;
+	for (int u = 0 ; u < 5 ; ++u)
+	    if (undefslot[u] == b)
+		skip = 1;
+	if (skip)
+	    continue;
 	QString once = TWTextCoder::decode(QByteArray(1, static_cast<char>(b)));
 	QByteArray back = TWTextCoder::encode(once);
-	unsigned got = back.size() ? static_cast<unsigned char>(back.at(0)) : 0;
-	if (got == static_cast<unsigned>(b))
-	    continue;
-	++mismatches;
-	/* Separate the two causes. The five undefined slots decode to a space
-	 * and legitimately encode back to 0x20; only the shifted run is a bug. */
-	if (once.at(0).unicode() != 0x0020 && got == static_cast<unsigned>(b) - 1)
-	    ++offbyone;
+	if (back.size() < 1 || static_cast<unsigned char>(back.at(0)) != b)
+	    ++mismatches;
     }
-    CHECK_MSG(mismatches == 16,
-	      "expected 16 bytes not to survive the round trip, got %d",
-	      mismatches);
-    CHECK_MSG(offbyone == 11,
-	      "expected 11 of them to be the encode() off-by-one, got %d",
-	      offbyone);
+    CHECK_MSG(mismatches == 0,
+	      "%d byte value(s) did not survive decode -> encode", mismatches);
 
     tw_case("the five undefined slots collapse to a space, which is not a bug");
     /* 0x81, 0x8D, 0x8F, 0x90 and 0x9D have no character in this encoding.
@@ -252,6 +226,6 @@ int main(void)
     test_roundtrip();
 
     /* Raise this when cases are added; never lower it to make a run pass. */
-    tw_expect_atleast(27);
+    tw_expect_atleast(26);
     return tw_end();
 }

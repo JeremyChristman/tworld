@@ -196,16 +196,21 @@ a by-hand comparison found the script had been silent about that class the whole
 ## 5. Tests
 
 ```
-run-tests.ps1              entry point: unit, then end-to-end
+run-tests.ps1              entry point: runs ALL FIVE layers below
   test\run-tests.ps1       unit — compiles the source under test directly; needs only gcc
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
+  test\run-qt-tests.ps1    the oshw-qt layer; skips cleanly without Qt
+  test\run-golden.ps1      the golden-master engine snapshot
+  test\run-nofix.ps1       the NO_FIX_* differential matrix
 ```
 
-Current state: **13 unit runs, 17,373 checks; 12 end-to-end cases, 35 checks; 2 Qt runs, 117 checks;
+Current state: **13 unit runs, 17,373 checks; 12 end-to-end cases, 35 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 13 NO_FIX_* witnesses; 0 failures.**
 
-A third layer runs on Windows but not from `run-tests.ps1`, because it needs no test harness at all
-— it links the engines the way `tworld2` does and drives real level data:
+Two of those five need no test harness at all — they link the engines the way `tworld2` does and
+drive real level data. They run from `run-tests.ps1` like everything else, and **they are the only
+layers that can see an engine behavior change**, so run them after any edit to `mslogic.c`,
+`lxlogic.c`, `encoding.c` or `random.c`:
 
 - **`test\run-golden.ps1`** — the **golden-master engine snapshot** (the `golden` job). Every level
   in every committed `.dat`, through **both engines**, driven by a deterministic move stream and
@@ -387,9 +392,9 @@ misreading in the parser is faithfully reproduced and never caught.
     in the tree **no other layer can reach**: `readextensions()` returns immediately when
     `g_pMainWnd` is null, so batch mode, the e2e cases and every fuzz target skip it by construction.
   - `test/qt/textcoder_test.cpp` — `TWTextCoder.cpp`, the CC1↔Unicode codec every level name,
-    password and hint passes through, 27 checks. ⚠ It **pins a defect rather than asserting
-    correctness** in one case: `encode()` is shifted one byte below `decode()` for eleven characters.
-    See §8.
+    password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
+    `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
+    `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
   Qt-linked tests need their own runner: `test\run-qt-tests.ps1`.
 - ~~`unslist.c` is never exercised~~ — **closed, and the claim was wrong twice over.** `unslist.c`
   is live and shipped: `res/rc` line 6 sets `UnsolvableList=unslist.txt` and `series.c:404` marks
@@ -665,29 +670,30 @@ touched. Found only because the golden-master work built all 32 one at a time.
 ⚠ **The general lesson: `#ifdef` scaffolding is untested code, and untested code rots.** If you add
 a `NO_FIX_*`, build with it defined at least once before committing. It costs one command.
 
+**Fixed, unreleased — `TWTextCoder::encode()` was shifted one byte.** `decode()` reserves `0x81` as
+an undefined slot (it decodes to a space, as CP1252 does) and maps `0x82..0x8C` to U+20A1, U+0192,
+U+201E … U+0152. `encode()`'s hand-written switch was built against a table with **no gap at 0x81**
+and packed those same eleven characters from `0x81` upward, so each encoded to the byte *below* the
+one it decoded from. Measured before the fix: **11 of 255 byte values did not round-trip**; after,
+none. `decode` was the correct side — it agrees with CP1252 across `0x83..0x8C`. Upstream's
+(`929d9c6`).
+
+🔴 **Fixed by DELETING the switch, not by correcting eleven constants.** `encode()` now does a
+reverse lookup of `encodeTable` — the same table `decode()` uses — so the two are inverse *by
+construction*. The bug existed because two hand-maintained tables had to agree and nothing checked
+that they did; correcting the constants would have fixed this instance and left the next edit free to
+reintroduce it. There is now one table, and adding to it needs no matching change in `encode()`.
+
+⚠ Found by `test/qt/textcoder_test.cpp` on its first run, which is the whole argument for covering
+the non-widget files in `oshw-qt/`. The test drives all 255 non-NUL byte values; with the old code it
+reports exactly 11 failures.
+
+⚠ Separately odd and NOT part of the shift, left alone: `decode` maps `0x82` to **U+20A1** (colon
+sign) where CP1252 has **U+201A** (low quotation mark) — a digit transposition apart. It is the
+table's own business, the round trip is self-consistent either way, and changing it would alter what
+an existing level name displays as.
+
 What follows is what is still live.
-
-🔴 **OPEN, and pinned by a test rather than fixed: `TWTextCoder::encode()` is shifted one byte.**
-`decode()` maps `0x81` to a space (an undefined slot, as CP1252 does) and `0x82..0x8C` to
-U+20A1, U+0192, U+201E … U+0152. `encode()` was written against a table with **no gap at 0x81** and
-packs those same eleven characters from `0x81` upward — so each encodes to the byte *below* the one
-it decoded from. Measured: **244 of 255 byte values round-trip; 11 do not.** `decode` is the correct
-side (it agrees with CP1252 across `0x83..0x8C`). Upstream's (`929d9c6`).
-
-⚠ **Impact is close to nil, which is why it survived.** `encode()` has three callers
-(`TWMainWnd.cpp` 1291, 1754, 2164) and the only one carrying user text is the input prompt, where
-the text is a Chip's Challenge password — four characters, A–Z. Nobody types a per-mille sign into
-it. There is no buffer risk either: the codec is one byte per `QChar` and the prompt truncates to
-`nMaxLen` first, so `char passwd[5]` with `maxlen 4` fits exactly.
-
-**It is characterized, not fixed, on purpose** — fixing it changes what bytes the program writes,
-which is a maintainer's decision rather than a test's. `test/qt/textcoder_test.cpp` asserts the
-current behavior *and* the exact shape of the defect, so a fix will show up as that case going red
-with a lower count, which is the signal to update it to zero.
-
-⚠ Separately odd and NOT part of the shift: `decode` maps `0x82` to **U+20A1** (colon sign) where
-CP1252 has **U+201A** (low quotation mark). Those two code points are a digit transposition apart.
-Left alone; it is `decode`'s business and nothing observable depends on it.
 
 ### 8.1 `-v` cannot work as documented
 

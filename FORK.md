@@ -892,7 +892,7 @@ do the Linux-only sanitizer and fuzz layers.
 | golden master | `test/run-golden.ps1` | a C compiler | 🔴 **the only automated check that can see an engine behavior change**: all 903 committed levels through BOTH engines, deterministic input, gamestate hashed every tick |
 | differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 32 `NO_FIX_*` desync toggles**: for 13 of them, a committed input that provably tells a fix-on build from a fix-off one |
 
-As of 2026-09-05: **13 unit runs / 17,373 checks, 12 end-to-end cases / 35 checks, and 2 Qt runs / 117
+As of 2026-09-05: **13 unit runs / 17,373 checks, 12 end-to-end cases / 35 checks, and 2 Qt runs / 116
 checks, 0 failures.**
 Machine-readable results with `-ResultsPath test-results` (JUnit XML + JSON). Coverage, unit layer
 only, is measured by `coverage.ps1`: **46.7% of lines and 39.8% of branches overall**, from 100% of

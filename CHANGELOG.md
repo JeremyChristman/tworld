@@ -74,7 +74,7 @@ of absence. **Absence of a grep hit is not absence of a caller — follow the ca
 
 ### Added — a second `oshw-qt/` test, which found a shipped defect
 
-- **`test/qt/textcoder_test.cpp`** — 27 checks over 16 cases covering `TWTextCoder`, the CC1↔Unicode
+- **`test/qt/textcoder_test.cpp`** — 26 checks over 16 cases covering `TWTextCoder`, the CC1↔Unicode
   codec that every level name, password and hint passes through. Chosen on the same principle as the
   `.ccx` test: cover the files in `oshw-qt/` that are **not** widgets. 2 of 8 files there are now
   covered.
@@ -84,16 +84,22 @@ of absence. **Absence of a grep hit is not absence of a caller — follow the ca
   accented characters European level packs are full of. Mutation-proven: removing the cast fails 9
   checks.
 
-🔴 **The round-trip case failed on its first run, and the defect is real.** `encode()` is shifted one
-byte below `decode()` for eleven characters (U+20A1 through U+0152): `decode` reserves `0x81` as an
-undefined slot, `encode` was written against a table with no gap there. **244 of 255 bytes
-round-trip; 11 do not.** `decode` is the correct side — it matches CP1252 across `0x83..0x8C`.
-Upstream's (`929d9c6`).
+🔴 **The round-trip case failed on its first run, and the defect was real — now fixed.** `encode()`
+was shifted one byte below `decode()` for eleven characters (U+20A1 through U+0152): `decode`
+reserves `0x81` as an undefined slot, `encode`'s hand-written switch was built against a table with
+no gap there. **11 of 255 byte values did not round-trip.** `decode` was the correct side — it
+matches CP1252 across `0x83..0x8C`. Upstream's (`929d9c6`).
 
-**Characterized, not fixed**, and the test says why: fixing it changes what bytes the program writes,
-which is the maintainer's call. Impact is close to nil — the only caller carrying user text is the
-password prompt, four characters of A–Z — and there is no buffer risk, since the codec is one byte
-per `QChar` and the prompt truncates first. See CLAUDE.md §8.
+**Fixed by deleting the switch, not by correcting eleven constants.** `encode()` now reverse-looks-up
+`encodeTable`, the same table `decode()` reads, so the two are inverse *by construction*. The bug
+existed because two hand-maintained tables had to agree and nothing checked that they did; correcting
+the constants fixes this instance and leaves the next edit free to reintroduce it. There is now one
+table, and adding to it needs no matching change in `encode()`.
+
+Verified both directions: with the old code the test reports exactly 11 failures, with the new code
+none, and breaking a single table entry in the lookup trips 2 checks. The static build still links,
+and the golden master, corpus-independent layers and full suite are unchanged — this file is Qt
+display code and touches no engine path.
 
 ### Fixed — `run-tests.ps1` did not run the two layers that watch the engine
 

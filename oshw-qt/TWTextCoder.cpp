@@ -277,97 +277,46 @@ QByteArray TWTextCoder::encode(QString const& str) {
         if (c.unicode() <= 0xFF) {
             arr += static_cast<char>(c.unicode());
         } else {
-            char byte;
-            switch (c.unicode()) {
-                case 0x20AC:
-                    byte = '\x80';
+            /* MOD (Jeremy): a REVERSE LOOKUP OF encodeTable, replacing a
+             * hand-written switch that had drifted out of step with it.
+             *
+             * THE DEFECT THIS FIXES. The switch mapped U+20A1 to 0x81, U+0192
+             * to 0x82, and so on through U+0152 -- each ONE BYTE BELOW the slot
+             * encodeTable decodes it from. decode() reserves 0x81 as an
+             * undefined slot (it decodes to a space, as CP1252 does with it);
+             * the switch was written against a table with no gap there and
+             * packed the characters from 0x81 upward. Eleven characters,
+             * U+20A1 through U+0152, encoded to the wrong byte. Measured before
+             * the fix: 244 of 255 byte values round-tripped, 11 did not.
+             * Upstream's, from the 2.3.1 import (929d9c6).
+             *
+             * decode() was the correct side -- it agrees with CP1252 across
+             * 0x83..0x8C -- so the table stays and the switch goes.
+             *
+             * 🔴 WHY A LOOKUP RATHER THAN ELEVEN CORRECTED CONSTANTS. The bug
+             * existed because two hand-maintained tables had to agree and
+             * nothing checked that they did. Correcting the constants would fix
+             * this instance and leave the next edit free to reintroduce it.
+             * Deriving one from the other makes them inverse by construction:
+             * there is now only one table, and a future addition to it needs no
+             * matching change here at all.
+             *
+             * The whole table is searched rather than just 0x80..0x9F. Every
+             * character above U+00FF happens to live in that range today, and
+             * relying on that would be another invariant nobody checks. Entries
+             * below 0x80 are all <= 0xFF and can never match a character that
+             * reached this branch, so scanning them costs correctness nothing.
+             *
+             * A character with no slot at all still becomes a space, exactly as
+             * the switch's `default` did -- see the test for why that matters
+             * (an uninitialized `byte` here would write an arbitrary value into
+             * a level file). */
+            char byte = ' ';
+            for (int i = 0 ; i < 256 ; ++i) {
+                if (encodeTable[i] == c) {
+                    byte = static_cast<char>(i);
                     break;
-                case 0x20A1:
-                    byte = '\x81';
-                    break;
-                case 0x0192:
-                    byte = '\x82';
-                    break;
-                case 0x201E:
-                    byte = '\x83';
-                    break;
-                case 0x2026:
-                    byte = '\x84';
-                    break;
-                case 0x2020:
-                    byte = '\x85';
-                    break;
-                case 0x2021:
-                    byte = '\x86';
-                    break;
-                case 0x02C6:
-                    byte = '\x87';
-                    break;
-                case 0x2030:
-                    byte = '\x88';
-                    break;
-                case 0x0160:
-                    byte = '\x89';
-                    break;
-                case 0x2039:
-                    byte = '\x8A';
-                    break;
-                case 0x0152:
-                    byte = '\x8B';
-                    break;
-
-                case 0x017D:
-                    byte = '\x8E';
-                    break;
-
-
-                case 0x2018:
-                    byte = '\x91';
-                    break;
-                case 0x2019:
-                    byte = '\x92';
-                    break;
-                case 0x201C:
-                    byte = '\x93';
-                    break;
-                case 0x201D:
-                    byte = '\x94';
-                    break;
-                case 0x2022:
-                    byte = '\x95';
-                    break;
-                case 0x2013:
-                    byte = '\x96';
-                    break;
-                case 0x2014:
-                    byte = '\x97';
-                    break;
-                case 0x02DC:
-                    byte = '\x98';
-                    break;
-                case 0x2122:
-                    byte = '\x99';
-                    break;
-                case 0x0161:
-                    byte = '\x9A';
-                    break;
-                case 0x203A:
-                    byte = '\x9B';
-                    break;
-                case 0x0153:
-                    byte = '\x9C';
-                    break;
-
-                case 0x017E:
-                    byte = '\x9E';
-                    break;
-                case 0x0178:
-                    byte = '\x9F';
-                    break;
-
-                default:
-                    byte = ' ';
-                    break;
+                }
             }
             arr += byte;
         }
