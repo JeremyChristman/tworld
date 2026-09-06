@@ -1,0 +1,56 @@
+# The pinned build toolchain.
+#
+# WHY THIS FILE EXISTS. This program's whole purpose is byte-exact replay of
+# solutions people spent years recording. The compiler is an input to that, and
+# until this file existed CI ran `pacman -S mingw-w64-x86_64-gcc` and built with
+# whatever version happened to be current that morning -- with nothing recording
+# which one, and nothing saying when it changed.
+#
+# HOW IT IS ENFORCED. The CI jobs install this exact package by URL rather than
+# by name, then assert that `gcc -dumpversion` matches. A mismatch fails the job
+# rather than building quietly with something else.
+#
+# ⚠ MSYS2 HAS NO NATIVE VERSION PINNING. There is no `pacman -S gcc=16.2.0`, and
+# no lockfile format of its own. Pinning here means fetching the exact package
+# file from the repository, which works because repo.msys2.org keeps older
+# builds. That is a real dependency on an external mirror: if the file is ever
+# removed, the install step fails loudly. That is deliberate. The alternative --
+# falling back to the current package - would silently undo the pin, which is
+# the exact thing this file is here to prevent.
+#
+# 🔴 UPDATING THIS IS A DELIBERATE ACT, NOT A CHORE. A new compiler can change
+# code generation, and this fork has thirty-two behavior toggles and a solution
+# corpus riding on it. Before bumping a version here:
+#
+#   1. run test\run-golden.ps1  -- 1,806 engine digests over 903 levels
+#   2. run test\run-nofix.ps1   -- the 13 NO_FIX_* witnesses
+#   3. run test\run-corpus.ps1  -- the real solution collection, if the change
+#                                  is anything more than a patch release
+#
+# and say in the commit message what you ran. A green CI on its own is not the
+# evidence; the golden master is.
+#
+# HOW TO FIND A VERSION STRING: the package files are listed at
+# https://repo.msys2.org/mingw/mingw64/ -- take the part between
+# "mingw-w64-x86_64-gcc-" and "-any.pkg.tar.zst".
+
+# The MSYS2 package release, exactly as it appears in the file name.
+gcc_pkgver=16.2.0-3
+
+# What `gcc -dumpversion` must then report. Checked separately from the package
+# version because they are not the same string: the "-3" is an MSYS2 packaging
+# revision that the compiler itself never mentions.
+gcc_version=16.2.0
+
+# --------------------------------------------------------------------------
+# NOTE: THE MAINTAINER'S DESKTOP IS NOT ON THIS VERSION, and that is recorded
+# rather than hidden. It builds with gcc 16.1.0 while CI now pins 16.2.0.
+#
+# That divergence is not currently a problem, and there is direct evidence
+# rather than an assumption: test/golden/engine-snapshot.tsv was generated on
+# the 16.1.0 desktop, and the `golden` CI job recomputes all 1,806 digests on
+# Linux with a different compiler entirely and gets the same answers. Two
+# toolchains, identical engine behavior, checked on every push.
+#
+# If that job ever goes red after a toolchain bump, THAT is the signal this
+# whole arrangement exists to produce. Do not re-baseline it away.

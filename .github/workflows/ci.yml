@@ -83,17 +83,12 @@ jobs:
       # that already exists, cannot continue." Using what is already there is
       # simpler, several minutes faster, and removes the one action in this
       # repository that was pinned to a mutable tag rather than a commit SHA.
+      # The COMPILER IS PINNED to docs/toolchain.lock. See that file and
+      # .github/install-toolchain.ps1: byte-exact replay is this program's
+      # purpose, the compiler is an input to it, and CI used to build with
+      # whatever gcc happened to be current that morning.
       - name: Install the toolchain packages
-        run: |
-          $pacman = 'C:\msys64\usr\bin\pacman.exe'
-          if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
-          # -Sy, not -Syu: refreshing the package database is enough to install
-          # from, and a full system upgrade on a throwaway runner costs minutes
-          # and can leave pacman asking for a restart.
-          & $pacman -Sy --noconfirm
-          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc
-          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
-          & 'C:\msys64\mingw64\bin\gcc.exe' --version
+        run: powershell -ExecutionPolicy Bypass -File .github/install-toolchain.ps1
 
       # Seconds, and it guards a claim that had already gone stale: the stock
       # tw_settings.ini shipped in the release zip is hand-written, and jc-41
@@ -323,17 +318,15 @@ jobs:
 
       # See the note in the unit job: the runner's own MSYS2 at C:\msys64 is
       # used rather than a third-party action.
+      # The COMPILER IS PINNED to docs/toolchain.lock (see
+      # .github/install-toolchain.ps1). pkgconf is explicit: test\run-qt-tests.ps1
+      # asks pkg-config where Qt is rather than hardcoding include paths, and it
+      # SKIPS (exit 0) when it cannot find it -- so a missing pkg-config here
+      # would quietly stop the Qt layer running instead of failing the job.
       - name: Install the toolchain packages
-        run: |
-          $pacman = 'C:\msys64\usr\bin\pacman.exe'
-          if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
-          & $pacman -Sy --noconfirm
-          # pkgconf is explicit: test\run-qt-tests.ps1 asks pkg-config where Qt
-          # is rather than hardcoding include paths, and it SKIPS (exit 0) when
-          # it cannot find it -- so a missing pkg-config here would quietly
-          # stop the Qt layer running instead of failing the job.
-          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt5 mingw-w64-x86_64-SDL2 mingw-w64-x86_64-pkgconf
-          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+        run: >
+          powershell -ExecutionPolicy Bypass -File .github/install-toolchain.ps1
+          -Extra mingw-w64-x86_64-cmake,mingw-w64-x86_64-ninja,mingw-w64-x86_64-qt5,mingw-w64-x86_64-SDL2,mingw-w64-x86_64-pkgconf
 
       - name: Build
         run: powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic -Manifest dist/build-manifest.json

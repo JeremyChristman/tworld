@@ -774,11 +774,23 @@ exactly what's mine:
    * `.ccx` is `oshw-qt/CCMetaData.cpp`, not `unslist.c`, and it is **never parsed in batch mode** —
      `readextensions()` (`TWMainWnd.cpp:2149`) returns immediately when `g_pMainWnd` is null, which
      is exactly the batch case. No corpus run has ever touched a `.ccx`.
-   * `unslist.c`'s loader is reached only through `loadtxtresource(RES_TXT_UNSLIST, ...)`
-     (`res.c:568`), which returns without calling the loader unless the `unsolvablelist` resource
-     names a file. **It is set neither in `res/rc` nor in `initresourcedefaults()`**, so
-     `loadunslistfromfile()` does not run in the shipped configuration at all. `res/unslist.txt`
-     ships and is never read.
+   * ~~`unslist.c`'s loader is never reached~~ — **THIS WAS ALSO WRONG, and is corrected here.**
+     `loadunslistfromfile()` is reached through `loadtxtresource(RES_TXT_UNSLIST, ...)`
+     (`res.c:568`), which does need the `unsolvablelist` resource to name a file — and it does.
+     **`res/rc` line 6 sets `UnsolvableList=unslist.txt`.** The reason that was missed is worth
+     recording: the rc file spells the key `UnsolvableList` and `rclist[]` spells it
+     `unsolvablelist`, and `readrcfile()` compares with `strcmp` — but it **lowercases the key
+     first** (`res.c:323`), so the two do match. A grep for the exact table spelling finds nothing
+     in `res/rc` and invites precisely the wrong conclusion.
+
+     So `unslist.c` is **live, shipped and running**: `res/unslist.txt` is read at startup and
+     `series.c:404` calls `markunsolvablelevels()` on every series. What was true is that it had
+     **no test** — which is now closed; see the Unreleased section of `CHANGELOG.md`.
+
+   🔴 **Two corrections in a row on the same paragraph, and the second one repeated the first one's
+   mistake.** The lesson stands and is now paid for twice: verify what exercises a file by following
+   the call, not by grepping for a name and trusting the absence of a hit. Absence of a grep hit is
+   not absence of a caller.
 
    Both claims were plausible and neither was checked. Verify what exercises a file before writing
    it down, or the table becomes a way of *feeling* covered.
@@ -880,10 +892,10 @@ do the Linux-only sanitizer and fuzz layers.
 | golden master | `test/run-golden.ps1` | a C compiler | 🔴 **the only automated check that can see an engine behavior change**: all 903 committed levels through BOTH engines, deterministic input, gamestate hashed every tick |
 | differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 32 `NO_FIX_*` desync toggles**: for 13 of them, a committed input that provably tells a fix-on build from a fix-off one |
 
-As of 2026-09-05: **12 unit runs / 17,328 checks, 12 end-to-end cases / 35 checks, and 1 Qt run / 90
+As of 2026-09-05: **13 unit runs / 17,373 checks, 12 end-to-end cases / 35 checks, and 2 Qt runs / 117
 checks, 0 failures.**
 Machine-readable results with `-ResultsPath test-results` (JUnit XML + JSON). Coverage, unit layer
-only, is measured by `coverage.ps1`: **45.6% of lines and 38.7% of branches overall**, from 100% of
+only, is measured by `coverage.ps1`: **46.7% of lines and 39.8% of branches overall**, from 100% of
 `random.c` down to 19.3% of `series.c` (which is compiled into a test aimed at two of its functions,
 so its several hundred lines of series enumeration count against it without being aimed at).
 `verify-defaults.ps1` checks

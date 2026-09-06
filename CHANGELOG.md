@@ -25,6 +25,76 @@ stay attached to something someone can see.
 
 Nothing here changes the executable. It rides along with the next release that does.
 
+### Added — the build toolchain is pinned
+
+CI ran `pacman -S mingw-w64-x86_64-gcc` and built with whatever version was current that morning,
+with nothing recording which one or noticing when it changed. For a program whose purpose is
+byte-exact replay, the compiler is an input.
+
+- **`docs/toolchain.lock`** records the exact compiler package; **`.github/install-toolchain.ps1`**
+  installs *that file by URL* rather than by name and then asserts `gcc -dumpversion` matches. All
+  three MSYS2 install steps (unit, build-and-e2e, release) go through it.
+- ⚠ **MSYS2 has no native pinning** — there is no `pacman -S gcc=16.2.0`. Pinning means fetching the
+  exact package from repo.msys2.org, which is a real dependency on an external mirror: if the file is
+  removed the step fails **loudly**. Deliberate. A fallback to the current package would silently
+  undo the pin.
+- The verification runs **after** the extra packages, so a dependency dragging the compiler forward
+  is caught rather than missed — the failure mode that would have made the pin decorative.
+- 🔴 Only the compiler is pinned. cmake, ninja, Qt and SDL2 drive the build or link into the GUI;
+  none decides what the engine computes. Pinning twenty packages multiplies the ways a mirror can
+  break the build for no extra protection.
+
+**Found on the way in: CI and the maintainer's desktop were already on different compilers** — 16.2.0
+against 16.1.0 — and nothing had ever said so. That turns out to be reassuring rather than alarming,
+and there is direct evidence: `test/golden/engine-snapshot.tsv` is generated on the 16.1.0 desktop
+and the `golden` CI job recomputes all 1,806 digests on Linux with a third compiler and gets the same
+answers, on every push. Two toolchains, identical engine behavior, checked continuously.
+
+### Added — `unslist.c` has its first test, and it is NOT dead code
+
+- **`test/unslist_test.c`** — 45 checks over 20 cases, `unslist.c` **0% → 90.7% lines, 84.8%
+  branches**. Covers the record format, the `ok` retraction line, malformed input (flagged but not
+  fatal), the level-number range guard, CRLF files, `markunsolvablelevels()` and `clearunslist()` —
+  plus a case that parses **the real `res/unslist.txt` that ships**, so a hand-edit that breaks a
+  line is caught here rather than by a startup warning nobody reads.
+- **Mutation-proven, 5 mutations**, and the fifth is the one worth recording: dropping the set-id
+  check in `markunsolvablelevels()` was **not** caught by the first draft, because the fixture had
+  only one set in the list. A case with the same level listed under two names was added, and it now
+  fails. A vacuous case found by mutation rather than by luck.
+
+🔴 **AND THE REPOSITORY HAD TWICE RECORDED THAT THIS FILE WAS DEAD.** `FORK.md` first said it was
+"exercised by the corpus run"; that was corrected, and **the correction was also wrong** — it claimed
+the `unsolvablelist` resource is "set neither in `res/rc` nor in `initresourcedefaults()`". It is set,
+on line 6 of `res/rc`. Both records are corrected.
+
+The reason the second attempt failed is the useful part: `res/rc` spells the key `UnsolvableList`,
+`rclist[]` spells it `unsolvablelist`, and `readrcfile()` **lowercases the key before comparing**
+(`res.c:323`). A grep for the table's spelling finds nothing in `res/rc` and reads exactly like proof
+of absence. **Absence of a grep hit is not absence of a caller — follow the call.**
+
+### Added — a second `oshw-qt/` test, which found a shipped defect
+
+- **`test/qt/textcoder_test.cpp`** — 27 checks over 16 cases covering `TWTextCoder`, the CC1↔Unicode
+  codec that every level name, password and hint passes through. Chosen on the same principle as the
+  `.ccx` test: cover the files in `oshw-qt/` that are **not** widgets. 2 of 8 files there are now
+  covered.
+- Drives **all 255 non-NUL byte values** rather than a sample, because the interesting risk is the
+  `static_cast<unsigned char>` in `decode()`: `char` is signed here, so without it every byte ≥ 0x80
+  would index the table at a negative offset — the same class as jc-48's ctype defect, on exactly the
+  accented characters European level packs are full of. Mutation-proven: removing the cast fails 9
+  checks.
+
+🔴 **The round-trip case failed on its first run, and the defect is real.** `encode()` is shifted one
+byte below `decode()` for eleven characters (U+20A1 through U+0152): `decode` reserves `0x81` as an
+undefined slot, `encode` was written against a table with no gap there. **244 of 255 bytes
+round-trip; 11 do not.** `decode` is the correct side — it matches CP1252 across `0x83..0x8C`.
+Upstream's (`929d9c6`).
+
+**Characterized, not fixed**, and the test says why: fixing it changes what bytes the program writes,
+which is the maintainer's call. Impact is close to nil — the only caller carrying user text is the
+password prompt, four characters of A–Z — and there is no buffer risk, since the codec is one byte
+per `QChar` and the prompt truncates first. See CLAUDE.md §8.
+
 ### Fixed — `run-tests.ps1` did not run the two layers that watch the engine
 
 **A green local suite meant less than it looked.** `run-tests.ps1` ran unit, e2e and Qt; the golden
@@ -328,12 +398,13 @@ and it was fine" is worth having; until now nobody could say it.
 ### Fixed — documentation that was wrong
 
 - **`FORK.md`'s jc-48 verification table claimed `unslist.c` was "exercised by the corpus run, which
-  reads the `.ccx` extension files".** Both halves were false. `.ccx` is `CCMetaData.cpp`, not
-  `unslist.c`, and is never parsed in batch mode at all; and `unslist.c`'s loader is reached only
-  through `loadtxtresource(RES_TXT_UNSLIST, …)`, which does nothing unless the `unsolvablelist`
-  resource names a file — and it is set neither in `res/rc` nor in `initresourcedefaults()`. So
-  **nothing exercises `unslist.c`**, and `res/unslist.txt` ships and is never read. Corrected, with
-  the reasoning kept: verify what exercises a file before writing it down.
+  reads the `.ccx` extension files".** `.ccx` is `CCMetaData.cpp`, not `unslist.c`, and is never
+  parsed in batch mode at all. Corrected, with the reasoning kept: verify what exercises a file
+  before writing it down.
+
+  🔴 **The replacement text was ALSO wrong, and is corrected again below** — it claimed the
+  `unsolvablelist` resource "is set neither in `res/rc` nor in `initresourcedefaults()`". It is set,
+  on line 6 of `res/rc`. See the Unreleased section.
 - A stray carriage return in `CLAUDE.md` (`test<CR>un-e2e.ps1`) from an old `sed` whose `\r` was
   taken as an escape. Repository swept; no other text file has one.
 

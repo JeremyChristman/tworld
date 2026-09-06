@@ -48,13 +48,15 @@ jobs:
       # windows-latest ships MSYS2 at C:\msys64 already, which is where
       # build.ps1 and package.ps1 look by default, so nothing third-party is
       # needed. Every remaining action here is pinned to a commit SHA.
+      # The COMPILER IS PINNED to docs/toolchain.lock (see
+      # .github/install-toolchain.ps1). This is the job that produces the bytes
+      # people download, so building with an unrecorded compiler matters most
+      # here: the attestation below signs a provenance statement for exactly
+      # these bytes, and "which compiler" is part of what that vouches for.
       - name: Install the toolchain packages
-        run: |
-          $pacman = 'C:\msys64\usr\bin\pacman.exe'
-          if (-not (Test-Path $pacman)) { throw "no MSYS2 at C:\msys64 on this runner" }
-          & $pacman -Sy --noconfirm
-          & $pacman -S --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt5-static mingw-w64-x86_64-SDL2
-          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+        run: >
+          powershell -ExecutionPolicy Bypass -File .github/install-toolchain.ps1
+          -Extra mingw-w64-x86_64-cmake,mingw-w64-x86_64-ninja,mingw-w64-x86_64-qt5-static,mingw-w64-x86_64-SDL2
 
       - name: The shipped stock settings file matches the code
         run: powershell -ExecutionPolicy Bypass -File verify-defaults.ps1

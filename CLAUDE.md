@@ -189,6 +189,7 @@ a by-hand comparison found the script had been silent about that class the whole
 | `test/golden/` | The golden-master engine snapshot and its committed baseline |
 | `test/nofix/` | The `NO_FIX_*` differential matrix: which engine toggles are provably live |
 | `docs/adr/` | Why the surprising things here are deliberate |
+| `docs/toolchain.lock` | The pinned compiler. CI installs THAT package, then verifies it |
 
 ---
 
@@ -200,7 +201,7 @@ run-tests.ps1              entry point: unit, then end-to-end
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
 ```
 
-Current state: **12 unit runs, 17,328 checks; 12 end-to-end cases, 35 checks; 1 Qt run, 90 checks;
+Current state: **13 unit runs, 17,373 checks; 12 end-to-end cases, 35 checks; 2 Qt runs, 117 checks;
 1,806 golden-master digests; 13 NO_FIX_* witnesses; 0 failures.**
 
 A third layer runs on Windows but not from `run-tests.ps1`, because it needs no test harness at all
@@ -377,13 +378,26 @@ misreading in the parser is faithfully reproduced and never caught.
   `TELEPORT_STALE_FG`/`TELEPORT_BROKEN_DYNAMIC` at 3624), which is a real signal rather than a
   coincidence: each pair is the pair whose declarations were tangled together, and they touch the
   same path.
-- **No GUI is tested**, still — the score table's column spans, the color picker, the tileset menu,
-  the death counter are all verified by hand. But `oshw-qt/` is no longer *entirely* uncovered:
-  `test/qt/ccmetadata_test.cpp` covers `CCMetaData.cpp`, the `.ccx` parser, with 90 checks. That is
-  the one file there that reads untrusted input rather than drawing a widget, and it is the only
-  parser in the tree **no other layer can reach** — `readextensions()` returns immediately when
-  `g_pMainWnd` is null, so batch mode, the e2e cases and all four fuzz targets skip it by
-  construction. Qt-linked tests need their own runner: `test\run-qt-tests.ps1`.
+- **No WIDGET is tested**, still — the score table's column spans, the color picker, the tileset
+  menu, the death counter are all verified by hand, because each needs a `QApplication` and a paint
+  device and asserting on painted pixels is a much weaker test than it looks. **2 of `oshw-qt/`'s 8
+  files are covered**, and both were picked on the same principle: cover the ones that are *not*
+  widgets.
+  - `test/qt/ccmetadata_test.cpp` — `CCMetaData.cpp`, the `.ccx` parser, 90 checks. The only parser
+    in the tree **no other layer can reach**: `readextensions()` returns immediately when
+    `g_pMainWnd` is null, so batch mode, the e2e cases and every fuzz target skip it by construction.
+  - `test/qt/textcoder_test.cpp` — `TWTextCoder.cpp`, the CC1↔Unicode codec every level name,
+    password and hint passes through, 27 checks. ⚠ It **pins a defect rather than asserting
+    correctness** in one case: `encode()` is shifted one byte below `decode()` for eleven characters.
+    See §8.
+  Qt-linked tests need their own runner: `test\run-qt-tests.ps1`.
+- ~~`unslist.c` is never exercised~~ — **closed, and the claim was wrong twice over.** `unslist.c`
+  is live and shipped: `res/rc` line 6 sets `UnsolvableList=unslist.txt` and `series.c:404` marks
+  every series. `test/unslist_test.c` covers it with 45 checks, **0% → 90.7% lines**, including a
+  case that parses the real `res/unslist.txt`. 🔴 The reason it was twice written off as dead is
+  worth carrying: the rc file spells the key `UnsolvableList`, `rclist[]` spells it
+  `unsolvablelist`, and `readrcfile()` lowercases before comparing — so grepping for the table's
+  spelling finds nothing and reads exactly like proof of absence. **Follow the call, not the grep.**
 - ~~`series.c`'s `.dac` parser has no unit test~~ — **closed in jc-48**, and writing that test found
   two shipped defects immediately (a path guard that could not work on Windows, and eleven ctype
   calls on a signed `char`). It has 40 unit checks and a fuzz target now. The lesson is the cheapest
@@ -412,6 +426,7 @@ uninstrumented executable, so what they reach is not counted and these figures u
 |---|---|---|
 | `random.c` | 100.0% | **100.0%** |
 | `generic/dirinput.c` | 100.0% | **97.8%** |
+| `unslist.c` | 90.7% | **84.8%** |
 | `encoding.c` | 89.9% | **82.8%** |
 | `generic/in.c` | 55.7% | **50.9%** |
 | `lxlogic.c` | 55.4% | **46.3%** |
@@ -420,7 +435,7 @@ uninstrumented executable, so what they reach is not counted and these figures u
 | `fileio.c` | 40.1% | **31.3%** |
 | `play.c` | 26.6% | **33.8%** |
 | `series.c` | 19.3% | **24.4%** |
-| **overall** | 45.6% | **38.7%** |
+| **overall** | 46.7% | **39.8%** |
 
 ⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
 has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented
@@ -651,6 +666,28 @@ touched. Found only because the golden-master work built all 32 one at a time.
 a `NO_FIX_*`, build with it defined at least once before committing. It costs one command.
 
 What follows is what is still live.
+
+🔴 **OPEN, and pinned by a test rather than fixed: `TWTextCoder::encode()` is shifted one byte.**
+`decode()` maps `0x81` to a space (an undefined slot, as CP1252 does) and `0x82..0x8C` to
+U+20A1, U+0192, U+201E … U+0152. `encode()` was written against a table with **no gap at 0x81** and
+packs those same eleven characters from `0x81` upward — so each encodes to the byte *below* the one
+it decoded from. Measured: **244 of 255 byte values round-trip; 11 do not.** `decode` is the correct
+side (it agrees with CP1252 across `0x83..0x8C`). Upstream's (`929d9c6`).
+
+⚠ **Impact is close to nil, which is why it survived.** `encode()` has three callers
+(`TWMainWnd.cpp` 1291, 1754, 2164) and the only one carrying user text is the input prompt, where
+the text is a Chip's Challenge password — four characters, A–Z. Nobody types a per-mille sign into
+it. There is no buffer risk either: the codec is one byte per `QChar` and the prompt truncates to
+`nMaxLen` first, so `char passwd[5]` with `maxlen 4` fits exactly.
+
+**It is characterized, not fixed, on purpose** — fixing it changes what bytes the program writes,
+which is a maintainer's decision rather than a test's. `test/qt/textcoder_test.cpp` asserts the
+current behavior *and* the exact shape of the defect, so a fix will show up as that case going red
+with a lower count, which is the signal to update it to zero.
+
+⚠ Separately odd and NOT part of the shift: `decode` maps `0x82` to **U+20A1** (colon sign) where
+CP1252 has **U+201A** (low quotation mark). Those two code points are a digit transposition apart.
+Left alone; it is `decode`'s business and nothing observable depends on it.
 
 ### 8.1 `-v` cannot work as documented
 
