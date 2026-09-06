@@ -2023,7 +2023,28 @@ static int canmakemove(creature const* cr, int dir, int flags) {
 #endif
             return id == Chip || id == Swimming_Chip;
         }
-        if (!(movelaws[floor].block & dir))
+        /* MOD (Jeremy): range-checked, like the three sites jc-50 fixed.
+         *
+         * ⚠ UNLIKE jc-50, THIS ONE IS DEFENSIVE, NOT A LIVE FIX -- and saying
+         * so precisely matters. jc-50's sites indexed movelaws[] with a cell's
+         * BOTTOM layer, which really can hold a creature (id >= 64) on 18% of
+         * real levels. Here `floor` has already passed !iscreature(), so it is
+         * either terrain (< 64, in range) or an ANIMATION id (>= Water_Splash
+         * = 0x7C = 124), because iscreature() is a RANGE test and its negation
+         * does not exclude the top of the enum.
+         *
+         * The animation case cannot occur in this engine: mslogic.c does not
+         * contain the token Water_Splash, Bomb_Explosion or Entity_Explosion
+         * anywhere -- animations are Lynx's business -- and encoding.c cannot
+         * produce such an id from a .dat byte either. So no reachable input
+         * changes behavior, and the corpus confirmed that rather than assuming
+         * it.
+         *
+         * Guarded anyway because the cost is a range check, the alternative is
+         * a permanent analyzer suppression on a genuinely unguarded index, and
+         * this is the second time the ambiguity in iscreature()'s negation has
+         * had to be reasoned through from scratch. Found by cppcheck. */
+        if (!(movelaw_block(floor) & dir))
             return FALSE;
     } else {
         floor = cellat(to)->top.id;
@@ -2118,7 +2139,7 @@ static int canmakemove(creature const* cr, int dir, int flags) {
                 return TRUE;
             return FALSE;
         }
-        if (!(movelaws[floor].creature & dir))
+        if (!(movelaw_creature(floor) & dir))
             return FALSE;
         if (floor == Fire && (cr->id == Bug || cr->id == Walker))
             if (!(flags & CMM_NOFIRECHECK))

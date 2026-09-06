@@ -1,7 +1,33 @@
-# cppcheck suppressions. Each line needs a REASON -- a suppression without one
+# cppcheck suppressions. EVERY LINE NEEDS A REASON -- a suppression without one
 # is a finding somebody hid rather than judged.
 #
-# Format: <id>:<file>  or just <id> for a global suppression.
+# Format: <id>  or  <id>:<file>  or  <id>:<file>:<line>
+#
+# 🔴 These were all verified individually against the source, not waved through
+# because the job was red. The first run of the `analysis` job found no live
+# defect; what follows is why each finding is not one.
 
-# Nothing suppressed yet. The first CI run is what populates this file, and
-# every entry added here must say why the finding is acceptable.
+# x_alloc(p, n) is `((p) = realloc((p), (n))) || (memerrexit(), 0)` (err.h:13),
+# and memerrexit() is `die("out of memory")` -- which EXITS THE PROCESS. So on a
+# failed realloc the original pointer is indeed lost, and it cannot matter: the
+# program is already terminating. cppcheck is describing the shape of the macro
+# correctly and the consequence wrongly.
+#
+# ⚠ If x_alloc is ever changed to RETURN on failure rather than die, this
+# suppression becomes wrong and every one of these sites becomes a real leak.
+# That is the one edit that must remove this line.
+memleakOnRealloc
+
+# series.c:698 declares `mapfileinfo key;` and sets only key.filename before
+# passing &key to bsearch(). cppcheck cannot see through the function-pointer
+# indirection to compare_mapfileinfo(), which reads ONLY ->filename
+# (series.c:~660). The uninitialized members are never read.
+uninitvar:series.c:698
+
+# The engines' _assert macro is `((test) || (die(...), 0))`, and the
+# "impossible state" assertions spell the test as `!"a message"` -- a deliberate
+# idiom for "always fail, and put this text in the message". cppcheck reports
+# the string-literal-to-bool conversion; that conversion is the point. The unit
+# suite suppresses the matching -Wunused-value for the same macro.
+incorrectStringBooleanError:mslogic.c
+incorrectStringBooleanError:lxlogic.c

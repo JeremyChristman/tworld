@@ -86,6 +86,40 @@ generator, and the reason not to change it casually.
 - ⚠ Every suppression must carry a reason. A suppression without one is a finding somebody hid
   rather than judged.
 
+**What the first run actually found: no live defects.** Every error-severity finding was checked
+against the source individually and every one is a false positive, recorded with its reason in
+`.cppcheck-suppressions`:
+
+- **`memleakOnRealloc`, ~12 sites.** `x_alloc(p, n)` is
+  `((p) = realloc((p), (n))) || (memerrexit(), 0)` and `memerrexit()` is `die("out of memory")` —
+  which **exits the process**. The original pointer really is lost and it cannot matter. ⚠ If
+  `x_alloc` is ever changed to return on failure, that suppression becomes wrong and every one of
+  those sites becomes a real leak; the file says so.
+- **`uninitvar` at `series.c:698`.** `mapfileinfo key;` sets only `key.filename` before
+  `bsearch()`. cppcheck cannot see through the function pointer to `compare_mapfileinfo()`, which
+  reads **only** `->filename`.
+- **`incorrectStringBooleanError`.** The engines' `_assert(!"a message")` idiom — the string-to-bool
+  conversion is the point. The unit suite already suppresses the matching `-Wunused-value`.
+
+"We looked and it was fine" is a result worth having; until this job existed nobody could say it.
+
+### Fixed — two more unguarded `movelaws[]` indexes, this time defensively
+
+cppcheck's one substantive warning: `mslogic.c` indexes `movelaws[floor]` at two sites where `floor`
+has passed `!iscreature()`. That negation does **not** bound the value — `iscreature()` is a *range*
+test (`>= Chip && < Water_Splash`), so its negation admits terrain (< 64, in range) **and animation
+ids ≥ 0x7C = 124**, against a 64-entry array. Both now go through jc-50's `movelaw_block()` /
+`movelaw_creature()` helpers.
+
+⚠ **Unlike jc-50, this is defensive rather than a live fix, and the distinction is stated in the
+code.** jc-50's three sites indexed by a cell's *bottom* layer, which really does hold a creature on
+18% of real levels. The animation case here cannot occur in this engine: `mslogic.c` does not contain
+`Water_Splash`, `Bomb_Explosion` or `Entity_Explosion` anywhere — animations are Lynx's business —
+and `encoding.c` cannot produce such an id from a `.dat` byte either.
+
+Verified rather than argued: **golden master 1,806 digests unchanged, all 18 `NO_FIX_*` witnesses
+hold, and the corpus differential is 0 of 303 outputs different with warnings identical too.**
+
 ### Added — the build toolchain is pinned
 
 CI ran `pacman -S mingw-w64-x86_64-gcc` and built with whatever version was current that morning,
