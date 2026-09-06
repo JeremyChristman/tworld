@@ -103,6 +103,39 @@ against the source individually and every one is a false positive, recorded with
 
 "We looked and it was fine" is a result worth having; until this job existed nobody could say it.
 
+### Fixed — an uninitialized pointer dereference on a path-qualified command line
+
+⭐ **The analysis job's first real finding, and no test could have caught it.**
+
+`getseriesfiles()` initializes five fields of its local `seriesdata s` and leaves `s.curdir` holding
+stack garbage. `curdir` is assigned **only** by the two `findfiles()` calls in the *else* branch — so
+when `preferred` names a file with a path in it, `getseriesfile(preferred, &s)` is called directly
+with `curdir` never set, and hands it to `openfileindir()`, whose first test is `!dir || !*dir`. That
+**dereferences the uninitialized pointer** before the `strchr(filename, DIRSEP_CHAR)` short-circuit
+can save it.
+
+⚠ **What it costs in practice: almost always nothing, which is why it survived.** Whatever byte is
+read, the call reaches `fileopen()` with the full path either way — `!*dir` true goes there directly,
+`!*dir` false falls to the `strchr`, which must match because a name without a separator could not
+have reached this branch. The one bad outcome is a pointer into unmapped memory, and then the program
+**segfaults on startup** for an ordinary command line: `tworld2 sets\CCLP1.dac`.
+
+**Measured rather than assumed**: before the fix that command line was confirmed to reach the
+uninitialized path (no directory-scan warnings, unlike the else branch) and to survive; after it, it
+still works. Upstream's (`929d9c6`).
+
+`s.curdir = NULL` is the right value, not `seriesdir`: `openfileindir()` checks `!dir` first and
+falls straight through to `fileopen()` with the path the user gave, which is what this branch means.
+
+🔴 **This is the case for static analysis in one finding.** No unit test could reach it — the
+behavior is correct on any machine where the read does not fault, so a test would pass either way.
+No fuzzer either: it is not input-dependent. Only reading the code without running it finds this
+class, which is exactly what the job is for.
+
+Verified: golden master 1,806 digests unchanged, all 18 `NO_FIX_*` witnesses hold, and the corpus
+differential — which loads all 303 sets through `series.c` — is **0 of 303 outputs different, with
+warnings identical too**.
+
 ### Fixed — two more unguarded `movelaws[]` indexes, this time defensively
 
 cppcheck's one substantive warning: `mslogic.c` indexes `movelaws[floor]` at two sites where `floor`

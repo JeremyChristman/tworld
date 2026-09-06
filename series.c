@@ -917,6 +917,34 @@ static int getseriesfiles(char const *preferred, gameseries **list, int *count,
     seriesdata	s;
     int		n;
 
+    /* MOD (Jeremy): initialize curdir, which upstream leaves holding stack
+     * garbage on one reachable path.
+     *
+     * THE PATH: when `preferred` names a file WITH a path in it, the branch
+     * below calls getseriesfile(preferred, &s) directly rather than through
+     * findfiles() -- and findfiles() is the only thing that ever assigns
+     * s.curdir (lines ~938 and ~946, both in the else branch). getseriesfile()
+     * then hands sdata->curdir to openfileindir(), whose very first test is
+     * `!dir || !*dir` -- so it DEREFERENCES the uninitialized pointer before
+     * the `strchr(filename, DIRSEP_CHAR)` short-circuit can save it.
+     *
+     * ⚠ WHAT IT COSTS IN PRACTICE: almost always nothing, which is why it
+     * survived. Whatever byte gets read, the call ends up at fileopen() with
+     * the full path either way -- `!*dir` true takes it there directly, and
+     * `!*dir` false falls to the strchr, which must match because a name
+     * without a separator could not have reached this branch. The one bad
+     * outcome is a garbage pointer into unmapped memory, and then the program
+     * segfaults on startup for a command line that is otherwise perfectly
+     * ordinary: `tworld2 sets\CCLP1.dac`. Measured: it currently survives.
+     *
+     * NULL is the right value rather than seriesdir -- openfileindir() checks
+     * `!dir` first and falls straight through to fileopen() with the path the
+     * user gave, which is exactly what this branch means.
+     *
+     * Upstream's (929d9c6). Found by cppcheck on the analysis job's first run;
+     * no test could have caught it, because the behavior is correct either way
+     * on any machine where the read does not fault. */
+    s.curdir = NULL;
     s.mfinfo.buf = NULL;
     x_alloc(s.mfinfo.buf, sizeof *s.mfinfo.buf); /* Ensure buf not null */
     s.mfinfo.count = 0;
