@@ -65,6 +65,7 @@ chips.dat
 # artifact directory is scratch and must never be committed.
 /test/fuzz/findings/
 
-# Screenshots written by testun-playtest.ps1. Looking at one is the point;
-# committing it is not -- it is a build artifact of a particular release.
+
+# Screenshots written by the release playtest script. Looking at one is the
+# point; committing it is not -- it is a build artifact of a particular release.
 playtest-*.png
