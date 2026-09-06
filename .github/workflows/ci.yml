@@ -316,13 +316,19 @@ jobs:
       - name: cppcheck (gates on error severity)
         run: |
           set -o pipefail
-          # ⚠ Only pass --suppressions-list when the file actually holds one.
-          # cppcheck rejects a comment-only list with "Failed to add suppression.
-          # No id." and exits non-zero -- which reads exactly like a code finding
-          # and is not one. Measured on this job's first run.
+          # ⚠ STRIP COMMENTS AND BLANK LINES BEFORE HANDING THE LIST OVER.
+          # This cppcheck rejects BOTH with "Failed to add suppression. No id."
+          # and exits non-zero -- which reads exactly like a code finding and is
+          # not one. It cost two CI runs to pin down. The committed file keeps
+          # its comments, because a suppression without a stated reason is a
+          # finding somebody hid rather than judged; cppcheck just never sees
+          # them.
+          grep -vE '^\s*(#|$)' .cppcheck-suppressions > /tmp/cppcheck-supp.txt || true
           supp=""
-          if grep -qvE '^\s*(#|$)' .cppcheck-suppressions; then
-            supp="--suppressions-list=.cppcheck-suppressions"
+          if [ -s /tmp/cppcheck-supp.txt ]; then
+            supp="--suppressions-list=/tmp/cppcheck-supp.txt"
+            echo "suppressions in effect:"
+            sed 's/^/  /' /tmp/cppcheck-supp.txt
           fi
           cppcheck \
             --enable=warning,performance,portability \
