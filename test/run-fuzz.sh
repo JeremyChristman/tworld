@@ -65,6 +65,24 @@ FUZZ_SECONDS="${FUZZ_SECONDS:-60}"
 CORPUS_ROOT="test/fuzz/corpus"
 FINDINGS="test/fuzz/findings"
 
+# Where libFuzzer puts the inputs it DISCOVERS, as opposed to the committed
+# seeds it reads. Empty means a scratch directory that is deleted on exit, which
+# is what an ordinary local or per-push run wants: the work is throwaway and the
+# repository stays clean.
+#
+# 🔴 SET IT TO A PERSISTENT PATH AND THE CORPUS ACCUMULATES, which is the whole
+# difference between a smoke test and a soak. A 60-second run from the committed
+# seeds re-derives the same easy coverage every time; a run that starts from
+# last week's discoveries goes further each time. The scheduled `soak` workflow
+# points this at a cached directory for exactly that reason.
+#
+# ⚠ It is still NOT the committed corpus, and must never be pointed at it. That
+# directory is curated: an input earns its place there by being attached to a
+# fixed defect and a test case (docs/adr/0011), not by having once increased
+# coverage. Automatic growth would leave nobody able to say what any of it is
+# for.
+FUZZ_CORPUS_OUT="${FUZZ_CORPUS_OUT:-}"
+
 # ASan's allocator refuses very large requests rather than returning NULL, which
 # would report an allocation the parser asked for as a crash. The targets cap
 # their input at 64 KB; this caps the process.
@@ -162,8 +180,9 @@ for target in test/fuzz/fuzz_*.c; do
     # -max_total_time bounds the run so it can sit in CI; -artifact_prefix needs
     # the trailing slash or libFuzzer concatenates it onto the filename.
     ran=$((ran + 1))
-    mkdir -p "$OUT/new-$short"
-    if "$exe" "$OUT/new-$short" "$corpus" \
+    newdir="${FUZZ_CORPUS_OUT:-$OUT}/new-$short"
+    mkdir -p "$newdir"
+    if "$exe" "$newdir" "$corpus" \
             -max_total_time="$FUZZ_SECONDS" -max_len=65536 -rss_limit_mb=2048 \
             -artifact_prefix="$FINDINGS/" -print_final_stats=1 \
             > "$OUT/$name.fuzz" 2>&1; then

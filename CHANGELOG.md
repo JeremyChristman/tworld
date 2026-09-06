@@ -23,7 +23,57 @@ stay attached to something someone can see.
 
 ## Unreleased
 
-Nothing yet.
+
+### Added — a weekly fuzz soak, with the corpus carried between runs
+
+The `fuzz` job gives each target 60 seconds so pushing stays fast, and its own comment conceded the
+gap: *"a real soak is `FUZZ_SECONDS=600` by hand"*. Nobody ever ran it by hand. **Until now, nothing
+in this project had explored past the first minute of any target.**
+
+That is not a theoretical shortfall. Every fuzz find this fork has shipped landed at the very edge of
+that budget — **jc-47 within seconds, jc-50 at one second, jc-51 at forty-three**. A ceiling that
+keeps catching defects right up against itself is telling you there is more past it.
+
+- **`.github/workflows/soak.yml`** — weekly (Sunday 04:17 UTC) plus `workflow_dispatch` with a
+  configurable budget. 15 minutes per target across all seven.
+- 🔑 **The discovered corpus is cached between runs**, so each soak starts from what the last one
+  found instead of re-deriving the same easy coverage forever. That is the difference between
+  searching and repeating a smoke test.
+- **`test/run-fuzz.sh`** gains `FUZZ_CORPUS_OUT`, which is what makes that possible: it directs
+  libFuzzer's discovered inputs to a persistent path instead of the scratch directory that is
+  deleted on exit. Default behavior is unchanged — a local or per-push run still throws its
+  discoveries away and leaves the repository clean.
+- ⚠ **The cached corpus is not the committed one.** `test/fuzz/corpus/` stays curated: an input earns
+  a place there by being attached to a fixed defect and a test case (ADR 0011). Nothing in the soak
+  writes to the repository; a finding fails the job and uploads the reproducer, and turning it into
+  a fix stays a human act.
+
+### Added — the release playtest is a script now, not a habit
+
+`RELEASING.md` step 5 said "extract the zip somewhere clean and play the game", and step 7 keeps the
+GitHub release a **draft** precisely because that check is manual. It is a sound gate — it is the
+only thing that exercises the bytes people download, and a static-link failure appears nowhere else.
+
+🔴 **But it had no tooling, and it was got wrong.** Reconstructed by hand each release, one run this
+session reported a clean playtest having actually launched the **previous** release's install,
+because a path substitution silently failed. The output looked identical to a good run. A check whose
+failure mode is indistinguishable from success belongs in a script.
+
+- **`test/run-playtest.ps1`** — 16 checks, no arguments needed. It verifies the archive's contents;
+  that the executable carries the expected tag **and not the previous one**; `-V`; real recorded
+  solutions replayed through the shipped binary in **both rulesets**; the path-qualified command line
+  jc-52 fixed; and a GUI launch that opens a level, plays a few moves and screenshots it. The
+  expected tag comes from `fork.h`, so it cannot drift from the build.
+- **Verified against the failure it exists to catch**: pointed at the jc-51 zip while expecting
+  jc-52, it fails with three checks red and *"a stale build was packaged"*.
+- ⚠ It does **not** look at pixels. The score table, tileset picker, color picker and death counter
+  are still verified by a person, and `RELEASING.md` says so in the same breath.
+
+**Found while wiring it up:** the tag parser matched `FORK_BUILD_TAG "]"` out of a *comment* in
+`fork.h` explaining string concatenation, so the first run announced `expects: ]` and then cheerfully
+confirmed the executable contains a `]`. Anchored to the `#define` and given a sanity check on the
+shape of the tag. A check with a wrong expectation is worse than no check.
+
 
 ## jc-52 — 2026-09-06
 

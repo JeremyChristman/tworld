@@ -1,0 +1,129 @@
+# The fuzz soak: the long run that the per-push job deliberately is not.
+#
+# 🔴 WHY THIS EXISTS. The `fuzz` job in ci.yml gives each target 60 seconds so
+# that pushing stays fast, and its own comment concedes the gap: "a real soak is
+# FUZZ_SECONDS=600 by hand". Nobody ever ran it by hand -- so until this
+# workflow, NOTHING in this project had ever explored past the first minute of
+# any target.
+#
+# That is not a theoretical shortfall. Every fuzz find this fork has shipped
+# landed at the very edge of that budget: jc-47 within seconds, jc-50 one second
+# in, jc-51 at forty-three seconds. The 60-second ceiling has been finding
+# defects right up against itself, which is the clearest possible sign that
+# there is more past it.
+#
+# 🔑 THE CORPUS ACCUMULATES, AND THAT IS THE POINT. A run that starts from the
+# committed seeds re-derives the same easy coverage every week and stops in the
+# same place. This run starts from what LAST week's run discovered, cached
+# between runs, so each soak begins where the previous one left off. That is the
+# difference between repeating a smoke test and actually searching.
+#
+# ⚠ THE CACHED CORPUS IS NOT THE COMMITTED CORPUS, and nothing here writes to
+# the repository. test/fuzz/corpus/ is curated: an input earns its place by
+# being attached to a fixed defect and a test case (docs/adr/0011). The cache is
+# scratch that happens to survive. If it is ever lost, the next run simply
+# starts from the seeds again -- slower, never wrong.
+#
+# WHAT HAPPENS ON A FINDING: the job FAILS, loudly, and uploads the reproducer
+# libFuzzer wrote. That is a notification worth getting. Turning the finding into
+# a fix is a human act with a checklist -- see run-fuzz.sh's own closing advice
+# and docs/adr/0011.
+
+name: Fuzz soak
+
+on:
+  schedule:
+    # 04:17 every Sunday, UTC. Off-peak, and a deliberately odd minute: the top
+    # of the hour is when every scheduled job on GitHub queues at once.
+    - cron: '17 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds per target (7 targets run in sequence)'
+        required: false
+        default: '900'
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    # 7 targets x 15 minutes is under two hours; the ceiling leaves room for a
+    # manual run with a larger budget without letting a hung target burn the
+    # full six-hour maximum.
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang
+          clang --version | head -1
+
+      # The evolved corpus from previous soaks. The key is unique per run so
+      # every soak SAVES a new entry, and restore-keys falls back to the most
+      # recent one -- the standard accumulate-forward pattern. A cold cache is
+      # not an error: the run just starts from the committed seeds.
+      - name: Restore the accumulated corpus
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: soak-corpus
+          key: fuzz-soak-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-soak-corpus-
+
+      - name: Report what the corpus starts with
+        run: |
+          mkdir -p soak-corpus
+          echo "accumulated inputs carried in from previous soaks:"
+          for d in soak-corpus/new-*; do
+            [ -d "$d" ] || continue
+            printf '  %-12s %s file(s)\n' "$(basename "$d")" "$(find "$d" -type f | wc -l)"
+          done
+          echo "committed seeds (read-only here):"
+          for d in test/fuzz/corpus/*; do
+            [ -d "$d" ] || continue
+            printf '  %-12s %s file(s)\n' "$(basename "$d")" "$(find "$d" -type f | wc -l)"
+          done
+
+      - name: Soak
+        env:
+          FUZZ_SECONDS: ${{ github.event.inputs.seconds || '900' }}
+          FUZZ_CORPUS_OUT: soak-corpus
+        run: |
+          set -o pipefail
+          chmod +x test/run-fuzz.sh
+          ./test/run-fuzz.sh
+
+      - name: Report what the corpus grew to
+        if: always()
+        run: |
+          echo "accumulated inputs after this soak:"
+          for d in soak-corpus/new-*; do
+            [ -d "$d" ] || continue
+            printf '  %-12s %s file(s)\n' "$(basename "$d")" "$(find "$d" -type f | wc -l)"
+          done
+
+      # Saved even when the soak FAILED: a run that found something has almost
+      # certainly also discovered coverage worth keeping, and throwing it away
+      # would make the next run repeat the search that just paid off.
+      - name: Save the accumulated corpus
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: soak-corpus
+          key: fuzz-soak-corpus-${{ github.run_id }}
+
+      # 🔴 THE REPRODUCER IS THE ENTIRE VALUE OF A FAILED RUN. Without this the
+      # notification says "the soak failed" and the bytes that caused it are
+      # gone with the runner.
+      - name: Upload any reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-soak-findings
+          path: test/fuzz/findings/
+          if-no-files-found: warn
+          retention-days: 90

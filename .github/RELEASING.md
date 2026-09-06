@@ -68,10 +68,24 @@ Two mechanical guards back this up:
    ```powershell
    powershell -ExecutionPolicy Bypass -File build.ps1 -ExpectTag jc-N -Manifest dist\build-manifest.json
    powershell -ExecutionPolicy Bypass -File package.ps1
+   powershell -ExecutionPolicy Bypass -File test\run-playtest.ps1
    ```
-   Then extract `dist\TileWorld-jc-N.zip` somewhere clean and **play the game from the zip** — not
-   the executable in your build directory. Open a set, play a level, change a setting, check
-   `Help > About`. Reviews audit artifacts; this audits reality.
+   `run-playtest.ps1` extracts the zip to a clean directory and proves it runs: the archive's
+   contents, the build tag inside the executable (**and the absence of the previous one**), `-V`,
+   real recorded solutions replayed through the shipped binary in **both** rulesets, the
+   path-qualified command line jc-52 fixed, and a GUI launch that opens a level, plays a few moves
+   and screenshots it. It takes no arguments — the expected tag comes from `fork.h`.
+
+   🔴 **THIS USED TO BE A HAND EXERCISE AND IT WAS GOT WRONG.** A release was once "playtested" by
+   launching the PREVIOUS build's install, because a path was mistyped; the output looked identical
+   to a good run. The script's first two checks exist precisely for that: it refuses a zip whose
+   executable does not carry the expected tag, and refuses one that still carries the tag before it.
+   Verified by pointing it at the previous release's zip — three failures, exit 1.
+
+   ⚠ **Then still look at it yourself.** The script checks that a window opens, a level loads and
+   keystrokes reach the engine. It does not look at the pixels: the score table's column spans, the
+   tileset picker, the color picker and the death counter are verified by a person or not at all.
+   Open a set, change a setting, check `Help > About`.
 
    ⚠ This step is where a static-link failure surfaces, and nowhere else. CI builds the *dynamic*
    flavor, so a missing `zlib1.dll`, a Qt static-plugin problem, or a binary that dies with

@@ -1,5 +1,3 @@
-powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1           # NO_FIX_* differential matrix
-powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1 -Search   # REDISCOVER witnesses (slow, deliberate)
 # Tile World — agent brief
 
 You are working in **Jeremy Christman's fork of Tile World 2**, a C/C++ desktop emulator of the
@@ -54,6 +52,7 @@ powershell -ExecutionPolicy Bypass -File test\run-golden.ps1          # golden-m
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1 -Update  # REWRITE the baseline (deliberate)
 powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1           # NO_FIX_* differential matrix
 powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1 -Search   # REDISCOVER witnesses (slow, deliberate)
+powershell -ExecutionPolicy Bypass -File test\run-playtest.ps1        # extract the release zip and prove it runs
 ```
 
 Two more, neither of which is PowerShell:
@@ -63,6 +62,7 @@ test/run-corpus.ps1 ...          # replay differential over the whole collection
 test/run-sanitizers.sh           # ASan+UBSan over the unit tests. LINUX ONLY; the CI job runs it
 test/run-fuzz.sh                 # libFuzzer over the .tws/.dat parsers. LINUX ONLY (needs clang)
 FUZZ_SECONDS=0 test/run-fuzz.sh  # just replay the committed corpus, no fuzzing
+FUZZ_CORPUS_OUT=dir test/run-fuzz.sh  # KEEP what it discovers; the weekly soak does this
 ```
 
 🔴 **A UB check you CAN run on Windows**, which this repo wrongly believed impossible until jc-46 —
@@ -241,15 +241,32 @@ Two more layers do not run from `run-tests.ps1`, because neither can run on Wind
 
 - **`test/run-sanitizers.sh`** — the unit suite rebuilt under ASan+UBSan (the `sanitizers` job). It
   found jc-46 on its first run. See §8.
-- **`test/run-fuzz.sh`** — libFuzzer, **six targets**, 60 s each per push (the `fuzz` job). Four
-  parsers: `expandsolution()`, `readleveldata()`, `expandleveldata()`, `readconfigfile()`. And
-  **both engines**: `fuzz_mslogic.c` and `fuzz_lxlogic.c` load a level *and play it*. It found
-  jc-47 on its first run — a 64-byte leak in `prepareplayback()`.
+- **`test/run-fuzz.sh`** — libFuzzer, **seven targets**, 60 s each per push (the `fuzz` job). Four
+  parsers: `expandsolution()`, `readleveldata()`, `expandleveldata()`, `readconfigfile()`. **Both
+  engines**: `fuzz_mslogic.c` and `fuzz_lxlogic.c` load a level *and play it*. And **`fuzz_rc.c`,
+  the first PROPERTY target** — a guard that wrongly returns TRUE does not crash, so it re-derives
+  the answer from the rule and aborts on disagreement. It found jc-47 on its first run — a 64-byte
+  leak in `prepareplayback()`.
 
   🔴 **The engine targets cover a different class, and it is the one jc-45 was.** A parser target
   proves a bad file is *refused*; jc-45 was a file that was **accepted** and then dereferenced out
   of bounds inside `initgame()`. Their input is split — a move-count byte, a move stream, then the
   raw level record — so a reproducer encodes both the level and the play.
+
+- **`.github/workflows/soak.yml`** — the **fuzz soak**: weekly on a schedule, plus
+  `workflow_dispatch`. 15 minutes per target instead of 60 seconds, with the discovered corpus
+  **cached between runs** so each soak starts where the last one stopped rather than re-deriving the
+  same easy coverage.
+
+  🔴 **Until this existed, nothing had ever explored past the first minute of any target** — and
+  every fuzz find this fork has shipped landed right at that ceiling: jc-47 within seconds, jc-50 at
+  one second, jc-51 at forty-three. A budget that keeps finding defects at its own edge is telling
+  you where to look.
+
+  ⚠ The cached corpus is **not** `test/fuzz/corpus/`, which stays curated: an input earns a place
+  there by being attached to a fixed defect and a test case
+  ([ADR 0011](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md)). Nothing in the
+  soak writes to the repository. A finding fails the job and uploads the reproducer.
 
 🔴 **But note what found jc-48: an ordinary unit test.** The `.dac` parser was the one untrusted-input
 parser with no coverage, and writing its first test turned up two shipped defects in minutes. Tools
