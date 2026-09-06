@@ -316,10 +316,18 @@ jobs:
       - name: cppcheck (gates on error severity)
         run: |
           set -o pipefail
+          # ⚠ Only pass --suppressions-list when the file actually holds one.
+          # cppcheck rejects a comment-only list with "Failed to add suppression.
+          # No id." and exits non-zero -- which reads exactly like a code finding
+          # and is not one. Measured on this job's first run.
+          supp=""
+          if grep -qvE '^\s*(#|$)' .cppcheck-suppressions; then
+            supp="--suppressions-list=.cppcheck-suppressions"
+          fi
           cppcheck \
             --enable=warning,performance,portability \
             --inline-suppr \
-            --suppressions-list=.cppcheck-suppressions \
+            $supp \
             --error-exitcode=1 \
             --std=c99 \
             --platform=win64 \
