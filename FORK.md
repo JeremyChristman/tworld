@@ -878,6 +878,88 @@ exactly what's mine:
    corpus as `test/fuzz/corpus/mslogic/socket-negative-chipsneeded`. Both engine tests carry a case
    for it; reverting either gate to `> 0` makes both test binaries `die()`.
 
+23. **An uninitialized pointer dereferenced on a path-qualified command line** (`series.c`).
+   **Upstream's** (`929d9c6`). ⭐ **The first defect in this fork found by static analysis**, and the
+   clearest case yet for having it.
+
+   `getseriesfiles()` declares a local `seriesdata s` and initializes five of its fields.
+   `s.curdir` is not one of them — it is assigned **only** by the two `findfiles()` calls in the
+   `else` branch. So on the other branch:
+
+   ```c
+   if (preferred && *preferred && haspathname(preferred)) {
+       if (getseriesfile(preferred, &s) < 0)      /* s.curdir is stack garbage */
+   ```
+
+   and `getseriesfile()` hands it straight to `openfileindir()`, whose first test is
+
+   ```c
+   if (!dir || !*dir || strchr(filename, DIRSEP_CHAR))
+   ```
+
+   `!dir` is fine — it reads the pointer's value. **`!*dir` dereferences it**, before the `strchr`
+   that would otherwise make the whole question moot.
+
+   ⚠ **WHAT IT COSTS, STATED HONESTLY: almost always nothing.** Whatever byte comes back, the call
+   ends at `fileopen()` with the full path either way — a zero byte takes the `!*dir` branch, a
+   non-zero byte falls to the `strchr`, which *must* match because a name without a separator could
+   not have reached here. The one bad outcome is a garbage pointer into unmapped memory, and then the
+   program **dies on startup** for an entirely ordinary command line: `tworld2 sets\CCLP1.dac`.
+
+   **Measured, not argued.** Before the fix, that command line was confirmed to take the
+   uninitialized path — it produces none of the directory-scan warnings the `else` branch emits — and
+   to survive. After it, it still works. `s.curdir = NULL` is the right value rather than `seriesdir`:
+   `openfileindir()` tests `!dir` first and falls through to `fileopen()` with the path the user gave,
+   which is exactly what this branch means.
+
+   🔴 **NO TEST COULD HAVE CAUGHT THIS, AND THAT IS THE POINT.** A unit test cannot: the behavior is
+   correct on any machine where the read does not fault, so the test passes either way. A fuzzer
+   cannot: it is not input-dependent. The golden master and the corpus cannot: nothing about play
+   changes. Only reading the code without running it finds this class, which is the entire argument
+   for the `analysis` job — and it paid for itself on that job's first successful run.
+
+24. **`TWTextCoder::encode()` was shifted one byte** (`oshw-qt/TWTextCoder.cpp`). **Upstream's**
+   (`929d9c6`). Found by the first test that file has ever had.
+
+   `decode()` maps `0x81` to a space — an undefined slot, as CP1252 treats it — and `0x82..0x8C` to
+   U+20A1, U+0192, U+201E … U+0152. `encode()`'s hand-written switch was built against a table with
+   **no gap at 0x81** and packed those eleven characters from `0x81` upward, so each encoded to the
+   byte *below* the one it decoded from. **Measured: 244 of 255 byte values round-tripped; 11 did
+   not.** `decode` is the correct side — it agrees with CP1252 across `0x83..0x8C`.
+
+   🔴 **Fixed by deleting the switch, not by correcting eleven constants.** `encode()` now
+   reverse-looks-up `encodeTable`, the same table `decode()` reads, so the two are inverse **by
+   construction**. The defect existed because two hand-maintained tables had to agree and nothing
+   checked that they did; correcting the constants fixes this instance and leaves the next edit free
+   to reintroduce it. There is now one table, and adding to it needs no matching change in `encode()`.
+
+   Impact was close to nil, which is why it survived: `encode()`'s only caller carrying user text is
+   the input prompt, where the text is a Chip's Challenge password — four characters, A–Z. No buffer
+   risk either, since the codec is one byte per `QChar` and the prompt truncates to `nMaxLen` first.
+
+   ⚠ One decode entry is separately odd and deliberately untouched: `0x82` decodes to **U+20A1**
+   (colon sign) where CP1252 has **U+201A** (low quotation mark) — a digit transposition apart. The
+   round trip is self-consistent either way, and changing it would alter what an existing level name
+   *displays* as, which is a different decision.
+
+25. **Two more unguarded `movelaws[]` indexes** (`mslogic.c`). This fork's own, and **defensive
+   rather than live** — the distinction matters and is written at the site.
+
+   `movelaws[]` has 64 entries. Two sites index it with a `floor` that has passed `!iscreature()`,
+   and that negation does **not** bound the value: `iscreature()` is a *range* test
+   (`>= Chip && < Water_Splash`), so its negation admits terrain (`< 64`, in range) **and animation
+   ids `>= 0x7C` = 124**. Both now go through jc-50's `movelaw_block()` / `movelaw_creature()`.
+
+   ⚠ **Unlike jc-50, no reachable input changes.** jc-50's three sites indexed by a cell's *bottom*
+   layer, which really does hold a creature on 18% of real levels. The animation case cannot occur in
+   this engine: `mslogic.c` does not contain `Water_Splash`, `Bomb_Explosion` or `Entity_Explosion`
+   anywhere — animations are Lynx's business — and `encoding.c` cannot produce such an id from a
+   `.dat` byte either. Guarded anyway because the cost is a range check, the alternative is a
+   permanent analyzer suppression on a genuinely unguarded index, and this is the second time the
+   ambiguity in `iscreature()`'s negation has had to be reasoned through from scratch. Found by
+   cppcheck.
+
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point.** It runs the unit and end-to-end

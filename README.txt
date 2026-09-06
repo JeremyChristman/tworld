@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-51
+  Tile World  --  Jeremy Christman's fork                    build jc-52
 ==============================================================================
 
   1. What this is
@@ -442,6 +442,60 @@ only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
+
+jc-52  --  A startup crash, and accented text written back wrongly
+--------------------------------------------------------------------
+
+  * THE GAME COULD CRASH ON STARTUP WHEN A LEVEL SET IS NAMED WITH A
+    FOLDER IN FRONT OF IT. Starting the game with something like
+
+        Tile World.exe sets\CCLP1.dac
+
+    took a path through the level-set loader that had never filled in
+    the folder it was supposed to search. What the program did next
+    depended on whatever happened to be left in that piece of memory --
+    almost always nothing at all, because the name already carried its
+    own full path and the game opened it correctly either way. But if
+    that leftover value pointed somewhere the program is not allowed to
+    look, it simply closed the moment it started, with no message.
+
+    It was found by a code-checking tool rather than by playing: the
+    fault is invisible on most runs by its nature, so there was nothing
+    to notice. Nothing you have is affected -- starting the game
+    normally, or with a plain set name, never went near it.
+
+  * ELEVEN UNUSUAL CHARACTERS ARE NOW WRITTEN BACK CORRECTLY. The game
+    converts text between its own character set and the one Windows
+    uses -- level names, passwords and hints all pass through it. The
+    conversion in one direction was off by one position for eleven
+    characters, among them the euro-style currency sign, the dagger, the
+    ellipsis and the OE ligature: reading them was right, writing them
+    put the wrong character back.
+
+    In practice this was almost impossible to hit, which is why it
+    lasted: the only place the game writes text back through that
+    conversion is the password box, and passwords are four plain
+    letters. Nothing that was saved is affected.
+
+    The two directions are now derived from a single table, so they
+    cannot drift apart again.
+
+  * A PIECE OF DEFENSIVE TIDYING IN THE ENGINE, with nothing to see. Two
+    more places where the engine looked up a movement rule have been
+    given the same bounds check that build jc-50 added elsewhere. Unlike
+    that one, no level can reach these -- they are guarded because the
+    check is free and the alternative is leaving a known rough edge.
+
+  * NOTHING ABOUT PLAY CHANGES, and it was measured rather than assumed:
+    303 solution files across 289 level sets -- 18,640 solutions that
+    replay correctly and 1,107 that do not -- give byte-for-byte
+    identical results before and after, and produce identical warnings.
+
+  * BEHIND THE SCENES, this build is mostly about testing. Five parts of
+    the program that had never been tested now are, including the two
+    that read configuration files; the compiler used to build the
+    releases is now pinned and checked; and a code-checking tool runs on
+    every change, which is what found the crash above.
 
 jc-51  --  A damaged level could shut the game down outright
 --------------------------------------------------------------

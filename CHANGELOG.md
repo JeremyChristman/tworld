@@ -23,7 +23,18 @@ stay attached to something someone can see.
 
 ## Unreleased
 
-Nothing here changes the executable. It rides along with the next release that does.
+Nothing yet.
+
+## jc-52 — 2026-09-06
+
+Three fixes a user could in principle observe, and a great deal of testing. **Every engine and
+`series.c` edit in this release was verified the same way: golden master 1,806 digests unchanged, all
+18 `NO_FIX_*` witnesses holding, and a corpus differential of 0 of 303 per-set outputs different with
+warnings identical across all 303 sets.**
+
+⭐ **Two of the three fixes were found by tools nobody aimed at a line** — the uninitialized pointer
+by cppcheck on the `analysis` job's first run, and the codec off-by-one by the first test
+`TWTextCoder` has ever had. That is now the pattern this project runs on rather than a happy accident.
 
 ### Added — `tworld.c` has its first test, aimed at the two documented traps
 
