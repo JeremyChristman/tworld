@@ -25,6 +25,67 @@ stay attached to something someone can see.
 
 Nothing here changes the executable. It rides along with the next release that does.
 
+### Added — `tworld.c` has its first test, aimed at the two documented traps
+
+`tworld.c` is 2,505 lines and was the largest file with no unit coverage. The end-to-end layer drives
+its command line; the navigation logic runs only from the pre-level screen, which needs a GUI and a
+keystroke, so no automated layer reached it.
+
+- **`test/tworld_test.c`** — 51 checks over 21 cases, covering exactly the two behaviors CLAUDE.md §7
+  flags as load-bearing: `changecurrentgamewrapped()` being separate from `changecurrentgame()`
+  (item 6), and "last level" being `count - 1` rather than `islastinseries()` (item 7). Plus the
+  password gate, clamping, and the Melinda counter reset.
+- ⚠ **`main` is renamed, not removed** (`#define main tworld_main`), so the test drives the real file
+  rather than a copy — the point of [ADR 0003](docs/adr/0003-tests-compile-the-source-under-test-directly.md).
+  The cost is a 91-symbol stub block, generated from the real headers so a signature cannot drift.
+- **Mutation-proven, 4 mutations**, and two of them are worth recording:
+
+  🔴 **A stub silently disabled half the logic.** `hassolution()` was auto-stubbed to `return 0`, so
+  the password gate saw every level as unsolved and two cases failed for a reason that had nothing to
+  do with the code. It is now faithful to `play.c:491` and marked as the one non-inert stub.
+
+  🔴 **Clearing a struct is not initializing it.** `hassolution()` is `besttime != TIME_NIL`, and
+  `TIME_NIL` is `0x7FFFFFFF` — so a `memset` gamesetup reads as **solved**. The first harness had
+  every level solved and the password cases passed for the wrong reason.
+
+  🔴 **Mutation testing found a missing case.** Removing the `currentgame == count - 1` half of the
+  wrap test was NOT caught: the existing `-10` case cannot reach it, because a clamped `-10`
+  *succeeds* and returns before the wrap logic runs. Only a password-blocked move away from the end
+  gets there — precisely the scenario the jc-39 comment describes. That case now exists and catches
+  it.
+
+⚠ **Overall coverage fell 47.0% → 37.6% while the suite grew**, the fourth time and by far the
+starkest: `tworld.c` is 1,338 instrumented lines and this test aims at five functions, so it entered
+the denominator at 2.9%. Every other file is unchanged or better. Read the per-file column.
+
+### Changed — the `NO_FIX_*` search finds 18 of 32, up from 13
+
+`test/nofix/nofix.c` now lays a **focus profile** beside Chip on every seed: a block against a
+teleport, a tank on a cloner with its blue button, a creature in a wired beartrap, a switch-wall
+pair, and eight more. The rest of the room stays random, and the profile is chosen **by the seed**,
+so `-scan`, `-diff`, `-one` and the committed matrix all work unchanged.
+
+The reason the previous search stalled at 13 was not effort: a scattered room rarely puts Chip next
+to the one square that matters, and these fixes need the arrangement *and* Chip positioned to drive
+it this turn. Five more toggles now have witnesses, including **`NO_FIX_TANK_ON_CLONER`**, which had
+resisted every earlier attempt including a 1,000,000-seed sweep.
+
+⚠ Adding a profile renumbers the seed space, so all 18 witnesses were re-searched from scratch and
+the matrix regenerated. That is documented at the profile switch: it is the cost of changing the
+generator, and the reason not to change it casually.
+
+### Added — static analysis in CI
+
+- **`.github/workflows/ci.yml`** gains an `analysis` job running **cppcheck** over everything the
+  shipped program compiles, with `.cppcheck-suppressions` alongside it.
+- 🔴 **It gates on `error` severity only.** This is a 2001 C codebase carrying an upstream fork's
+  idiom; enabling every style rule would produce hundreds of findings nobody intends to act on, and
+  a red X nobody can act on is how a build gets ignored — the same argument CLAUDE.md makes against
+  gating on coverage. Warning, performance and portability findings are **printed** so they are
+  visible without holding the branch hostage.
+- ⚠ Every suppression must carry a reason. A suppression without one is a finding somebody hid
+  rather than judged.
+
 ### Added — the build toolchain is pinned
 
 CI ran `pacman -S mingw-w64-x86_64-gcc` and built with whatever version was current that morning,

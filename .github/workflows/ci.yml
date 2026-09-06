@@ -279,6 +279,59 @@ jobs:
           test -n "$dats" || { echo "::error::no level data found"; exit 1; }
           ./golden -check $dats
 
+
+  # Static analysis. cppcheck reads the code without running it, so it reaches
+  # paths no test drives -- the error branches, the "this cannot happen" arms,
+  # and the parts of tworld.c and generic/tile.c that have no unit coverage at
+  # all.
+  #
+  # 🔴 IT GATES ON `error` SEVERITY ONLY, AND THAT IS DELIBERATE. This is a C
+  # codebase from 2001 carrying an upstream fork's worth of idiom, and turning
+  # on every cppcheck style rule would produce hundreds of findings nobody
+  # intends to act on. A red X nobody can act on is how a build gets ignored --
+  # the same argument CLAUDE.md makes for not gating on coverage. `error` is the
+  # class that means something: null dereference, buffer overrun, use of an
+  # uninitialized value, resource leak.
+  #
+  # The warning/performance/portability findings are PRINTED but do not fail the
+  # job, so they are visible to anyone reading the log without holding the
+  # branch hostage.
+  #
+  # ⚠ Suppressions live in .cppcheck-suppressions with a reason on each line.
+  # Adding one is a decision to be reviewed like code, not a way to clear a log.
+  analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cppcheck
+          cppcheck --version
+
+      # Everything the shipped program compiles, minus the SDL front end (this
+      # fork does not build it -- see CLAUDE.md section 4) and minus the tests,
+      # which deliberately do odd things like #including a .c file.
+      - name: cppcheck (gates on error severity)
+        run: |
+          set -o pipefail
+          cppcheck \
+            --enable=warning,performance,portability \
+            --inline-suppr \
+            --suppressions-list=.cppcheck-suppressions \
+            --error-exitcode=1 \
+            --std=c99 \
+            --platform=win64 \
+            -DWIN32 -D__GNUC__ \
+            -I . \
+            --suppress=missingInclude \
+            --suppress=missingIncludeSystem \
+            --suppress=unmatchedSuppression \
+            *.c generic/*.c 2>&1 | tee cppcheck.log
+          echo ""
+          echo "cppcheck finished with no error-severity findings"
+
   # The NO_FIX_* differential matrix: for each recorded witness, build the
   # engine with the fix ON and with it OFF and prove one generated input still
   # tells them apart.

@@ -204,8 +204,8 @@ run-tests.ps1              entry point: runs ALL FIVE layers below
   test\run-nofix.ps1       the NO_FIX_* differential matrix
 ```
 
-Current state: **13 unit runs, 17,373 checks; 12 end-to-end cases, 35 checks; 2 Qt runs, 116 checks;
-1,806 golden-master digests; 13 NO_FIX_* witnesses; 0 failures.**
+Current state: **15 unit runs, 17,531 checks; 12 end-to-end cases, 35 checks; 2 Qt runs, 116 checks;
+1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
 Two of those five need no test harness at all — they link the engines the way `tworld2` does and
 drive real level data. They run from `run-tests.ps1` like everything else, and **they are the only
@@ -358,19 +358,28 @@ misreading in the parser is faithfully reproduced and never caught.
   `NO_FIX_ROW32_CLONER` actually guards — what happens when such a cloner **fires** — is not tested:
   building that file with `-DNO_FIX_ROW32_CLONER` still passes every case. That was measured, and
   **the golden master does not catch it either** — it was measured there too.
-- 🔴 **19 of the 32 `NO_FIX_*` toggles have no differential witness — down from 30, and every number
+- 🔴 **14 of the 32 `NO_FIX_*` toggles have no differential witness — down from 30, and every number
   here is measured.** `test/nofix/` searches for an input whose result differs between a fix-on and a
-  fix-off build; such an input is a **witness** that the fix is live and reachable, and the 13 found
+  fix-off build; such an input is a **witness** that the fix is live and reachable, and the 18 found
   so far are committed in `test/nofix/nofix-matrix.tsv` and re-checked by CI on every push. See
   [`docs/adr/0012`](docs/adr/0012-engine-toggles-need-a-differential-witness.md).
 
-  **What moved the number, and what did not.** The golden master over all 903 real levels finds
-  **2**. Raising its tick count 400 → 2000 and its walk count 1 → 4 → 12 each found **nothing
-  further** — the limit is the shape of the input, not its quantity, because a random walk through a
-  real level never *constructs* a block on a teleport or a tank on a cloner. Generating 9×9 rooms
-  packed with that furniture found **13**. The single biggest step was **deliberately stacking**
-  cells — a creature or block placed on top of machinery — which is what nearly every one of these
-  fixes is actually about; before that the same search found **1**.
+  **What moved the number, and what did not — each step measured:**
+
+  | approach | witnesses |
+  |---|---|
+  | golden master over all 903 real levels | 2 |
+  | + ticks 400 → 2000, + walks 1 → 12 | 2 (nothing) |
+  | generated 9×9 rooms, random fill | 1 |
+  | + deliberately **stacked** cells | 13 |
+  | + a **focus profile** built next to Chip | **18** |
+
+  The limit was never search effort. A random walk does not *construct* a tank on a cloner, and a
+  scattered room rarely puts Chip next to the one square that matters. Each seed now also lays a
+  specific interaction in the three cells east of Chip — a block against a teleport, a tank on a
+  cloner with its blue button, a creature in a wired beartrap — while the rest of the room stays
+  random. That alone found five more, including `NO_FIX_TANK_ON_CLONER`, which had resisted every
+  earlier attempt.
 
   ⚠ **A blank row is a statement about the SEARCH, not about the fix.** All 32 were separately
   confirmed to change the preprocessed source, so none is dead code, and a blank is never grounds for
@@ -435,12 +444,20 @@ uninstrumented executable, so what they reach is not counted and these figures u
 | `encoding.c` | 89.9% | **82.8%** |
 | `generic/in.c` | 55.7% | **50.9%** |
 | `lxlogic.c` | 55.4% | **46.3%** |
+| `fileio.c` | 49.6% | **40.0%** |
 | `solution.c` | 47.7% | **30.1%** |
 | `mslogic.c` | 44.8% | **33.3%** |
-| `fileio.c` | 40.1% | **31.3%** |
+| `res.c` | 41.2% | **41.0%** |
 | `play.c` | 26.6% | **33.8%** |
 | `series.c` | 19.3% | **24.4%** |
-| **overall** | 46.7% | **39.8%** |
+| `tworld.c` | 2.9% | **4.1%** |
+| **overall** | 37.6% | **33.2%** |
+
+🔴 **THE OVERALL FIGURE FELL FROM 47.0% AND NOTHING REGRESSED — READ THE PER-FILE COLUMN.** This is
+the fourth time and the starkest: `tworld.c` is 1,338 instrumented lines and `test/tworld_test.c`
+aims at five functions, so it entered the denominator at 2.9% and pulled the total down nine points
+while adding coverage. Every other file is unchanged or better. `-CheckBaseline` compares files
+individually for exactly this reason, and the total is the least useful number on this page.
 
 ⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
 has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented

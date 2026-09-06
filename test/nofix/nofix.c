@@ -72,6 +72,11 @@
 #define	NOFIX_TICKS	320
 #define	NOFIX_STEPS	(NOFIX_TICKS / 4)
 
+/* How many focus profiles gen_level() can lay down beside Chip. Adding one
+ * renumbers the seed space, so every recorded witness must be re-searched --
+ * see the note at the profile switch. */
+#define	NOFIX_PROFILES	12
+
 /* ------------------------------------------------------------- generation -- */
 
 static u64 genstate;
@@ -244,12 +249,100 @@ static void gen_level(fixlevel *lv)
      * is a wasted seed. Clearing the four orthogonal neighbors costs four
      * cells of randomness and buys Chip enough time to actually push a block
      * onto something. */
-    x = ROOM_X + gen_below(ROOM_W);
-    y = ROOM_Y + gen_below(ROOM_H);
+    x = ROOM_X + 1 + gen_below(ROOM_W - 2);
+    y = ROOM_Y + 1 + gen_below(ROOM_H - 2);
     if (x > ROOM_X)			fix_settop(lv, x - 1, y, FIX_FLOOR);
     if (x < ROOM_X + ROOM_W - 1)	fix_settop(lv, x + 1, y, FIX_FLOOR);
     if (y > ROOM_Y)			fix_settop(lv, x, y - 1, FIX_FLOOR);
     if (y < ROOM_Y + ROOM_H - 1)	fix_settop(lv, x, y + 1, FIX_FLOOR);
+
+    /* 🔴 THE FOCUS PROFILE -- BUILT RIGHT NEXT TO CHIP, AND SELECTED BY THE SEED.
+     *
+     * Designed stacks took the search from 1 witness to 13. The remaining 19
+     * toggles resist for a sharper reason: they need an arrangement AND Chip
+     * positioned to drive it this turn. "A block resting on a teleport" is not
+     * enough -- Chip has to be standing next to that block, facing it, with
+     * somewhere for it to go. Scattering the furniture randomly across 81 cells
+     * makes that conjunction rare even when every piece is present.
+     *
+     * So each seed also picks a PROFILE, which lays out one specific
+     * interaction in the three cells east of Chip. The rest of the room stays
+     * random, so the search still explores rather than replaying a fixture.
+     *
+     * ⚠ THE PROFILE IS DERIVED FROM THE SEED, NOT PASSED AS AN ARGUMENT. That
+     * keeps -scan, -diff, -one and the committed matrix working unchanged: a
+     * witness is still a single integer, and one baseline scan covers every
+     * profile. Adding a profile renumbers the space and invalidates the
+     * recorded witnesses, which is why the matrix is regenerated whenever this
+     * list changes -- see test/run-nofix.ps1 -Search. */
+    {
+	int const	prof = (int)(gen_next() % NOFIX_PROFILES);
+	int const	e1 = x + 1, e2 = x + 2, e3 = x + 3;
+	int const	fits = (e3 < ROOM_X + ROOM_W);
+
+	if (fits) {
+	    switch (prof) {
+	      case 0:	/* nothing: keep the unbiased generator in the mix */
+		break;
+	      case 1:	/* a block Chip can push onto a teleport */
+		fix_settop(lv, e1, y, 0x0A);
+		fix_settop(lv, e2, y, 0x29);
+		fix_settop(lv, e3, y, 0x29);	/* teleports need a partner */
+		break;
+	      case 2:	/* a block Chip can push onto a clone machine */
+		fix_settop(lv, e1, y, 0x0A);
+		fix_setbot(lv, e2, y, 0x31);
+		fix_settop(lv, e2, y, 0x00);
+		break;
+	      case 3:	/* a tank standing on a cloner, and a blue button east */
+		fix_setbot(lv, e1, y, 0x31);
+		fix_settop(lv, e1, y, 0x4D);	/* tank facing west, at Chip */
+		fix_settop(lv, e2, y, 0x28);	/* blue button reverses tanks */
+		break;
+	      case 4:	/* a creature in a beartrap Chip can release */
+		fix_setbot(lv, e1, y, 0x2B);
+		fix_settop(lv, e1, y, 0x40 + 4 * gen_below(6));
+		fix_settop(lv, e2, y, 0x27);	/* brown button, wired below */
+		fix_addtrap(lv, e2, y, e1, y);
+		break;
+	      case 5:	/* Chip on a random force floor, block ahead */
+		fix_setbot(lv, x, y, 0x32);
+		fix_settop(lv, e1, y, 0x0A);
+		fix_settop(lv, e2, y, 0x00);
+		break;
+	      case 6:	/* a block on ice, sliding into furniture */
+		fix_settop(lv, e1, y, 0x0A);
+		fix_settop(lv, e2, y, 0x0C);
+		fix_settop(lv, e3, y, alphabet[gen_below(ALPHABET_N)]);
+		break;
+	      case 7:	/* a block Chip pushes onto a beartrap */
+		fix_settop(lv, e1, y, 0x0A);
+		fix_setbot(lv, e2, y, 0x2B);
+		fix_settop(lv, e2, y, 0x00);
+		break;
+	      case 8:	/* a creature on a force floor beside Chip */
+		fix_setbot(lv, e1, y, 0x0D + gen_below(2) * 5);
+		fix_settop(lv, e1, y, 0x40 + 4 * gen_below(6));
+		break;
+	      case 9:	/* a cloner Chip can fire, with a creature template */
+		fix_setbot(lv, e2, y, 0x31);
+		fix_settop(lv, e2, y, 0x4C + gen_below(4));
+		fix_settop(lv, e1, y, 0x24);	/* red button, wired below */
+		fix_addcloner(lv, e1, y, e2, y);
+		break;
+	      case 10:	/* two teleports with Chip able to enter one */
+		fix_settop(lv, e1, y, 0x29);
+		fix_settop(lv, e2, y, 0x00);
+		fix_settop(lv, e3, y, 0x29);
+		break;
+	      case 11:	/* a switch wall pair and its green button */
+		fix_settop(lv, e1, y, 0x23);	/* green button */
+		fix_settop(lv, e2, y, 0x25);	/* closed toggle wall */
+		fix_settop(lv, e3, y, 0x26);	/* open toggle wall */
+		break;
+	    }
+	}
+    }
     fix_settop(lv, x, y, (unsigned char)(0x6C + gen_below(4)));
 
     /* Trap and cloner wiring, aimed at the machinery the stacks actually

@@ -1,0 +1,7 @@
+# cppcheck suppressions. Each line needs a REASON -- a suppression without one
+# is a finding somebody hid rather than judged.
+#
+# Format: <id>:<file>  or just <id> for a global suppression.
+
+# Nothing suppressed yet. The first CI run is what populates this file, and
+# every entry added here must say why the finding is acceptable.

@@ -77,11 +77,11 @@ with a `TESTLANG:` comment and says why. Extra flags go in a `TESTFLAGS:` commen
 executed, which is what catches a test function that has silently stopped being called. Raise it when
 you add cases; **never lower it to make a run pass.**
 
-`CLAUDE.md` §5 lists what is deliberately **not** covered — the GUI, and **30 of the 32 `NO_FIX_*`
-toggles** (a measured number: the golden master detects two, and raising its tick or walk count was
-tried and detected nothing further). The Lynx engine is no longer on that list: `test/lxlogic_test.c`
-covers it and the golden master drives it over all 903 committed levels. Read §5 before claiming a
-green run means more than it does.
+`CLAUDE.md` §5 lists what is deliberately **not** covered — the Qt **widgets**, and **14 of the 32
+`NO_FIX_*` toggles**. Both are measured numbers rather than impressions: the differential matrix
+(`test/run-nofix.ps1`) holds a witness for 18 of the 32, and the golden master alone distinguishes
+only 2. The Lynx engine and both `oshw-qt` parsers are no longer on that list. Read §5 before
+claiming a green run means more than it does.
 
 ## Style
 
