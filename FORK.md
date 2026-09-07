@@ -959,6 +959,86 @@ exactly what's mine:
    ambiguity in `iscreature()`'s negation has had to be reasoned through from scratch. Found by
    cppcheck.
 
+26. **`tw_settings.ini` was rewritten by truncating it in place** (`settings.cpp`). **The only file
+   this program can destroy, and it destroyed it.**
+
+   `savesettings()` opened the live settings file with a truncating `ofstream` and refilled it.
+   Between those two moments the user's settings did not exist. **Measured, not argued: killing the
+   process inside that window turns a 289-byte settings file into a 0-byte one.**
+
+   Three things made it worse than it sounds:
+
+   - **It is not an exit-time write.** Six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:72`,
+     three in `oshw-qt/TWMainWnd.cpp`, and `shutdownsystem()` — write the file the instant a
+     setting changes, *because* a crash skips the atexit handler. ADR 0007 and `CLAUDE.md` both said
+     "rewritten on a clean exit", which had been untrue since jc-31. Both are corrected.
+   - **The `settingsUnreadable` latch does not cover it.** That latch tells *absent* from *exists
+     but will not open*. A truncated file **opens fine**, so the next load reads it as "no settings"
+     and the next save writes defaults over the wreckage.
+   - **The error check ran before the flush**, so a write that failed late reported nothing at all.
+
+   Now: render the whole file to a string, stage it as a sibling `tw_settings.ini.tmp-<pid>-<seq>`,
+   check the stream *after* `close()`, and replace the target with `MoveFileExA` /
+   `MOVEFILE_REPLACE_EXISTING` (`rename()` elsewhere). Any failure leaves the original untouched.
+
+   🔴 **THE RETRY MATTERS MORE THAN THE ATOMICITY, and skipping it would have made this change a
+   regression.** Measured against a scanner holding the destination open: **one move attempt loses
+   19% of writes; four attempts lose none.** The sibling project shipped this same fix once without
+   that and measured 14–83% of writes lost. Two more measurements shaped the final form:
+
+   - **Any open handle blocks `MoveFileEx`** — 0 of 6 share modes succeeded, including a
+     metadata-only handle sharing READ|WRITE|DELETE. The old truncating write *succeeded* under the
+     permissive modes a sync client uses, so a naive atomic write trades a rare torn file for a
+     frequent dropped one.
+   - **The backoff steps are not multiples of each other** (0/2/5/12 ms). A regular 5/15/40 pattern
+     measured *worse than no retry at all* — Windows rounds them to the same ~15.6 ms tick, so the
+     retry phase-locks with a periodic locker.
+
+   ⚠ **And it falls back rather than being worse than what it replaced.** Staging needs write access
+   to the *directory*; the old writer needed it only on the *file*. In a directory that denies file
+   creation while leaving `tw_settings.ini` writable — measured — the staged write loses **100%** of
+   saves, permanently and silently, where the old one landed every single save. So when staging is
+   *structurally impossible* (that case, or a path too long for any suffix to fit) the write falls
+   back to the direct write. When it is merely *blocked* (a locked destination) it fails closed,
+   because that is exactly when a torn file is most likely. **That line is load-bearing; do not
+   widen it.**
+
+   Rejected, each on a measurement rather than taste: `MOVEFILE_WRITE_THROUGH` (+34% per write),
+   `FlushFileBuffers` (6×), and `ReplaceFileA` — which is genuinely *better* at the lock, winning
+   the three DELETE-sharing cases, but has a documented partial failure in which the **destination
+   no longer exists**, and this function's one promise is that failure leaves the original intact.
+   Also rejected: treating a zero-length settings file as damaged. `savesettings()` legitimately
+   writes one when the map is empty — `tworld2 -v` does it on every batch run — so a guard would
+   mean a program that had just written one could never save again.
+
+   The staging file is written in **text mode**, deliberately. The shipped file is CRLF *because*
+   the stream translates `\n`; rendering to a string and writing it binary — the instinctive move
+   when the goal is exact bytes — would silently convert every existing user's file to LF.
+
+   ⚠ **What it does not fix**, so that nobody claims it later: two instances each hold the whole map
+   and each rewrite the whole file, so the second to exit still wins. Atomicity makes that a clean
+   overwrite instead of a torn one; it is not multi-instance safety. And the promise is against
+   *process* death, not power loss — see ADR 0007.
+
+   First test for the file (`test/settings_test.c`, 109 checks) and the eighth fuzz target
+   (`test/fuzz/fuzz_settings.cpp`), which is the second **property** target: reading is idempotent
+   under writing. It found a second, unrelated defect on its first real run — see 27.
+
+27. **A value ending in a carriage return did not survive its own round trip** (`settings.cpp`).
+   Found by the new fuzz target, in four bytes: `EF 3D 0D 20`.
+
+   The line-level strip removes a carriage return only at the very **end** of a line. In
+   `key=value\r   ` the CR is interior — the line ends in spaces — so the strip does not fire, the
+   `" \t"` trim then removes the spaces, and the CR is left as the last byte of the **value**. The
+   writer emits that value followed by its own newline, so the next load sees `key=value\r`, strips
+   it, and gets a different value. One round trip through the program silently changed a setting.
+
+   A carriage return is whitespace, and the trim's stated purpose is exactly this class of invisible
+   junk, so `\r` joins all four trim sets. That makes the line-level strip redundant — verified by an
+   exhaustive differential over 177,156 strings, zero of which parse differently without it — and it
+   is kept only as belt-and-braces, said so at the site. Reproducer committed as
+   `test/fuzz/corpus/settings/cr-before-space` and replayed by the unit suite (ADR 0011).
+
 
 ## Testing
 

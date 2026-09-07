@@ -134,6 +134,24 @@ void die_(char const *fmt, ...) { (void)fmt; exit(1); }
 
 static char const *scratchdir = "tw_res_test_dir";
 
+/* MOD (Jeremy): the mirror of fileio.c's createdir() macro, and it has to be
+ * written out because remove() is not portable for this.
+ *
+ * POSIX remove() dispatches to rmdir() for a directory, so the cleanup at the
+ * bottom of main() worked on the Linux CI job and looked correct there. MSVCRT's
+ * remove() handles FILES ONLY and returns -1 for a directory, so on Windows --
+ * the platform this program actually ships on -- every run of this test left an
+ * empty tw_res_test_dir\ behind in whatever directory it was invoked from,
+ * which in practice was the source tree. An empty directory is invisible to
+ * git, which is why it went unnoticed: `git status` is clean either way. */
+#ifdef WIN32
+#include	<direct.h>
+#define	removedir(name)	(_rmdir(name) == 0)
+#else
+#include	<unistd.h>
+#define	removedir(name)	(rmdir(name) == 0)
+#endif
+
 /* Write an rc file into a scratch resource directory and run the REAL
  * readrcfile() over it. res.c reads `rc` out of `resdir`, so the directory is
  * the interface -- there is no way to hand the parser a buffer, and inventing
@@ -509,10 +527,13 @@ int main(void)
     test_shippedrc();
     test_corpus();
 
-    /* Leave no scratch directory behind. */
-    remove(scratchdir);
+    /* Leave no scratch directory behind. Checked rather than ignored: a
+     * failure here means a later run inherits a directory this one wrote, and
+     * the one thing that could put a stale `rc` in it is this same test. */
+    CHECK_MSG(removedir(scratchdir),
+	      "the scratch directory %s could not be removed", scratchdir);
 
     /* Raise this when cases are added; never lower it to make a run pass. */
-    tw_expect_atleast(107);
+    tw_expect_atleast(108);
     return tw_end();
 }

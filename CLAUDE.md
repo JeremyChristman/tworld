@@ -204,7 +204,7 @@ run-tests.ps1              entry point: runs ALL FIVE layers below
   test\run-nofix.ps1       the NO_FIX_* differential matrix
 ```
 
-Current state: **15 unit runs, 17,531 checks; 12 end-to-end cases, 35 checks; 2 Qt runs, 116 checks;
+Current state: **16 unit runs, 17,641 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
 Two of those five need no test harness at all — they link the engines the way `tworld2` does and
@@ -241,12 +241,18 @@ Two more layers do not run from `run-tests.ps1`, because neither can run on Wind
 
 - **`test/run-sanitizers.sh`** — the unit suite rebuilt under ASan+UBSan (the `sanitizers` job). It
   found jc-46 on its first run. See §8.
-- **`test/run-fuzz.sh`** — libFuzzer, **seven targets**, 60 s each per push (the `fuzz` job). Four
+- **`test/run-fuzz.sh`** — libFuzzer, **eight targets**, 60 s each per push (the `fuzz` job). Four
   parsers: `expandsolution()`, `readleveldata()`, `expandleveldata()`, `readconfigfile()`. **Both
-  engines**: `fuzz_mslogic.c` and `fuzz_lxlogic.c` load a level *and play it*. And **`fuzz_rc.c`,
-  the first PROPERTY target** — a guard that wrongly returns TRUE does not crash, so it re-derives
-  the answer from the rule and aborts on disagreement. It found jc-47 on its first run — a 64-byte
-  leak in `prepareplayback()`.
+  engines**: `fuzz_mslogic.c` and `fuzz_lxlogic.c` load a level *and play it*. And **two PROPERTY
+  targets**, which assert that the code means something rather than merely that it does not crash:
+  `fuzz_rc.c` re-derives the tileset-name rule independently and aborts on disagreement (a guard
+  that wrongly returns TRUE does not crash) — it found jc-47 on its first run, a 64-byte leak in
+  `prepareplayback()`; and `fuzz_settings.cpp` asserts that reading `tw_settings.ini` is idempotent
+  under writing it, and found a real defect on ITS first run too (jc-53, a value ending in a
+  carriage return did not survive its own round trip).
+  ⚠ **`fuzz_settings.cpp` is C++ and the script has two lanes for that reason.** `settings.cpp` is
+  C++ and CMake compiles it only as C++; the C targets, conversely, cannot be built as C++ at all
+  because `fileio.c` and friends rely on C's implicit `void*` conversion. Same split as ADR 0004.
 
   🔴 **The engine targets cover a different class, and it is the one jc-45 was.** A parser target
   proves a bad file is *refused*; jc-45 was a file that was **accepted** and then dereferenced out
@@ -513,8 +519,19 @@ a red X. `-CheckBaseline` exists for a release to assert the documented numbers 
 
 ## 6. `tw_settings.ini`
 
-A plain `name=value` INI file, read **once at startup** and rewritten on a clean exit.
+A plain `name=value` INI file, read **once at startup** and rewritten **every time a setting
+changes** — six call sites, not just at exit (corrected in jc-53; the old wording said "on a clean
+exit" and had been wrong since jc-31).
 See [`docs/adr/0007`](docs/adr/0007-settings-live-in-tw-settings-ini.md).
+
+🔴 **The write is atomic, and the retry matters more than the atomicity.** `savesettings()` stages
+the file as a sibling `tw_settings.ini.tmp-<pid>-<seq>` and moves it over the target. Measured, on
+Windows, with a scanner holding the destination open: one move attempt loses **19%** of writes,
+four attempts lose **none** — so a naive atomic write without the retry would be a *worse* bug than
+the torn file it fixes. The backoff steps are deliberately not multiples of each other. Do not
+"regularize" them, do not open the staging file in binary (the text-mode CRLF translation IS the
+file format), and do not add `MOVEFILE_WRITE_THROUGH` or `ReplaceFile` — `settings.cpp` records
+what each one measured.
 
 - **Section headings are decoration.** A setting works the same wherever it sits. (The opposite of
   SuperCC's `succ_settings.ini`, where the section is part of a setting's identity.)

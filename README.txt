@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-52
+  Tile World  --  Jeremy Christman's fork                    build jc-53
 ==============================================================================
 
   1. What this is
@@ -441,6 +441,54 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-53  --  Your settings file can no longer be destroyed by a crash
+--------------------------------------------------------------------
+
+  * THE GAME NO LONGER EMPTIES tw_settings.ini IF IT IS STOPPED WHILE
+    SAVING. Until now the game saved your settings by emptying the file
+    first and then writing it out again. For the fraction of a second
+    between those two steps, your settings did not exist -- and if the
+    game was closed, killed, or crashed in that moment, what was left
+    behind was an empty file. Measured, not guessed: a 289-byte settings
+    file became a 0-byte one.
+
+    That window was entered far more often than it sounds. Settings are
+    not saved only when you quit; they are written the moment you change
+    one, precisely so that a crash cannot lose them. With the death
+    counter switched on, that is every death.
+
+    Worse, the damage was silent and permanent. An emptied file still
+    opens perfectly well, so the next launch read it as "no settings at
+    all", started from the defaults, and then saved those defaults over
+    what was left. Your background color, your chosen level set, your
+    ruleset and your volume were simply gone, with nothing to say so.
+
+    The game now writes the new settings alongside the old ones and
+    swaps them into place in a single step, so the file is either
+    entirely the old settings or entirely the new ones and never
+    anything in between. If the swap cannot be done -- something else
+    has the file open at that instant -- the game keeps your existing
+    settings untouched and tries again the next time something changes,
+    rather than risking the file.
+
+    Nothing about the file's contents or layout changed. You do not need
+    to do anything, and an existing tw_settings.ini is read exactly as
+    before.
+
+  * A SETTING ENDING IN A STRAY CARRIAGE RETURN NO LONGER CHANGES
+    ITSELF. If a hand-edited settings file had an invisible carriage
+    return at the end of a value -- the sort of thing that happens when
+    a file has been passed between Windows and another system -- the
+    game read one value, wrote a slightly different one back, and read
+    that different value next time. A setting would appear to change on
+    its own after a restart. Invisible characters at the end of a value
+    are now ignored, as spaces and tabs already were.
+
+    This was found by a new automatic test that feeds the settings
+    reader millions of made-up files and checks that reading one, saving
+    it, and reading it again always gives the same answer.
 
 
 jc-52  --  A startup crash, and accented text written back wrongly

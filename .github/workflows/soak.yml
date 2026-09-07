@@ -39,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       seconds:
-        description: 'Seconds per target (7 targets run in sequence)'
+        description: 'Seconds per target (8 targets run in sequence)'
         required: false
         default: '900'
 
@@ -49,7 +49,7 @@ permissions:
 jobs:
   soak:
     runs-on: ubuntu-latest
-    # 7 targets x 15 minutes is under two hours; the ceiling leaves room for a
+    # 8 targets x 15 minutes is well under three hours; the ceiling leaves room for a
     # manual run with a larger budget without letting a hung target burn the
     # full six-hour maximum.
     timeout-minutes: 240

@@ -33,7 +33,12 @@ jobs:
           # .gitignore covers all of these, but .gitignore does nothing about
           # `git add -f`, and that is exactly what happens while reproducing a
           # bug with someone's solution file.
-          bad=$(git ls-files | grep -iE '(^|/)(CHIPS\.dat|tw_settings\.ini)$|\.tws$|^save/' || true)
+          # tw_settings.ini.tmp-<pid>-<seq> is the jc-53 staging file. It is
+          # personal state exactly as the settings file is, it only ever exists
+          # because a write was interrupted, and the anchored pattern above
+          # would not match it -- so it gets its own alternative rather than a
+          # loosened anchor.
+          bad=$(git ls-files | grep -iE '(^|/)(CHIPS\.dat|tw_settings\.ini)$|(^|/)tw_settings\.ini\.tmp-|\.tws$|^save/' || true)
           if [ -n "$bad" ]; then
             echo "::error::files that must never be committed are tracked:"
             echo "$bad"
@@ -179,8 +184,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fuzz the parsers AND both engines
-        # 60s per target across SIX targets -- four parsers and both engines --
-        # so about six minutes of fuzzing plus the sanitizer compiles. Long
+        # 60s per target across EIGHT targets -- four parsers, both engines, and
+        # two property targets -- so about eight minutes of fuzzing plus the
+        # sanitizer compiles. Long
         # enough to catch a shallow regression on every push, short enough that
         # nobody starts skipping CI. A real soak is FUZZ_SECONDS=600 by hand, or
         # a scheduled job if this ever earns one; it has not, and pretending a
@@ -412,7 +418,7 @@ jobs:
 
       # The oshw-qt layer. It covers the one parser no other layer can reach:
       # readextensions() parses a .ccx ONLY when a main window exists, so batch
-      # mode, the end-to-end cases and all four fuzz targets skip it by
+      # mode, the end-to-end cases and every fuzz target skip it by
       # construction. Before this existed nothing in oshw-qt\ had any coverage.
       #
       # 🔴 THE RUNNER SKIPS WHEN QT IS MISSING, which is right for a developer

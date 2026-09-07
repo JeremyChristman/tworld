@@ -26,8 +26,23 @@ forgiving in some ways and deliberately strict in others, and the differences ma
   stays off.
 - **Unrecognized keys are preserved**, rewritten under an `[Other]` heading rather than dropped, so
   an older build cannot silently eat a newer build's settings.
-- The file is **read once at startup and rewritten on a clean exit**, which means a hand edit takes
-  effect on the next launch and an edit made while the game is running is overwritten.
+- The file is **read once at startup and rewritten every time a setting changes** — not only at
+  exit. A hand edit therefore takes effect on the next launch, and an edit made while the game is
+  running is overwritten, possibly within seconds.
+
+  ⚠ **Corrected jc-53.** This bullet used to say "rewritten on a clean exit", and that had been
+  untrue since jc-31. There are six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:72`, three in
+  `oshw-qt/TWMainWnd.cpp`, and `shutdownsystem()` in `tworld.c` — and the comment at `play.c:338`
+  says why: a setting is written the instant it changes *because* a crash skips the atexit handler.
+  The write frequency is not a detail. It is the whole reason the in-place truncating writer that
+  this file used to describe was a data-loss defect rather than a theoretical one, and stating it
+  wrongly is what let that sit unexamined for twenty-two builds.
+
+- **The write is atomic** (jc-53). The new contents are staged in a sibling file and moved over the
+  target, so an interrupted write leaves the previous settings intact instead of a truncated file.
+  A failure means one change did not stick, never that the file was damaged. See `settings.cpp`'s
+  `savesettings()` for the measured reasoning, including why the retry matters more than the
+  atomicity does.
 
 ## Consequences
 
@@ -45,3 +60,32 @@ forgiving in some ways and deliberately strict in others, and the differences ma
 - A missing file is not an error; the program starts with defaults. Deleting it is the reset.
 - Because the file is rewritten with only the settings actually held, a regenerated file is short.
   A missing line means "use the default".
+
+### What the atomic write does and does not promise (jc-53)
+
+- ✅ **Against process death**: a crash, a kill, or a Windows shutdown that stops the process cannot
+  leave a truncated settings file. Before jc-53 it reliably did — measured, a 289-byte file became
+  0 bytes.
+- ⚠ **NOT against machine death.** Nothing calls `FlushFileBuffers`; that was rejected on a measured
+  6× cost per write, and the write happens on every setting change. So a power loss or a bugcheck in
+  the moment between the staging write and the rename can still leave a short or empty file. NTFS
+  journals the rename's metadata, not the staged data. The promise is "an interrupted *process*
+  leaves the previous settings intact", and it should not be quoted more broadly than that.
+- ⚠ **The file's identity changes on every save.** The replace substitutes a different file rather
+  than writing through the existing one, so anything bound to the old identity is lost: a hardlink
+  or symlink pointing `tw_settings.ini` at a shared config **stops receiving updates** after the
+  first save (measured), and explicit per-file ACLs, alternate data streams and the compression or
+  encryption attributes are replaced by whatever the directory grants. This is inherent to every
+  atomic-save implementation — git and most editors behave the same way — but this file is one users
+  are explicitly invited to manage by hand, so it is worth stating. The read-only *attribute* still
+  works: the replace fails and the file keeps its contents.
+- ⚠ **Staging needs more permission than the old writer did**: creating a file requires write access
+  to the DIRECTORY, where writing the settings file in place needed only write access to the FILE.
+  Where they differ — a directory that denies file creation, or an install path so long that no
+  suffix fits — `savesettings()` **falls back to the old direct write** rather than silently never
+  saving. Measured: without that fallback such a configuration loses 100% of saves, permanently. A
+  merely *blocked* write (a locked destination) deliberately does not fall back; see `settings.cpp`.
+- A staging file, `tw_settings.ini.tmp-<pid>-<seq>`, briefly exists beside the settings file, and a
+  crash mid-write can leave one behind for good. Nothing sweeps them: a blind sweep would race a
+  second instance's in-flight staging file, and one ~200-byte orphan per crash is the cheaper
+  problem. They are gitignored and CI refuses to let one be committed.

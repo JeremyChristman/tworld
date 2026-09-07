@@ -24,6 +24,87 @@ stay attached to something someone can see.
 ## Unreleased
 
 
+## jc-53 — 2026-09-07
+
+**The settings file could be destroyed, and was — this release stops it.** The one file this program
+writes on the user's behalf was rewritten by truncating it in place, so a process stopped mid-write
+left nothing behind. Two defects, both measured rather than argued, plus the first test and the first
+fuzz target `settings.cpp` has ever had.
+
+🔴 **The most valuable finding came from the review, not the fix**: the first version of this change
+was *strictly worse* than the code it replaced in a real configuration — a directory that denies file
+creation while leaving the settings file writable, where staging loses 100% of saves permanently and
+the old writer landed every one. The fallback that closes that is the difference between a fix and a
+regression, and it is the same trap the sibling project fell into once already.
+
+Eight mutations were run against the new code and all eight were caught. The engine is untouched:
+golden master 1,806 digests unchanged, all 18 `NO_FIX_*` witnesses holding.
+
+### Fixed — the settings file is no longer destroyed by an interrupted write
+
+`savesettings()` opened the live `tw_settings.ini` with a truncating `ofstream` and refilled it.
+Between those two moments the user's settings did not exist. **Measured, not argued: killing the
+process inside that window turns a 289-byte settings file into a 0-byte one.**
+
+It is not an exit-time write — six call sites rewrite the file the instant a setting changes,
+*because* a crash skips the atexit handler. And the `settingsUnreadable` latch never covered this:
+it tells *absent* from *will not open*, and a truncated file opens fine, so the next launch reads it
+as "no settings" and the next save writes defaults over what is left.
+
+The file is now rendered in full, staged as a sibling `tw_settings.ini.tmp-<pid>-<seq>`, checked
+*after* `close()` rather than before the flush, and moved into place. Any failure leaves the original
+untouched.
+
+- 🔴 **The retry matters more than the atomicity.** Measured against a scanner holding the
+  destination open: **one move attempt loses 19% of writes, four attempts lose none.** The sibling
+  project shipped this same fix once without a retry and measured 14–83% of writes lost. The backoff
+  steps are deliberately not multiples of each other — a regular pattern measured *worse than no
+  retry at all*, because Windows rounds them onto the same ~15.6 ms tick and they phase-lock with a
+  periodic locker.
+- ⚠ **It falls back rather than being worse than what it replaced.** Staging needs write access to
+  the *directory*; the old writer needed it only on the *file*. In a directory that denies file
+  creation while leaving the settings file writable — measured — the staged write loses **100%** of
+  saves, permanently, where the old one landed every one. So staging that is structurally impossible
+  falls back to the direct write; staging that is merely *blocked* fails closed, because that is
+  when a torn file is most likely.
+- Rejected on measurements, not taste: `MOVEFILE_WRITE_THROUGH` (+34% per write), `FlushFileBuffers`
+  (6×), and `ReplaceFileA` — better at the lock, but with a documented partial failure in which the
+  destination no longer exists.
+- The staging file is written in **text mode** deliberately: the shipped file is CRLF *because* the
+  stream translates `\n`, so writing exact bytes would silently convert every user's file to LF.
+- ⚠ It does not make two instances safe, and it does not promise anything against power loss. See
+  [ADR 0007](docs/adr/0007-settings-live-in-tw-settings-ini.md).
+
+### Fixed — a settings value ending in a carriage return changed itself on every round trip
+
+Found by the new fuzz target on its first real run, in four bytes: `EF 3D 0D 20`.
+
+In `key=value\r   ` the carriage return is *interior* — the line ends in spaces — so the line-level
+strip does not fire, the whitespace trim removes the spaces, and the CR is left as the last byte of
+the value. The writer emits it followed by its own newline, so the next load strips it and gets a
+different value. One round trip through the program silently changed a setting. A carriage return is
+whitespace and now joins all four trim sets.
+
+### Added — the first test for `settings.cpp`, and an eighth fuzz target
+
+`settings.cpp` was the largest file in the tree with no test, and `tw_settings.ini` was the only file
+format here with neither a unit test nor a fuzz target.
+
+- **`test/settings_test.c`** — 109 checks over 48 cases. The parser's tolerances, the typed
+  accessors, the round trip, the staging file, the refusal to overwrite an unreadable file, and a
+  case that **takes a real lock on the destination** and asserts the file survives it.
+- **`test/fuzz/fuzz_settings.cpp`** — the eighth target and the second *property* target: reading is
+  idempotent under writing. `test/run-fuzz.sh` gains a C++ lane for it.
+- Four mutations were run against the new writer and all four were caught: binary mode, a leaked
+  staging file, the old truncating write, and reverting the carriage-return fix.
+
+### Fixed — `res_test.c` left a directory in the source tree on every Windows run
+
+Its cleanup called `remove()`, which deletes a directory on POSIX but **not** on Windows, where
+MSVCRT's handles files only. So the Linux CI job was clean and every Windows run dropped an empty
+`tw_res_test_dir\` wherever it was invoked from. Invisible to `git status`, because git does not
+track empty directories. Now `_rmdir`, and checked rather than ignored.
+
 ### Added — a weekly fuzz soak, with the corpus carried between runs
 
 The `fuzz` job gives each target 60 seconds so pushing stays fast, and its own comment conceded the
@@ -35,7 +116,7 @@ that budget — **jc-47 within seconds, jc-50 at one second, jc-51 at forty-thre
 keeps catching defects right up against itself is telling you there is more past it.
 
 - **`.github/workflows/soak.yml`** — weekly (Sunday 04:17 UTC) plus `workflow_dispatch` with a
-  configurable budget. 15 minutes per target across all seven.
+  configurable budget. 15 minutes per target across all eight.
 - 🔑 **The discovered corpus is cached between runs**, so each soak starts from what the last one
   found instead of re-deriving the same easy coverage forever. That is the difference between
   searching and repeating a smoke test.

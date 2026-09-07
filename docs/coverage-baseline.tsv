@@ -6,11 +6,12 @@ fileio.c	242	120	150	60
 generic/dirinput.c	33	33	45	44
 generic/in.c	167	93	167	85
 lxlogic.c	1073	594	1008	467
-mslogic.c	1654	741	1494	498
+mslogic.c	1654	743	1494	500
 play.c	297	79	130	44
 random.c	43	43	8	8
 res.c	199	82	178	73
-series.c	570	110	311	76
+series.c	571	110	311	76
+settings.cpp	196	179	314	202
 solution.c	444	212	309	93
 tworld.c	1338	39	954	39
 unslist.c	118	107	92	78

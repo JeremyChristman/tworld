@@ -193,6 +193,10 @@ $stdArgs = @("-R", $resDir, "-L", $setsDir, "-D", $dataDir, "-S", $saveDir)
 # this. Recorded now, checked at the end.
 $repoSettings = Join-Path $repo "tw_settings.ini"
 $settingsBefore = if (Test-Path $repoSettings) { (Get-FileHash -LiteralPath $repoSettings -Algorithm SHA256).Hash } else { $null }
+# jc-53: the same, for the staging files savesettings() now creates. Recorded so
+# the check at the end can blame this run only for what THIS run added.
+$repoStraysBefore = @(Get-ChildItem -LiteralPath $repo -File -Filter "tw_settings.ini.tmp-*" -ErrorAction SilentlyContinue |
+                      ForEach-Object { $_.Name } | Sort-Object)
 # The whole sets\ directory, not just the settings file. The generated-.dac leak
 # above was invisible to a check that watched one filename, so this watches the
 # file list.
@@ -378,6 +382,35 @@ Add-Check ($settingsBefore -eq $settingsAfter) `
 $scratchSettings = Join-Path $scratch "tw_settings.ini"
 Add-Check (Test-Path $scratchSettings) `
     "no tw_settings.ini appeared in the scratch directory, so this check proved nothing about where the file lands"
+
+Start-Case "the settings write left no staging file behind"
+# jc-53: savesettings() writes tw_settings.ini.tmp-<pid>-<seq> beside the target
+# and moves it into place. A leftover means an exit path forgot to clean up --
+# which the unit test pins directly, but only this case sees the REAL program
+# doing it, with a real path, at real exit. Cheap, and it is the one artifact
+# this change could scatter across every user's install directory.
+#
+# ⚠ THE REPOSITORY CHECK IS A BEFORE/AFTER COMPARISON, not a count. A crashed
+# debugging session can leave a staging file in the source tree, and a bare
+# count would then fail this run for someone else's litter -- blaming the run in
+# front of you for damage it did not do is exactly the kind of lying test this
+# file exists to avoid. The sets check below has always worked this way; these
+# now match it. ($repoStraysBefore is captured next to $settingsBefore.)
+$strays = @(Get-ChildItem -LiteralPath $scratch -File -Filter "tw_settings.ini.tmp-*" -ErrorAction SilentlyContinue)
+Add-Check ($strays.Count -eq 0) `
+    ("the run left $($strays.Count) settings staging file(s) behind: " +
+     (($strays | ForEach-Object { $_.Name }) -join ', '))
+# Anti-vacuity: the scratch directory must exist, or the check above proved
+# nothing -- Get-ChildItem on a missing path returns empty and reads as clean.
+Add-Check (Test-Path -LiteralPath $scratch) `
+    "the scratch directory is gone, so the staging-file check proved nothing"
+$repoStraysAfter = @(Get-ChildItem -LiteralPath $repo -File -Filter "tw_settings.ini.tmp-*" -ErrorAction SilentlyContinue |
+                     ForEach-Object { $_.Name } | Sort-Object)
+$newRepoStrays = @(Compare-Object $repoStraysBefore $repoStraysAfter |
+                   Where-Object { $_.SideIndicator -eq '=>' } | ForEach-Object { $_.InputObject })
+Add-Check ($newRepoStrays.Count -eq 0) `
+    ("the run added $($newRepoStrays.Count) settings staging file(s) to the repository root: " +
+     ($newRepoStrays -join ', '))
 
 Start-Case "nothing added a generated .dac to the repository's sets directory"
 $repoSetsAfter = @(Get-ChildItem -LiteralPath (Join-Path $repo "sets") -File | ForEach-Object { $_.Name } | Sort-Object)

@@ -126,8 +126,30 @@ mkdir -p "$FINDINGS"
 fail=0
 ran=0
 
-for target in test/fuzz/fuzz_*.c; do
-    name="$(basename "$target" .c)"
+# A target is C or C++ depending on what it compiles in, and the two need
+# different compilers and different dialects.
+#
+# 🔴 THIS IS NOT A PREFERENCE. settings.cpp is C++ -- std::map, std::ifstream --
+# and CMake compiles it only as C++, so a target over it must be C++ too. The
+# reverse is equally forced: fileio.c, solution.c, mslogic.c and anything using
+# err.h's x_alloc rely on C's implicit void* conversion, which C++ rejects
+# outright, so the C targets cannot simply all be built with clang++ (ADR 0004
+# says the same thing about the unit tests).
+CXX="${CXX:-clang++}"
+
+if ! command -v "$CXX" > /dev/null 2>&1; then
+    echo "no $CXX on PATH -- the C++ targets need it; install it or set CXX"
+    exit 1
+fi
+
+for target in test/fuzz/fuzz_*.c test/fuzz/fuzz_*.cpp; do
+    # An unmatched glob expands to itself; skip it rather than failing on a
+    # filename that does not exist.
+    [ -e "$target" ] || continue
+    case "$target" in
+        *.cpp) name="$(basename "$target" .cpp)"; cc="$CXX"; std="-std=gnu++11" ;;
+        *)     name="$(basename "$target" .c)";   cc="$CC";  std="-std=gnu11" ;;
+    esac
     short="${name#fuzz_}"
     if [ -n "$FILTER" ] && [ "${short#*"$FILTER"}" = "$short" ]; then continue; fi
 
@@ -135,7 +157,7 @@ for target in test/fuzz/fuzz_*.c; do
     mkdir -p "$corpus"
     exe="$OUT/$name"
 
-    if ! $CC -std=gnu11 -g -O1 -I test/stub $PORT \
+    if ! $cc $std -g -O1 -I test/stub $PORT \
             -fsanitize=fuzzer,address,undefined \
             -fno-omit-frame-pointer \
             -o "$exe" "$target" 2> "$OUT/$name.cc.log"; then
