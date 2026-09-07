@@ -641,16 +641,16 @@ static void test_unreadable(void)
     snprintf(dirpath, sizeof dirpath, "%s/unreadable", scratchdir);
 #ifdef WIN32
     (void)removedir(dirpath);
-    CHECK_MSG(makedir(dirpath), "could not create %s", dirpath);
+    CHECK_MSG(makedir(dirpath), "could not create %.100s", dirpath);
 #else
     {
 	FILE   *f = fopen(dirpath, "wb");
-	CHECK_MSG(f != NULL, "could not create %s", dirpath);
+	CHECK_MSG(f != NULL, "could not create %.100s", dirpath);
 	if (f) {
 	    fputs("volume=8\n", f);
 	    fclose(f);
 	}
-	CHECK_MSG(chmod(dirpath, 0) == 0, "could not chmod %s to 0", dirpath);
+	CHECK_MSG(chmod(dirpath, 0) == 0, "could not chmod %.100s to 0", dirpath);
     }
 #endif
 
