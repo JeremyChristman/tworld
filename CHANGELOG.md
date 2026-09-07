@@ -23,6 +23,47 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Added — first tests for `generic/tile.c` and `score.cpp`, the last two untested files with substance
+
+Neither changes the executable; both close the pattern that has been paying since jc-43. **Every file
+in this tree that received its first test yielded something** — the `.dac` parser gave jc-48,
+`TWTextCoder` a shipped off-by-one in jc-52, `play.c` a broken `#ifdef`, `settings.cpp` two defects in
+jc-54. These two are where that pattern runs out: what remains untested afterwards is the Qt GUI,
+where a person looking at the screen is the better oracle.
+
+- **`test/tile_test.c`** — 3,270 checks over 23 cases. 🔴 **`tile.c` is a parser wearing drawing
+  code's clothes**: `loadtileset()` takes a user-supplied bitmap and picks a format from raw
+  dimension arithmetic, and the filename reaches it from `tw_settings.ini`. The important case pins
+  **jc-42's non-positive tile-size guard** — without it a malformed sheet yields a zero tile height,
+  the row-advance loop steps by zero, and the program *hangs*. That guard had no test. Also pinned:
+  the three-way format dispatch and its order (all three are live — `res/tiles.bmp` is small,
+  `res/atiles.bmp` is large, and a masked sheet is one download away), and that a load refused on
+  dimensions leaves the tileset you were already using alone.
+- **`test/score_test.c`** — 72 checks over 20 cases, covering the two number formatters, the scoring
+  formula, and the shape of both tables. Pins the **hand-written negation that makes `LONG_MIN` work**
+  (`-number` there is undefined, and the workaround looks exactly like something to tidy away) and the
+  comma rule, which is written as `i % 4` over a counter incremented twice per group.
+
+⚠ **Two things this work established that are worth more than the tests**, because both look like
+defects and are not:
+
+- The tile table `tileidmap[]` is declared `[NTILES]` = 128 with **116 entries written**, so twelve
+  are zero-filled — and their `xtransp` is `0`, the value meaning "this tile HAS a transparent
+  image", not `-1`. The loaders really do execute them. It is harmless **only** because tile id 0 is
+  `Nothing`; `Empty` is `0x01`. Renumber the ids and those twelve would silently overwrite a real
+  tile with a NULL opaque surface, which `getcellimage()` blits with no NULL check. There is now a
+  case asserting exactly that.
+- `TW_NewSurface()` **cannot return NULL** — the shipped front end builds surfaces with `new`, which
+  throws. A test fake that returned NULL "to cover the failure path" made `tile.c` look like it was
+  missing a check when it was the fake breaking the contract. jc-42's `free-before-failing` guards
+  are therefore correct to have and **not reachable**; that is recorded rather than faked.
+
+Also found and left alone: `extractmaskedtile()` computes and advances a pointer it never reads —
+dead arithmetic per row of every masked tile, upstream's, with no effect. Suppressed with a reason
+rather than edited, because this was a test-only change.
+
+Eleven mutations were run across the two files and all eleven were caught.
+
 
 ## jc-54 — 2026-09-07
 

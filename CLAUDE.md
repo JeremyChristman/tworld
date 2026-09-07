@@ -204,7 +204,7 @@ run-tests.ps1              entry point: runs ALL FIVE layers below
   test\run-nofix.ps1       the NO_FIX_* differential matrix
 ```
 
-Current state: **16 unit runs, 17,641 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
+Current state: **18 unit runs, 21,008 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
 Two of those five need no test harness at all — they link the engines the way `tworld2` does and
