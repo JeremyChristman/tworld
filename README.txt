@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-53
+  Tile World  --  Jeremy Christman's fork                    build jc-54
 ==============================================================================
 
   1. What this is
@@ -443,7 +443,7 @@ nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
 
-jc-53  --  Your settings file can no longer be destroyed by a crash
+jc-54  --  Your settings file can no longer be destroyed by a crash
 --------------------------------------------------------------------
 
   * THE GAME NO LONGER EMPTIES tw_settings.ini IF IT IS STOPPED WHILE

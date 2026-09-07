@@ -12,15 +12,15 @@
 #include <sys/stat.h>   /* MOD (Jeremy): tell "absent" apart from "exists but will not open" */
 
 #include <cctype>       /* MOD (Jeremy, jc-37): tolower(), for settingoptedin() */
-#include <cerrno>       /* MOD (Jeremy, jc-53): the rename() failure code, on non-Windows */
-#include <cstdio>       /* MOD (Jeremy, jc-53): remove(), rename() -- the atomic write */
+#include <cerrno>       /* MOD (Jeremy, jc-54): the rename() failure code, on non-Windows */
+#include <cstdio>       /* MOD (Jeremy, jc-54): remove(), rename() -- the atomic write */
 #include <cstdlib>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <utility>
 
-/* MOD (Jeremy, jc-53): MoveFileExA, for the atomic replace in savesettings().
+/* MOD (Jeremy, jc-54): MoveFileExA, for the atomic replace in savesettings().
  *
  * Included LAST and only here. WIN32_LEAN_AND_MEAN keeps it to the kernel
  * surface; NOMINMAX is deliberately NOT defined because MinGW's
@@ -138,7 +138,7 @@ static char const *settingsdir(void)
 #endif
 }
 
-/* MOD (Jeremy, jc-53): read key=value lines out of any stream.
+/* MOD (Jeremy, jc-54): read key=value lines out of any stream.
  *
  * Split out of loadsettings() so the fuzz target can drive the real parser against an in-memory
  * stream (test/fuzz/fuzz_settings.cpp) rather than a file per execution. Nothing about the rules
@@ -166,7 +166,7 @@ static void parsesettings(std::istream &in, map<string, string> &newsettings)
          * (and "1\r" does not parse as an int); [Section] headers and ; or # comments are skipped
          * so the file can be laid out and annotated for a human reader.
          *
-         * ⚠ jc-53: THIS LINE IS NOW REDUNDANT, and is kept only as belt-and-braces. Adding '\r' to
+         * ⚠ jc-54: THIS LINE IS NOW REDUNDANT, and is kept only as belt-and-braces. Adding '\r' to
          * the four trim sets below subsumes it completely -- a carriage return leading, before the
          * '=', after the '=', or at the end of the line is now handled there. Measured rather than
          * assumed: with this strip deleted the suite still passes, and an exhaustive differential
@@ -177,7 +177,7 @@ static void parsesettings(std::istream &in, map<string, string> &newsettings)
         if (!line.empty() && line[line.size() - 1] == '\r')
             line.erase(line.size() - 1);
 
-        /* MOD (Jeremy, jc-53): '\r' belongs in the whitespace set, and leaving it out was a defect
+        /* MOD (Jeremy, jc-54): '\r' belongs in the whitespace set, and leaving it out was a defect
          * that the new fuzz target found on its first real run.
          *
          * The strip above removes a carriage return only at the very END of the line, which covers
@@ -218,7 +218,7 @@ static void parsesettings(std::istream &in, map<string, string> &newsettings)
             /* Trailing whitespace is trimmed too. It is invisible in an editor, and it is not
              * harmless: "MO3.dat-ms.dac " simply fails to reopen the set with no explanation.
              *
-             * ⚠ Corrected jc-53: this comment used to say selectedseries "is used as a filename
+             * ⚠ Corrected jc-54: this comment used to say selectedseries "is used as a filename
              * verbatim". It is not, and the distinction matters to anyone assessing what a hostile
              * settings file can do. Its only use is the strcmp against the ENUMERATED set list at
              * tworld.c:1963 -- a match key, never a path handed to an open. A trailing space makes
@@ -260,7 +260,7 @@ void loadsettings()
     map<string, string> newsettings;
     parsesettings(in, newsettings);
 
-    /* MOD (Jeremy, jc-53): a read that stopped early now LATCHES, it does not merely complain.
+    /* MOD (Jeremy, jc-54): a read that stopped early now LATCHES, it does not merely complain.
      *
      * getline() ends the loop either at end of file -- which sets eofbit, including for a last line
      * with no newline -- or on a read error. So reaching here without eofbit means the file has
@@ -280,7 +280,7 @@ void loadsettings()
         settingsUnreadable = true;
     }
 
-    /* MOD (Jeremy, jc-53): a settings file that opens and yields NO KEYS is deliberately NOT
+    /* MOD (Jeremy, jc-54): a settings file that opens and yields NO KEYS is deliberately NOT
      * reported, and deliberately not treated as unreadable.
      *
      * It is the one damaged state this module cannot recognize -- a zero-length file opens, parses,
@@ -298,7 +298,7 @@ void loadsettings()
     settings = move(newsettings);
 }
 
-/* MOD (Jeremy, jc-53): render the whole file into a stream, composing nothing on disk.
+/* MOD (Jeremy, jc-54): render the whole file into a stream, composing nothing on disk.
  *
  * Split out of savesettings() so that the bytes exist in full BEFORE anything touches the
  * destination -- which is the entire point of the atomic write below -- and so that the fuzz target
@@ -358,7 +358,7 @@ static void rendersettings(std::ostream &out)
 
 namespace
 {
-    /* MOD (Jeremy, jc-53): the staging file, removed on every path out of savesettings() that does
+    /* MOD (Jeremy, jc-54): the staging file, removed on every path out of savesettings() that does
      * not hand it over to the replace. This is the language's `finally`: the alternative is
      * remove(tmp) repeated on four exit paths, which is how one of them gets missed. */
     struct TempFile
@@ -386,7 +386,7 @@ namespace
     };
 }
 
-/* MOD (Jeremy, jc-53): put `src` where `dest` is, atomically, without ever leaving `dest` absent or
+/* MOD (Jeremy, jc-54): put `src` where `dest` is, atomically, without ever leaving `dest` absent or
  * half-written.
  *
  * WINDOWS. rename() over an existing file simply FAILS here (measured: -1 from MSVCRT), so
@@ -421,7 +421,7 @@ namespace
  *     function's one promise is that a failure leaves the original untouched, and ReplaceFile
  *     cannot make that promise. It also cannot create an absent destination, so a first run would
  *     need MoveFileEx anyway. Losing three lock cases is the price of never destroying the file. */
-/* MOD (Jeremy, jc-53): the staging file's name, "<destination>.tmp-<pid>-<seq>".
+/* MOD (Jeremy, jc-54): the staging file's name, "<destination>.tmp-<pid>-<seq>".
  *
  * The shape matches the sibling project's exactly (SuccPaths.java): the two programs live in one
  * folder, and somebody reading a directory listing should see one pattern rather than two.
@@ -476,7 +476,7 @@ static bool replacefile(char const *src, char const *dest, unsigned long *err)
 #endif
 }
 
-/* MOD (Jeremy, jc-53): write the settings file by staging it and replacing it, never by truncating
+/* MOD (Jeremy, jc-54): write the settings file by staging it and replacing it, never by truncating
  * it in place.
  *
  * WHAT WAS WRONG. This function used to open the live tw_settings.ini with a truncating ofstream and

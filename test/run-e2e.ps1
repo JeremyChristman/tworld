@@ -193,7 +193,7 @@ $stdArgs = @("-R", $resDir, "-L", $setsDir, "-D", $dataDir, "-S", $saveDir)
 # this. Recorded now, checked at the end.
 $repoSettings = Join-Path $repo "tw_settings.ini"
 $settingsBefore = if (Test-Path $repoSettings) { (Get-FileHash -LiteralPath $repoSettings -Algorithm SHA256).Hash } else { $null }
-# jc-53: the same, for the staging files savesettings() now creates. Recorded so
+# jc-54: the same, for the staging files savesettings() now creates. Recorded so
 # the check at the end can blame this run only for what THIS run added.
 $repoStraysBefore = @(Get-ChildItem -LiteralPath $repo -File -Filter "tw_settings.ini.tmp-*" -ErrorAction SilentlyContinue |
                       ForEach-Object { $_.Name } | Sort-Object)
@@ -384,7 +384,7 @@ Add-Check (Test-Path $scratchSettings) `
     "no tw_settings.ini appeared in the scratch directory, so this check proved nothing about where the file lands"
 
 Start-Case "the settings write left no staging file behind"
-# jc-53: savesettings() writes tw_settings.ini.tmp-<pid>-<seq> beside the target
+# jc-54: savesettings() writes tw_settings.ini.tmp-<pid>-<seq> beside the target
 # and moves it into place. A leftover means an exit path forgot to clean up --
 # which the unit test pins directly, but only this case sees the REAL program
 # doing it, with a real path, at real exit. Cheap, and it is the one artifact

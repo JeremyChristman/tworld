@@ -248,7 +248,7 @@ Two more layers do not run from `run-tests.ps1`, because neither can run on Wind
   `fuzz_rc.c` re-derives the tileset-name rule independently and aborts on disagreement (a guard
   that wrongly returns TRUE does not crash) — it found jc-47 on its first run, a 64-byte leak in
   `prepareplayback()`; and `fuzz_settings.cpp` asserts that reading `tw_settings.ini` is idempotent
-  under writing it, and found a real defect on ITS first run too (jc-53, a value ending in a
+  under writing it, and found a real defect on ITS first run too (jc-54, a value ending in a
   carriage return did not survive its own round trip).
   ⚠ **`fuzz_settings.cpp` is C++ and the script has two lanes for that reason.** `settings.cpp` is
   C++ and CMake compiles it only as C++; the C targets, conversely, cannot be built as C++ at all
@@ -520,7 +520,7 @@ a red X. `-CheckBaseline` exists for a release to assert the documented numbers 
 ## 6. `tw_settings.ini`
 
 A plain `name=value` INI file, read **once at startup** and rewritten **every time a setting
-changes** — six call sites, not just at exit (corrected in jc-53; the old wording said "on a clean
+changes** — six call sites, not just at exit (corrected in jc-54; the old wording said "on a clean
 exit" and had been wrong since jc-31).
 See [`docs/adr/0007`](docs/adr/0007-settings-live-in-tw-settings-ini.md).
 

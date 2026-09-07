@@ -33,7 +33,7 @@ jobs:
           # .gitignore covers all of these, but .gitignore does nothing about
           # `git add -f`, and that is exactly what happens while reproducing a
           # bug with someone's solution file.
-          # tw_settings.ini.tmp-<pid>-<seq> is the jc-53 staging file. It is
+          # tw_settings.ini.tmp-<pid>-<seq> is the jc-54 staging file. It is
           # personal state exactly as the settings file is, it only ever exists
           # because a write was interrupted, and the anchored pattern above
           # would not match it -- so it gets its own alternative rather than a

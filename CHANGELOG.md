@@ -24,7 +24,16 @@ stay attached to something someone can see.
 ## Unreleased
 
 
-## jc-53 — 2026-09-07
+## jc-54 — 2026-09-07
+
+> ⚠ **`jc-53` is a burned tag: it exists in the repository and nothing was ever published under
+> it.** It was tagged, and the release build then failed on a compiler diagnostic that the
+> maintainer's machine cannot produce — local gcc is 16.1.0 and `docs/toolchain.lock` pins CI to
+> 16.2.0, and `-Wformat-truncation` differs between them, so a clean local run was not proof the
+> pinned compiler agreed. The tag ruleset forbids moving or deleting a `jc-*` tag (deliberately —
+> that is what makes a published tag mean something), so the corrected build ships as jc-54.
+> **No executable ever reported jc-53.** The lesson is in the release notes rather than hidden:
+> the only compiler whose opinion counts is the pinned one.
 
 **The settings file could be destroyed, and was — this release stops it.** The one file this program
 writes on the user's behalf was rewritten by truncating it in place, so a process stopped mid-write

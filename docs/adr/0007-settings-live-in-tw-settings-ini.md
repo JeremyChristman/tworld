@@ -30,7 +30,7 @@ forgiving in some ways and deliberately strict in others, and the differences ma
   exit. A hand edit therefore takes effect on the next launch, and an edit made while the game is
   running is overwritten, possibly within seconds.
 
-  ⚠ **Corrected jc-53.** This bullet used to say "rewritten on a clean exit", and that had been
+  ⚠ **Corrected jc-54.** This bullet used to say "rewritten on a clean exit", and that had been
   untrue since jc-31. There are six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:72`, three in
   `oshw-qt/TWMainWnd.cpp`, and `shutdownsystem()` in `tworld.c` — and the comment at `play.c:338`
   says why: a setting is written the instant it changes *because* a crash skips the atexit handler.
@@ -38,7 +38,7 @@ forgiving in some ways and deliberately strict in others, and the differences ma
   this file used to describe was a data-loss defect rather than a theoretical one, and stating it
   wrongly is what let that sit unexamined for twenty-two builds.
 
-- **The write is atomic** (jc-53). The new contents are staged in a sibling file and moved over the
+- **The write is atomic** (jc-54). The new contents are staged in a sibling file and moved over the
   target, so an interrupted write leaves the previous settings intact instead of a truncated file.
   A failure means one change did not stick, never that the file was damaged. See `settings.cpp`'s
   `savesettings()` for the measured reasoning, including why the retry matters more than the
@@ -61,10 +61,10 @@ forgiving in some ways and deliberately strict in others, and the differences ma
 - Because the file is rewritten with only the settings actually held, a regenerated file is short.
   A missing line means "use the default".
 
-### What the atomic write does and does not promise (jc-53)
+### What the atomic write does and does not promise (jc-54)
 
 - ✅ **Against process death**: a crash, a kill, or a Windows shutdown that stops the process cannot
-  leave a truncated settings file. Before jc-53 it reliably did — measured, a 289-byte file became
+  leave a truncated settings file. Before jc-54 it reliably did — measured, a 289-byte file became
   0 bytes.
 - ⚠ **NOT against machine death.** Nothing calls `FlushFileBuffers`; that was rejected on a measured
   6× cost per write, and the write happens on every setting change. So a power loss or a bugcheck in
