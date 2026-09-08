@@ -129,7 +129,7 @@ int main(void)
     int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(60);
+    tw_expect_atleast(70);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {
@@ -568,6 +568,128 @@ int main(void)
 		  teststate.map[0].top.id);
 	CHECK_MSG((teststate.statusflags & SF_BADTILES) != 0,
 		  "tile code 0x70 was accepted as a real tile");
+    }
+
+    tw_case("🔴 tile code 0x70 in the LOWER layer too");
+    {
+	/* The mirror of the case above, and it is not redundant: the bound is
+	 * written twice, once per layer, and mutating ONLY the lower one
+	 * (encoding.c:254) survived the upper layer's case -- measured. jc-44's
+	 * whole defect was a bound that was correct in one of a matched pair
+	 * and two bytes short in the other. Never test one half of a pair. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 5; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 5; raw[n++] = 0x70;   /* == the table size */
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.map[0].bot.id == Wall,
+		  "tile code 0x70 in the lower layer decoded to %d instead of"
+		  " Wall: fileids[112] was read one past the end of the table",
+		  teststate.map[0].bot.id);
+	CHECK_MSG((teststate.statusflags & SF_BADTILES) != 0,
+		  "tile code 0x70 in the lower layer was accepted as a real tile");
+    }
+
+    /* ================================================================== *
+     * 4. The optional-fields block, and the one clamp holding it in.
+     * ================================================================== */
+
+    tw_case("🔴 an optional field claiming more bytes than remain is CLAMPED");
+    {
+	/* THE LAST UNTESTED MEMORY-SAFETY BOUND IN THIS PARSER, and the one
+	 * with the widest blast radius. After the two map layers comes a run
+	 * of [type][size][payload] records, and `size` is ONE BYTE FROM THE
+	 * FILE -- up to 255 -- while the payload actually present may be far
+	 * shorter. Exactly one line stops that:
+	 *
+	 *     if (data + size > dataend)
+	 *         size = dataend - data;
+	 *
+	 * Replace it with `if (0)` and the unit suite AND the sanitize layer
+	 * both stay green -- measured. What it holds in:
+	 *
+	 *   field 4  trapcount   = size / 10, then reads 10 bytes per entry
+	 *   field 5  clonercount = size / 8,  then 8 bytes per entry
+	 *   field 7  memcpy(state->hinttext, data, size)   <- 255 bytes, flat
+	 *   field 10 crlistcount = size / 2,  then 2 bytes per entry
+	 *
+	 * ⚠ THE ORACLE IS trapcount, NOT A CRASH. Every one of those is a
+	 * READ past the end of the record; none writes out of bounds
+	 * (hinttext is 256 and size caps at 255), so nothing faults and the
+	 * trapping sanitizer sees nothing. But trapcount is computed straight
+	 * from the clamped size and is sitting in the gamestate afterwards,
+	 * so it says precisely how far the parser was willing to walk.
+	 *
+	 * A field 4 declaring 250 bytes with 4 actually present: clamped, that
+	 * is 4/10 = 0 traps. Unclamped it is 25, and the loop reads 250 bytes
+	 * beyond the record to fill them. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;    /* level number */
+	put16(raw + n, 0);      n += 2;    /* time */
+	put16(raw + n, 0);      n += 2;    /* chips */
+	put16(raw + n, 1);      n += 2;    /* detail */
+	/* Both layers complete -- 4*255 + 4 == 1024 -- so the only warnings
+	 * this record can raise are the ones under test. */
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	/* Metadata: one field, type 4, DECLARING 250 bytes, carrying 4. */
+	put16(raw + n, 6);      n += 2;    /* 2 header + 4 payload */
+	raw[n++] = 4;                      /* field type: trap wiring */
+	raw[n++] = 250;                    /* the lie */
+	raw[n++] = 0; raw[n++] = 0; raw[n++] = 0; raw[n++] = 0;
+
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.trapcount == 0,
+		  "an optional field declared 250 bytes with 4 present and the"
+		  " parser built %d trap(s) from it -- it read %d bytes past the"
+		  " end of the record. The clamp at encoding.c is gone.",
+		  teststate.trapcount, teststate.trapcount * 10);
+    }
+
+    tw_case("...and a well-formed optional field is still parsed in full");
+    {
+	/* The other half. A clamp that discarded every field would satisfy the
+	 * case above and quietly stop traps, cloners and monster lists from
+	 * loading at all -- which is a far worse bug than the one being
+	 * guarded against, and would not crash either. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 12);     n += 2;    /* 2 header + 10 payload */
+	raw[n++] = 4;                      /* field type: trap wiring */
+	raw[n++] = 10;                     /* exactly one entry, honestly sized */
+	/* One entry: from (3,3), to (7,7). readpos reads the x byte at +0/+4
+	 * and the y byte at +2/+6; the rest of the ten bytes are unused. */
+	raw[n++] = 3; raw[n++] = 0; raw[n++] = 3; raw[n++] = 0;
+	raw[n++] = 7; raw[n++] = 0; raw[n++] = 7; raw[n++] = 0;
+	raw[n++] = 0; raw[n++] = 0;
+
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.trapcount == 1,
+		  "a correctly sized field 4 produced %d traps, not 1 -- the"
+		  " clamp is discarding valid data", teststate.trapcount);
+	if (teststate.trapcount == 1) {
+	    CHECK_INT(teststate.traps[0].from, 3 + CXGRID * 3);
+	    CHECK_INT(teststate.traps[0].to, 7 + CXGRID * 7);
+	}
     }
 
     tw_case("fileidtotileid maps the codes the row-32 cloner glitch relies on");

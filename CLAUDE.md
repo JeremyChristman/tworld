@@ -220,10 +220,10 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **18 unit runs, 21,110 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
+Current state: **18 unit runs, 21,119 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 21,110 AS A MEASURE OF REACH. Three files are 94% of it.**
+🔴 **DO NOT READ 21,119 AS A MEASURE OF REACH. Three files are 94% of it.**
 `random_test.c` alone is **15,534** — 73.6%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 3,270 and `solution_test.c` 1,207. That leaves about
 **1,100 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,

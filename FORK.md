@@ -1322,13 +1322,58 @@ exactly what's mine:
    exist. A report-only C++ pass was added; report-only because a never-triaged first run of a
    linter must not be able to block a release.
 
+39. **The optional-fields clamp, and the other half of a matched pair** (`test/encoding_test.c`).
+   The two items jc-57's audit left open, both in the untrusted `.dat` parser, both surviving the
+   unit suite *and* the sanitize layer that had just been added.
+
+   **The clamp.** After the two map layers, `expandmsdatlevel()` walks a run of
+   `[type][size][payload]` records in which **`size` is one byte taken straight from the file** — up
+   to 255 — while the payload actually present may be a handful of bytes. Exactly one line reconciles
+   those:
+
+   ```c
+   if (data + size > dataend)
+       size = dataend - data;
+   ```
+
+   Replace it with `if (0)` and nothing failed. What it holds in is not marginal:
+
+   | field | what an unclamped `size` buys |
+   |---|---|
+   | 4 | `trapcount = size / 10`, then **ten bytes read per entry** |
+   | 5 | `clonercount = size / 8`, then eight per entry |
+   | 7 | `memcpy(state->hinttext, data, size)` — up to 255 bytes, flat |
+   | 10 | `crlistcount = size / 2`, then two per entry |
+
+   🔴 **THE ORACLE IS `trapcount`, AND THE REASON IS WORTH KEEPING.** Every one of those is a READ
+   past the end of the record; none of them writes out of bounds, because `hinttext` is 256 bytes and
+   `size` cannot exceed 255. So nothing faults, ASan would need the record to sit at the end of an
+   allocation, and the trapping UBSan layer sees nothing at all — the same "not detected because not
+   *unsafe enough*" shape as jc-50's `.rodata` read. But `trapcount` is computed directly from the
+   clamped size and is still sitting in the gamestate afterwards. A field declaring 250 bytes with 4
+   present is **0 traps clamped and 25 unclamped**, and 25 traps is the parser stating that it read
+   250 bytes it did not have.
+
+   **The pair.** jc-57 added the `0x70` case — 112 is the first tile code past a 112-entry
+   `fileids[]`, and the only value that distinguishes `id >= size` from `id > size` — and wrote it
+   against the **upper** map layer only. Mutating `encoding.c:254`, the lower layer's copy, survived
+   it. That bound exists once per layer, and jc-44's entire defect was a bound that was right in one
+   of a matched pair and two bytes short in the other. ⚠ **When a guard appears twice, a case for one
+   copy is a case for neither** — the surviving copy is exactly where the next defect goes.
+
+   Both additions carry a paired control, for the reason recorded on the jc-44 cases: a clamp that
+   discarded every field, or a bound that rejected every tile, would satisfy the failing half of each
+   case while quietly stopping traps, cloners and monster lists from loading at all. That is a worse
+   defect than the one being guarded against, it does not crash either, and only the positive case
+   catches it.
+
 
 ## Testing
 
-**`run-tests.ps1` at the repository root is the entry point.** It runs the unit and end-to-end
-layers, plus the Qt layer when Qt's pkg-config data is present (it SKIPS cleanly when it is not --
-that skip becoming a failure is what cost the jc-49 release). The golden master runs separately, as
-do the Linux-only sanitizer and fuzz layers.
+**`run-tests.ps1` at the repository root is the entry point.** It runs **six** layers: unit,
+sanitize, end-to-end, Qt, golden master and the `NO_FIX_*` differential matrix. The Qt layer SKIPS
+cleanly when Qt's pkg-config data is absent — that skip becoming a failure is what cost the jc-49
+release. Only the ASan and fuzz layers are separate, being Linux-only.
 
 | Layer | Script | Needs | What it covers |
 |---|---|---|---|
@@ -1336,6 +1381,7 @@ do the Linux-only sanitizer and fuzz layers.
 | end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
 | golden master | `test/run-golden.ps1` | a C compiler | 🔴 **the only automated check that can see an engine behavior change**: all 903 committed levels through BOTH engines, deterministic input, gamestate hashed every tick |
 | differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 32 `NO_FIX_*` desync toggles**: for 18 of them, a committed input that provably tells a fix-on build from a fix-off one |
+| sanitize | `test/run-tests.ps1 -Sanitize` | a C compiler | 🔴 **the only local layer that can see a memory-safety guard being deleted**: the same unit cases under a trapping UndefinedBehaviorSanitizer, ~11 s. Added jc-57, after an audit reverted jc-50 wholesale with every other layer green. ⚠ An ORACLE, not coverage — it sees only what a test actually executes |
 
 As of 2026-09-06: **15 unit runs / 17,531 checks, 12 end-to-end cases / 35 checks, and 2 Qt runs / 116
 checks, 0 failures.**

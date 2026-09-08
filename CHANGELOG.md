@@ -21,6 +21,37 @@ stay attached to something someone can see.
 
 ---
 
+## Unreleased
+
+### Added — the last two untested memory-safety bounds in the `.dat` parser
+
+Follow-on from jc-57's audit. Both were on the "still undone" list, both survived the unit suite
+**and** the new sanitize layer, and neither changes the executable — so this rides along with the
+next release that a user can observe.
+
+- 🔴 **The optional-fields clamp had no test, and it is the one with the widest reach.** After the
+  two map layers comes a run of `[type][size][payload]` records where **`size` is a single byte from
+  the file** and the payload actually present may be far shorter. One line holds that in:
+  `if (data + size > dataend) size = dataend - data;`. Replace it with `if (0)` and everything
+  stayed green. What it guards: field 4 (`trapcount = size / 10`, ten bytes read per entry), field 5
+  (cloners), field 10 (creature list), and **field 7 — a flat `memcpy(state->hinttext, data, size)`
+  of up to 255 bytes**. Every one is a read past the end of the record.
+
+  ⚠ **The oracle is `trapcount`, not a crash.** None of those writes out of bounds — `hinttext` is
+  256 and `size` caps at 255 — so nothing faults and the trapping sanitizer sees nothing. A field
+  declaring 250 bytes with 4 present yields 0 traps clamped and **25 unclamped**, which is the
+  parser announcing exactly how far past the record it was prepared to walk.
+
+- **The lower map layer's `fileids[]` bound was still uncovered.** jc-57 added the `0x70` boundary
+  case — 112 is the first value past a 112-entry table, and the only one that tells `>=` from `>` —
+  but wrote it against the *upper* layer only. Mutating `encoding.c:254` alone survived. The bound
+  is written once per layer, and jc-44's entire defect was a bound correct in one of a matched pair
+  and two bytes short in the other. **Never test one half of a pair.**
+
+Both cases have a paired control, because a clamp that discarded every field, or a bound that
+rejected every tile, would satisfy the failing half and quietly stop traps and cloners loading at
+all — a worse bug than the one being guarded, and equally silent.
+
 ## jc-57 — 2026-09-08
 
 An adversarial audit was pointed at this repository with no context and told to assume the
