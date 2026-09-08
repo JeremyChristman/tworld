@@ -119,6 +119,20 @@ if (-not $Data) {
 $checks = 0
 $failures = @()
 
+# 🔴 WHAT THE FINAL SENTENCE IS ALLOWED TO CLAIM.
+#
+# The success line used to be unconditional prose -- "the packaged jc-N runs,
+# replays real solutions, and plays" -- printed identically whether or not
+# either of those two things had happened. An audit produced it with ZERO
+# solutions replayed and no GUI, exit 0. A gate that describes work it did not
+# do is worse than one that stays quiet, because the sentence is what a person
+# reads instead of the checklist above it.
+#
+# These are set only where the work actually completes, and the closing message
+# is assembled from them.
+$script:replayedSets = 0
+$script:guiRan = $false
+
 function Check([string]$what, [bool]$ok, [string]$detail = "") {
     $script:checks++
     if ($ok) {
@@ -293,10 +307,26 @@ try {
     } else {
         # The collection was copied into the scratch install above.
         foreach ($set in $Sets) {
-            if (-not (Test-Path (Join-Path $scratch "sets\$set"))) {
-                Write-Host ("  --    SKIPPED: {0} is not in the collection" -f $set) -ForegroundColor Yellow
-                continue
-            }
+            # 🔴 NOT A SKIP EITHER. THE BRANCH ABOVE WAS FIXED AND THIS ONE,
+            # ONE LEVEL DOWN, WAS LEFT DOING THE SAME THING.
+            #
+            # An adversarial audit pointed a real collection at this gate whose
+            # .dac files were simply named differently from the two defaults:
+            #
+            #   --    SKIPPED: CCLP1.dat-ms.dac is not in the collection
+            #   --    SKIPPED: CCLP1.dat-lynx.dac is not in the collection
+            #   ########## 11 check(s), 0 failure(s) ##########
+            #     the packaged jc-56 runs, replays real solutions, and plays
+            #
+            # Exit 0, having replayed NOTHING, under a sentence asserting it had.
+            # "The collection exists" and "the collection contains the sets this
+            # gate was told to verify" are different facts, and only the first
+            # was checked. -Sets and -NoSolutions are how you say you meant it.
+            Check ("{0}: present in the collection to replay" -f $set) `
+                  (Test-Path (Join-Path $scratch "sets\$set")) `
+                  ("{0} is not in {1}. Name what your collection actually has with" -f $set, $Data +
+                   " -Sets, or pass -NoSolutions to run the gate reduced and on purpose.")
+            if (-not (Test-Path (Join-Path $scratch "sets\$set"))) { continue }
             $r = RunExe @("-b", "-r", "-S", (Join-Path $scratch "save"),
                           "-L", "sets", "-D", "data", "-R", "res", $set) ("verify-" + $set)
             # ⚠ Batch verify's EXIT CODE IS NOT A VERDICT -- it is only one with
@@ -306,9 +336,11 @@ try {
             if ($r.StdOut -match '(?m)^\s*Valid solutions:\s+(\d+)\s*$') { $valid = [int]$Matches[1] }
             $invalid = -1
             if ($r.StdOut -match '(?m)^Invalid solutions:\s+(\d+)\s*$') { $invalid = [int]$Matches[1] }
+            $replayOk = ($valid -gt 0 -and $invalid -eq 0)
             Check ("{0}: solutions replay through the SHIPPED binary" -f $set) `
-                  ($valid -gt 0 -and $invalid -eq 0) `
+                  $replayOk `
                   ("valid={0} invalid={1}" -f $valid, $invalid)
+            if ($replayOk) { $script:replayedSets++ }
         }
 
         # jc-52: a path-qualified argument used to reach an uninitialized
@@ -441,6 +473,7 @@ public class TWPT {
                       ($title -notmatch ' - .+ - ') `
                       ("expected one separator, got: " + $title)
                 Check "the GUI survives a few moves" (-not $proc.HasExited)
+                if (-not $proc.HasExited) { $script:guiRan = $true }
 
                 $shot = Join-Path $root ("playtest-" + $ExpectTag + ".png")
                 $null = [TWPT]::GetWindowRect($h, [ref]$rect)
@@ -561,7 +594,26 @@ public class TWPT {
         foreach ($f in $failures) { Write-Host ("  FAILED: {0}" -f $f) -ForegroundColor Red }
         exit 1
     }
-    Write-Host ("  the packaged {0} runs, replays real solutions, and plays" -f $ExpectTag) -ForegroundColor Green
+    # Assembled from what happened, never asserted. See the note on
+    # $script:replayedSets at the top of this file.
+    $did = @()
+    if ($script:replayedSets -gt 0) {
+        $did += ("replays real solutions ({0} set(s))" -f $script:replayedSets)
+    }
+    if ($script:guiRan) { $did += "plays" }
+
+    if ($did.Count -eq 2) {
+        Write-Host ("  the packaged {0} runs, {1}, and {2}" -f $ExpectTag, $did[0], $did[1]) -ForegroundColor Green
+    } elseif ($did.Count -eq 1) {
+        Write-Host ("  the packaged {0} runs and {1}" -f $ExpectTag, $did[0]) -ForegroundColor Yellow
+        Write-Host "  !! REDUCED RUN -- this is not a release-grade result." -ForegroundColor Yellow
+    } else {
+        Write-Host ("  the packaged {0} runs. NOTHING ELSE WAS PROVEN." -f $ExpectTag) -ForegroundColor Yellow
+        Write-Host "  !! No solution replayed and no GUI. Do not cut a release from this." -ForegroundColor Yellow
+    }
+    if (-not $script:guiRan -and -not $NoGui) {
+        Write-Host "  !! the GUI half did not complete, and -NoGui was not passed." -ForegroundColor Yellow
+    }
     exit 0
 }
 finally {

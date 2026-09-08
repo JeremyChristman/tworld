@@ -49,6 +49,24 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) {
         throw "unit tests failed -- refusing to package. Fix them, or pass -SkipTests if you have a reason."
     }
+
+    # ⚠ AND THE SANITIZER, added jc-57. Eleven seconds for the same cases under
+    # UndefinedBehaviorSanitizer, and it is the only layer here that can see a
+    # memory-safety guard being removed: an audit reverted jc-50 wholesale and
+    # every OTHER layer stayed green.
+    #
+    # 🔴 THIS GATE IS STILL NARROWER THAN THE SURROUNDING PROSE SUGGESTS, and
+    # that is now said rather than implied. It does NOT run the end-to-end, Qt,
+    # golden-master or NO_FIX layers -- those need a built executable, and this
+    # script runs before one is guaranteed. RELEASING.md step 4 tells the human
+    # to run the full `run-tests.ps1` first and release.yml does it in CI, so
+    # the release path is covered; the packager's own refusal is not the whole
+    # gate and must not be read as one.
+    Write-Host "Running the sanitizer layer..." -ForegroundColor Cyan
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $root "test\run-tests.ps1") -Sanitize
+    if ($LASTEXITCODE -ne 0) {
+        throw "the sanitizer layer failed -- refusing to package. Undefined behavior in a release build is not a style question."
+    }
 }
 
 # The build tag is the single source of truth for the release name. Read from fork.h as of jc-34:

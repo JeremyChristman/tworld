@@ -19,6 +19,19 @@ or reviewed. The parsers live in:
 | `oshw-qt/CCMetaData.cpp` | `.ccx` level metadata — XML shipped inside a level pack |
 | `unslist.c` | the bundled unsolvable-level list — but see below |
 | `settings.cpp` | `tw_settings.ini` |
+| `res.c` | `res/rc`, the resource configuration — shipped, and meant to be edited |
+| `generic/tile.c` | tileset **images**. A `.bmp`'s dimensions choose the decode format |
+
+⚠ **The last two were missing from this table until jc-57**, and an audit was
+right to call that out: for a document whose value is the completeness of the
+enumeration, an omission is the defect. Both are genuinely third-party input.
+`res/rc` ships in the zip and the README tells people to edit it. Tilesets are a
+**shipped feature** with a picker in the Options menu (`README.txt` section 6,
+`res\tilesets\`), so a downloaded `.bmp` is exactly as untrusted as a downloaded
+`.dat` — and `loadtileset()` picks between three layouts by arithmetic on the
+image's width and height, which is parsing by any other name. This project knew
+`res.c` was a surface: it has had a dedicated fuzz target (`test/fuzz/fuzz_rc.c`)
+since jc-47, and that target found a real defect on its first run.
 
 ⚠ **Corrected.** This document previously said `unslist.c` "is not actually reached in the shipped
 configuration". **That was wrong, and it was the third time this project wrote that claim down.**
@@ -27,14 +40,14 @@ configuration". **That was wrong, and it was the third time this project wrote t
 | | |
 |---|---|
 | `res/rc:6` | `UnsolvableList=unslist.txt` |
-| `res.c:309` | `readrcfile()` **lowercases the key** before comparing |
+| `res.c:324` | `readrcfile()` **lowercases the key** before comparing |
 | `res.c:94` | so it matches `rclist[]`'s `{ "unsolvablelist", FALSE }` |
 | `res.c:568` | → `loadtxtresource(RES_TXT_UNSLIST, loadunslistfromfile)` |
 | `series.c:404` | → `markunsolvablelevels(series)`, on every series load |
 
 🔴 **Why it keeps being got wrong, since knowing that is the useful part.** `res/rc` spells the key
 `UnsolvableList`; `rclist[]` spells it `unsolvablelist`; the comparison is `strcmp`. They match only
-because of the lowercasing at `res.c:309`. So grepping for the table's spelling finds nothing in
+because of the lowercasing at `res.c:324`. So grepping for the table's spelling finds nothing in
 `res/rc` and reads exactly like proof that the resource is never set. **Follow the call, not the
 grep.** `test/unslist_test.c` now covers the parser, and `test/res_test.c` pins the
 case-insensitivity so this cannot be rediscovered a fourth time.
@@ -142,10 +155,17 @@ backport to. Fixes ship in the next tagged build.
 
 ### Known gaps, stated rather than implied
 
-- ⚠ **Nothing analyzes the Windows build, which is the one that ships.** The sanitizer, fuzz and
-  CodeQL jobs all run on Linux, because mingw-w64 ships no `libasan` and no libFuzzer. The portable
-  core — every parser, both engines — is identical between the two, and every defect found so far
-  has been there; but `#ifdef WIN32` branches are analyzed in their POSIX form only.
+- ⚠ **Little analyzes the Windows build, which is the one that ships.** The ASan, fuzz and CodeQL
+  jobs all run on Linux, because mingw-w64 ships no `libasan` and no libFuzzer. The portable core —
+  every parser, both engines — is identical between the two, and every defect found so far has been
+  there; but `#ifdef WIN32` branches get ASan and libFuzzer in their POSIX form only.
+
+  ✅ **Partly closed in jc-57: UndefinedBehaviorSanitizer now runs on Windows**, as a sixth test
+  layer (`run-tests.ps1 -Sanitize`). `-fsanitize-undefined-trap-on-error` needs no `libubsan` — UB
+  becomes `SIGILL` — so it costs eleven seconds and no dependency, and it compiles the **WIN32**
+  branches. It found nothing new; its value is that it turns a reverted bounds fix into a failure a
+  developer sees before pushing, which an audit demonstrated the other five layers do not. It is a
+  UB oracle only: it is not ASan, so a heap overflow between valid objects still needs the Linux job.
 - ⚠ **Fuzzing is 60 seconds per target per push, which catches shallow regressions only** — but a
   **weekly soak** now runs 15 minutes per target and carries its discovered corpus between runs
   (`.github/workflows/soak.yml`). This bullet previously ended "and no scheduled soak job exists",

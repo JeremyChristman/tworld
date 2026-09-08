@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-56
+  Tile World  --  Jeremy Christman's fork                    build jc-57
 ==============================================================================
 
   1. What this is
@@ -495,6 +495,37 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-57  --  Nothing you can see; a great deal you would rather not find out
+--------------------------------------------------------------------
+
+  * NO CHANGE TO THE GAME. Every level plays exactly as it did in jc-56, every
+    solution replays the same, every setting means the same thing. If you are
+    happy with jc-56 there is no reason to hurry.
+
+  * WHAT ACTUALLY HAPPENED. This build's changes were prompted by an outside
+    review that was given the code with no explanation and asked to assume the
+    documentation was flattering it. It was right more often than not. The
+    tests were counting a great deal and proving less than the count suggested,
+    particularly around the checks that stop a damaged or hostile level file
+    from making the game read or write memory it should not.
+
+  * WHAT THAT MEANS FOR YOU, CONCRETELY. Those protections were already in the
+    program and are unchanged -- what was missing was proof they still worked.
+    Several could be deleted entirely and every test still passed, which means
+    a future change could have broken one and nobody would have been told. The
+    tests can now tell. One real, if unlikely, flaw was found and fixed while
+    looking: a level file with an out-of-place creature could make the game
+    read one cell past its own map while drawing, in a mode almost nobody uses.
+
+  * AND ONE THING THAT WAS QUIETLY BROKEN. The automated check that is supposed
+    to prove a finished download really runs -- opening the zip, replaying real
+    solutions through it, playing a level -- could report complete success
+    while having replayed nothing at all, if it could not find the level sets
+    it was looking for. It says what it actually did now, and fails when it
+    cannot do it. No release was ever shipped on a false pass; the checks that
+    matter were also being done by hand.
 
 
 jc-56  --  You choose what the title bar says

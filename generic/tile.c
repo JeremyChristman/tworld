@@ -473,7 +473,12 @@ static void _displaymapview(gamestate const *state, TW_Rect displayloc)
     rmap = (xdisppos + 3) / 4 + NXTILES;
     bmap = (ydisppos + 3) / 4 + NYTILES;
     for (y = tmap ; y < bmap ; ++y) {
-	if (y < 0 || y >= CXGRID)
+	/* MOD (Jeremy, jc-57): CYGRID, not CXGRID. A Y coordinate was bounded
+	 * against the WIDTH -- correct today only because both are 32, and
+	 * silently wrong the moment they differ. Found by an audit reading the
+	 * file rather than by any test; nothing here can see it while the grid
+	 * is square. Upstream's. */
+	if (y < 0 || y >= CYGRID)
 	    continue;
 	for (x = lmap ; x < rmap ; ++x) {
 	    if (x < 0 || x >= CXGRID)
@@ -495,7 +500,22 @@ static void _displaymapview(gamestate const *state, TW_Rect displayloc)
     rmap += 2;
     bmap += 2;
     for (cr = state->creatures ; cr->id ; ++cr) {
-    	if (pedanticmode)
+	/* MOD (Jeremy, jc-57): bound cr->pos BEFORE dereferencing the map with
+	 * it. The pedanticmode test below indexes state->map[cr->pos], and the
+	 * only bounds check in this loop came AFTER it and checks x and y
+	 * against the VIEWPORT (lmap/rmap/tmap/bmap), not against the array --
+	 * so it neither ran first nor guarded the right thing.
+	 *
+	 * ⚠ Not hypothetical for this codebase specifically. An out-of-range
+	 * creature position is exactly what jc-45 and jc-50 were: malformed
+	 * .dat files with creature and trap coordinates off the map are in
+	 * circulation, and readpos() deliberately yields POS_INVALID for them
+	 * -- a value one PAST the map array. Reaching this line with one is a
+	 * read past the end. Found by an audit; pedantic mode only, which is
+	 * why nothing had tripped over it. */
+	if (cr->pos < 0 || cr->pos >= CXGRID * CYGRID)
+	    continue;
+	if (pedanticmode)
 	{
 	    if (cr->id == Ball && state->map[cr->pos].top.id == HintButton)
 	        continue;

@@ -23,7 +23,7 @@
 # corpus riding on it. Before bumping a version here:
 #
 #   1. run test\run-golden.ps1  -- 1,806 engine digests over 903 levels
-#   2. run test\run-nofix.ps1   -- the 13 NO_FIX_* witnesses
+#   2. run test\run-nofix.ps1   -- every NO_FIX_* witness in the matrix
 #   3. run test\run-corpus.ps1  -- the real solution collection, if the change
 #                                  is anything more than a patch release
 #

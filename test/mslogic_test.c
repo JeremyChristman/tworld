@@ -300,7 +300,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(122);
+    tw_expect_atleast(138);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -949,6 +949,158 @@ int main(void)
 		  "Chip left the map, ending at %d", chippos());
     } else {
 	CHECK_MSG(r == FALSE, "startlevel returned %d, which is neither TRUE nor FALSE", r);
+    }
+
+    /* ================================================================== */
+    /* jc-57: the memory-safety bounds that had NO witness.
+     *
+     * 🔴 WHY THESE EXIST. An adversarial audit mutated twelve bound checks in
+     * this file and ELEVEN survived every layer that runs on Windows -- unit,
+     * golden and nofix -- including reverting jc-50 wholesale, this fork's own
+     * headline defect. CLAUDE.md section 8.1 already contained the technique
+     * that catches this class ("poison the out-of-bounds byte", called there
+     * "the single most reusable idea in the file"); it had been applied to
+     * exactly ONE of at least four analogous guards. These are the other three,
+     * plus a direct test of the jc-50 helpers.
+     *
+     * ⚠ AND NOTE WHAT THE SANITIZE LAYER DOES AND DOES NOT DO. run-tests.ps1
+     * -Sanitize (added the same build) catches an out-of-bounds read only where
+     * a test EXECUTES it. Measured on the reverted jc-50: movelaw_creature is
+     * trapped, because the committed fuzz corpus happens to drive that path
+     * with a bad id -- and movelaw_block SURVIVES, because nothing did. A
+     * sanitizer is an oracle, not coverage. Both halves are needed.
+     */
+    tw_case("jc-50: the movelaw helpers refuse an out-of-range tile id");
+    {
+	/* The direct test, which the engine-level cases below cannot be.
+	 *
+	 * movelaws[] is indexed by a cell's BOTTOM layer, which can hold a
+	 * creature: ids run past the 64-entry array by up to 47 on 18% of real
+	 * levels. The old read was undefined -- what it returned depended on
+	 * what the linker placed after the array -- so there is no "correct old
+	 * value" to preserve and the fix PICKS one: zero, meaning "this terrain
+	 * refuses every direction", which is the honest answer for a cell whose
+	 * bottom layer is not terrain at all.
+	 *
+	 * Asserting that chosen answer pins the decision itself, and calling
+	 * these helpers directly means the case does not depend on finding a
+	 * level that happens to route through them. With the guard removed the
+	 * read is out of bounds and -Sanitize traps it here too. */
+	CHECK_MSG(MOVELAWCOUNT == 64,
+		  "movelaws[] is %d entries, not 64 -- the ids below were chosen"
+		  " against 64 and may no longer be out of range", MOVELAWCOUNT);
+	CHECK_INT(movelaw_block(MOVELAWCOUNT), 0);
+	CHECK_INT(movelaw_creature(MOVELAWCOUNT), 0);
+	/* 47 past the end: the worst case the jc-50 note measured. */
+	CHECK_INT(movelaw_block(MOVELAWCOUNT + 47), 0);
+	CHECK_INT(movelaw_creature(MOVELAWCOUNT + 47), 0);
+	/* Negative too. `id` arrives as an int and nothing upstream promises
+	 * it is unsigned. */
+	CHECK_INT(movelaw_block(-1), 0);
+	CHECK_INT(movelaw_creature(-1), 0);
+	/* And the guard must not have broken the ordinary lookup: a real
+	 * terrain id still reports what the table says. Wall refuses both. */
+	CHECK_INT(movelaw_block(Wall), movelaws[Wall].block);
+	CHECK_INT(movelaw_creature(Wall), movelaws[Wall].creature);
+	CHECK_INT(movelaw_block(Empty), movelaws[Empty].block);
+    }
+
+    tw_case("a creature list position off the map is REFUSED, not indexed");
+    {
+	/* The bound at the crlist walk in initgame(). Dropping it survives the
+	 * unit suite, the golden master AND the sanitize layer -- nothing was
+	 * driving it with an off-map position, so there was no read to trap.
+	 *
+	 * The oracle is the WARNING the guard itself emits. That makes the
+	 * mutation directly visible: remove the guard and the warning stops.
+	 * A delta, not an absolute, for the reason given on the jc-45 case
+	 * above -- warn_count is a running total nothing resets. */
+	/* 🔴 AND THE ORACLE IS THE PHANTOM CREATURE, NOT THE WARNING. The
+	 * obvious oracle -- "the guard warns, so count warnings" -- does not
+	 * work here and looked like it did. Remove the guard and the very next
+	 * check warns too, "no creature at location", from the out-of-bounds
+	 * bytes it just read. Same count, different sentence: the first version
+	 * of this case asserted `warn_count > warn_before`, passed, and killed
+	 * nothing. Ask what only happens on the WRONG side of the bound.
+	 *
+	 * What only happens there is a creature getting BUILT out of memory
+	 * past the map. map[POS_INVALID] is msstate (asserted below), whose
+	 * first byte is chipwait, which initgame() does not assign until well
+	 * after this loop -- so poisoning it with a monster id makes the
+	 * unguarded path sail through iscreature() and allocate a creature that
+	 * does not exist. creaturecount is mslogic.c's own file-scope total. */
+	CHECK_MSG((void*)&teststate.map[POS_INVALID] == (void*)&teststate.msstate,
+		  "map[POS_INVALID] no longer coincides with msstate -- this case's"
+		  " poison lands somewhere else and proves nothing");
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	/* x=40 is off a 32-wide map: readpos folds it to POS_INVALID, which is
+	 * exactly the shape a malformed .dat produces. */
+	fix_addcreature(&lv, 40, 3);
+	teststate.msstate.chipwait = (unsigned char)Tank;
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount == 1,
+		  "the engine built %d creature(s) from a level containing only"
+		  " Chip: it read the poisoned monster id one cell past the map"
+		  " and made a creature out of it", creaturecount);
+	teststate.msstate.chipwait = 0;
+
+	/* An ordinary creature position is asserted two cases above ("an
+	 * in-range creature position is kept exactly"), deliberately not
+	 * repeated here: a creature-list entry with no matching creature TILE
+	 * warns for an unrelated reason, which would make a control here read
+	 * as a failure of this guard. */
+    }
+
+    tw_case("row 32 is empty when the trap loop runs -- the premise of its bound");
+    {
+	/* 🔴 THIS CASE EXISTS BECAUSE A MUTATION SURVIVED AND THE RIGHT ANSWER
+	 * TURNED OUT TO BE "IT IS EQUIVALENT", WHICH IS ONLY DEFENSIBLE IF
+	 * SOMETHING CHECKS THE PREMISE.
+	 *
+	 * An audit turned initgame()'s `xy->to < CXGRID * CYGRID` into `<=` and
+	 * nothing failed. The tempting reading is "another untested bound". It
+	 * is not one. The map is `mapcell map[CXGRID * (CYGRID + 1)]` -- 1056
+	 * entries -- so 1024..1055 is the row-32 area that exists ON PURPOSE and
+	 * POS_INVALID is 1056, one past the end. Letting 1024 through therefore
+	 * reads an IN-BOUNDS cell, and that cell is provably zero at this
+	 * moment: play.c:117 memsets the whole array, expandmsdatlevel() memsets
+	 * it again, encoding.c's decode loops are bounded to pos < 1024 so level
+	 * data can never reach row 32, and the one thing that DOES give row 32 a
+	 * live cell -- activaterow32cloner() -- runs during play, long after
+	 * this loop. `cellat(1024)->top.id == Block_Static` is false either way.
+	 *
+	 * So the mutant is equivalent, and no test can kill it. What a test CAN
+	 * do is pin the invariant the equivalence rests on, so that the day
+	 * something starts writing row 32 before initgame, this says so instead
+	 * of a memory-safety argument quietly going stale.
+	 *
+	 * ⚠ Do NOT "fix" this by bounding the play-time sites. The comment at
+	 * mslogic.c:4605 is explicit: activatecloner() must stay unbounded or
+	 * the row-32 glitch breaks outright, and that glitch is load-bearing. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 7, 7, FIX_BEARTRAP);
+	fix_addtrap(&lv, 3, 3, 7, 7);
+	CHECK_INT(startlevel(&lv), TRUE);
+	{
+	    int rowclean = TRUE;
+	    for (i = CXGRID * CYGRID ; i < POS_INVALID ; ++i)
+		if (teststate.map[i].top.id != 0 || teststate.map[i].bot.id != 0)
+		    rowclean = FALSE;
+	    CHECK_MSG(rowclean,
+		      "row 32 (map[%d..%d]) is not empty after level load. The"
+		      " initgame() trap bound's off-by-one is only harmless"
+		      " BECAUSE it is empty -- re-examine mslogic.c:4617.",
+		      CXGRID * CYGRID, POS_INVALID - 1);
+	}
+	/* And the array really is a row longer than the grid, which is what
+	 * makes 1024 an in-bounds index rather than an overrun. */
+	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
     }
 
     if (logic)

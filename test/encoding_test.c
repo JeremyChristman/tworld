@@ -126,10 +126,10 @@ int main(void)
     unsigned char raw[512];
     fixlevel lv;
     unsigned char *rec;
-    int size, n;
+    int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(45);
+    tw_expect_atleast(60);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {
@@ -399,6 +399,120 @@ int main(void)
 	CHECK_INT(teststate.map[19].bot.id, Gravel);
     }
 
+    tw_case("🔴 run-length data that decodes PAST the map stops at the map");
+    {
+	/* THE BOUND WITH NO INPUT BEHIND IT.
+	 *
+	 * An adversarial audit deleted `pos < CXGRID * CYGRID` from BOTH
+	 * run-length loops in this file and every layer stayed green -- and the
+	 * sanitizer could not have helped either, because the bound was not
+	 * merely undetected, it was UNREACHED: no test input, and no committed
+	 * fuzz reproducer, decodes to more than 1,024 cells. A guard nothing
+	 * ever drives is a guard nobody can claim works.
+	 *
+	 * Five 0xFF runs of 255 is 1,275 cells from fifteen bytes. Without the
+	 * bound, `state->map[pos++].top.id = id` walks 251 cells past a
+	 * 1,056-entry array, writing an ATTACKER-CHOSEN tile id into whatever
+	 * follows `map` in gamestate. That is the same shape as jc-44's third
+	 * defect and it is reachable from a downloaded .dat.
+	 *
+	 * ⚠ THE ORACLE IS ROW 32, NOT A CRASH. map is CXGRID * (CYGRID + 1) --
+	 * 1,056 cells -- so the first 32 cells the unbounded loop overruns into
+	 * are still INSIDE the array and would not fault, would not trip ASan,
+	 * and would not trap under UBSan. They are also always zero after a
+	 * successful decode, because the decode stops at 1,024. So a non-zero
+	 * row 32 is exactly, and only, this bug. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;    /* level number */
+	put16(raw + n, 0);      n += 2;    /* time */
+	put16(raw + n, 0);      n += 2;    /* chips */
+	put16(raw + n, 1);      n += 2;    /* detail */
+	/* ⚠ SIX RUNS, NOT FIVE, AND THE COUNT IS LOAD-BEARING FOR THE SECOND
+	 * ASSERTION. Five runs of 255 is 1,275 cells, which over-runs the map
+	 * and proves the WRITE bound -- but the outer loop still consumes all
+	 * fifteen bytes either way (the fifth run is read in full and merely
+	 * written short), so `n == size` and no "extra bytes" warning fires.
+	 * With six, pos reaches 1,024 with a whole run still unread, which is
+	 * the only arrangement that makes the OUTER bound observable. */
+	put16(raw + n, 18);     n += 2;    /* upper layer: 6 runs of 255 */
+	for (i = 0 ; i < 6 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_WALL;
+	}
+	/* ⚠ THE LOWER LAYER IS EXACTLY 1,024 CELLS, ON PURPOSE. A short one
+	 * warns ("not enough cells"), and that warning fires whether or not the
+	 * bound under test is present -- which silently defeats the warn_count
+	 * assertion at the end of this case. It passed that way once. Make the
+	 * layer complete so the upper layer's "extra bytes" is the ONLY warning
+	 * this record can produce. 4*255 + 4 == 1024. */
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR;
+	}
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 0);      n += 2;    /* no optional fields */
+
+	CHECK_MSG(expandraw(raw, n) == TRUE,
+		  "a record whose upper layer over-runs was refused outright;"
+		  " this case needs it ACCEPTED so the decode actually runs");
+	CHECK_MSG(teststate.map[CXGRID * CYGRID - 1].top.id == Wall,
+		  "the decode did not even fill the map, so the overrun below"
+		  " is not being tested");
+	{
+	    int overrun = 0;
+	    for (i = CXGRID * CYGRID ; i < POS_INVALID ; ++i)
+		if (teststate.map[i].top.id != 0 || teststate.map[i].bot.id != 0)
+		    ++overrun;
+	    CHECK_MSG(overrun == 0,
+		      "run-length data wrote %d cell(s) past the %d-cell map."
+		      " The decode loops' `pos < CXGRID * CYGRID` bound is gone"
+		      " or wrong; without it a .dat can write a chosen tile id"
+		      " into whatever follows map[] in gamestate.",
+		      overrun, CXGRID * CYGRID);
+	}
+	/* ⚠ THE BOUND IS WRITTEN TWICE AND ONLY ONE COPY GUARDS THE WRITE.
+	 * The inner `while (i-- && pos < ...)` is what stops the overrun; the
+	 * outer `for (... && pos < ...)` merely stops re-reading input, so
+	 * deleting IT leaves the checks above green -- measured. Its own
+	 * observable effect is this warning: the outer loop must exit with
+	 * input left over, which is what "extra bytes" reports. Without it the
+	 * loop consumes all 15 bytes and says nothing. */
+	CHECK_MSG(warn_count > 0,
+		  "the decoder consumed the whole over-long layer without"
+		  " reporting extra bytes: the OUTER loop's bound is gone");
+    }
+
+    tw_case("the same bound holds for the LOWER layer");
+    {
+	/* Both loops carry the bound and both need an input. The upper-layer
+	 * case above leaves the lower one untested, and they are separate
+	 * code -- jc-44's RLE guard was two bytes short in exactly one of a
+	 * matched pair. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;    /* upper layer, short */
+	raw[n++] = 0xFF; raw[n++] = 1; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;    /* lower layer: 5 runs of 255 */
+	for (i = 0 ; i < 5 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_GRAVEL;
+	}
+	put16(raw + n, 0);      n += 2;
+
+	CHECK_MSG(expandraw(raw, n) == TRUE,
+		  "a record whose lower layer over-runs was refused outright");
+	{
+	    int overrun = 0;
+	    for (i = CXGRID * CYGRID ; i < POS_INVALID ; ++i)
+		if (teststate.map[i].bot.id != 0)
+		    ++overrun;
+	    CHECK_MSG(overrun == 0,
+		      "lower-layer run-length data wrote %d cell(s) past the map",
+		      overrun);
+	}
+    }
+
     tw_case("an undefined tile code becomes a wall, and is reported");
     {
 	n = 0;
@@ -415,6 +529,45 @@ int main(void)
 	CHECK_INT(teststate.map[0].top.id, Wall);
 	CHECK_MSG((teststate.statusflags & SF_BADTILES) != 0,
 		  "an undefined tile code did not raise SF_BADTILES");
+    }
+
+    tw_case("🔴 tile code 0x70 EXACTLY -- the first one past fileids[]");
+    {
+	/* THE OFF-BY-ONE THE CASE ABOVE CANNOT SEE. It uses 0x7E, which is
+	 * comfortably past a 112-entry table, so `id >= size` and `id > size`
+	 * agree about it and the mutation survives -- measured.
+	 *
+	 * 0x70 is 112: the FIRST value out of range, and the only one the two
+	 * forms disagree about. `fileids[112]` is a one-past-the-end read of a
+	 * `static int const[]`, driven by a single byte of a downloaded .dat,
+	 * and whatever it returns is then written into the map as a tile id.
+	 * It does not fault -- it reads whatever the linker put next -- which
+	 * is why nothing noticed and why the assertion has to be the VALUE.
+	 *
+	 * ⚠ 112 is asserted, not assumed. If the table grows, this case must
+	 * move with it or it silently stops testing the boundary. */
+	CHECK_MSG((int)(sizeof fileids / sizeof *fileids) == 112,
+		  "fileids[] is %d entries, not 112 -- 0x70 is no longer the"
+		  " boundary and this case is testing an ordinary bad tile",
+		  (int)(sizeof fileids / sizeof *fileids));
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 5; raw[n++] = 0x70;   /* == the table size */
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 5; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.map[0].top.id == Wall,
+		  "tile code 0x70 decoded to %d instead of Wall: the bound is"
+		  " `id > size` rather than `id >= size`, so fileids[112] was"
+		  " read one past the end of the table",
+		  teststate.map[0].top.id);
+	CHECK_MSG((teststate.statusflags & SF_BADTILES) != 0,
+		  "tile code 0x70 was accepted as a real tile");
     }
 
     tw_case("fileidtotileid maps the codes the row-32 cloner glitch relies on");
@@ -442,6 +595,14 @@ int main(void)
 	x = 40; y = 3;  CHECK_INT(readpos(&x, &y), POS_INVALID);
 	x = 31; y = 31; CHECK_INT(readpos(&x, &y), 31 + CYGRID * 31);
 	x = 0;  y = 0;  CHECK_INT(readpos(&x, &y), 0);
+	/* 🔴 x == 32 EXACTLY, which is the only value that tells `< CXGRID`
+	 * apart from `<= CXGRID`. Every x above is either comfortably inside
+	 * (31) or comfortably outside (40), so both forms agree on all of them
+	 * and an off-by-one here survived the whole suite -- measured. A
+	 * mis-bounded x does not fault: it ALIASES onto a valid-but-wrong cell,
+	 * one row down, which is the quiet half of the jc-2 defect. */
+	x = 32; y = 3;  CHECK_INT(readpos(&x, &y), POS_INVALID);
+	x = 32; y = 0;  CHECK_INT(readpos(&x, &y), POS_INVALID);
 	CHECK_MSG(ROW32POS(0) != POS_INVALID,
 		  "a legitimate (0,32) wiring and the invalid marker collide --"
 		  " this is exactly the jc-2 defect");

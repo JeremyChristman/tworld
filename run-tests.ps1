@@ -56,6 +56,7 @@ param(
     [switch]$Qt,
     [switch]$Golden,
     [switch]$NoFix,
+    [switch]$Sanitize,
     [switch]$Build,
     [string]$Exe,
     [string]$Filter,
@@ -76,8 +77,8 @@ $root = $PSScriptRoot
 # local run that means less than it looks is exactly the failure this repository
 # treats as the serious kind (see CLAUDE.md section 3, "the traps that make a
 # test or a script LIE"). They cost about fifteen seconds together.
-if (-not $Unit -and -not $E2E -and -not $Qt -and -not $Golden -and -not $NoFix) {
-    $Unit = $true; $E2E = $true; $Qt = $true; $Golden = $true; $NoFix = $true
+if (-not $Unit -and -not $E2E -and -not $Qt -and -not $Golden -and -not $NoFix -and -not $Sanitize) {
+    $Unit = $true; $E2E = $true; $Qt = $true; $Golden = $true; $NoFix = $true; $Sanitize = $true
 }
 
 $failed = @()
@@ -93,6 +94,29 @@ if ($Unit) {
     & powershell @unitArgs
     $ran += "unit"
     if ($LASTEXITCODE -ne 0) { $failed += "unit" }
+}
+
+if ($Sanitize) {
+    Write-Host ""
+    Write-Host "=============== SANITIZE ===============" -ForegroundColor Cyan
+    # The whole unit suite again under UndefinedBehaviorSanitizer, trapping.
+    #
+    # 🔴 THE LAYER THAT WOULD HAVE CAUGHT jc-50 LOCALLY. An adversarial audit
+    # reverted that fix -- movelaws[] indexed by a cell's bottom layer, this
+    # fork's own headline defect -- and unit, golden and nofix all stayed green.
+    # This layer exits 132 on it. Roughly 30 seconds; it reads no new inputs and
+    # asserts nothing new, it just watches the SAME cases for undefined
+    # behavior, which is where the memory-safety guards are actually observable.
+    #
+    # ⚠ It is a SEPARATE layer rather than a replacement for the ordinary unit
+    # pass, because -w is required (-O1 turns on -Wformat-truncation inside
+    # tw_test.h) and losing -Wall -Wextra -Werror would be a bad trade.
+    $sanArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-tests.ps1"), "-Sanitize")
+    if ($Filter) { $sanArgs += @("-Filter", $Filter) }
+    if ($Lang -ne "both") { $sanArgs += @("-Lang", $Lang) }
+    & powershell @sanArgs
+    $ran += "sanitize"
+    if ($LASTEXITCODE -ne 0) { $failed += "sanitize" }
 }
 
 if ($E2E) {

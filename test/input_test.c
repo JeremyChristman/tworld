@@ -459,7 +459,18 @@ int main(void) {
     test_restartkeystates_uses_scancode_order();
 
     /* A suite that runs nothing must not report success: the ordinary way a
-     * test is lost is a function that stops being called from here. */
+     * test is lost is a function that stops being called from here.
+     *
+     * 40 is EXACTLY what this file runs -- no slack, which is the whole point
+     * of the mechanism. Raise it when cases are added; never lower it to make
+     * a run pass.
+     *
+     * ⚠ AND DO NOT "CORRECT" IT TO 44 BY MEASURING WITH -Filter input_test.
+     * That filter is a SUBSTRING match and also selects dirinput_test.c, which
+     * runs 44. Both numbers then appear in the output and the wrong one is the
+     * one that looks like this file's. Measured that way, this floor was raised
+     * to 44 and the test began reporting "only 40 checks ran" -- the guard
+     * doing its job against a bad edit to itself. */
     if (checks < 40) {
         printf("only %d checks ran; expected at least 40 -- a test is missing\n",
                checks);

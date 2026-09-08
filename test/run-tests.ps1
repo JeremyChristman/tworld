@@ -49,7 +49,17 @@ param(
     [string]$Lang = "both",
     [switch]$Coverage,
     [string]$OutDir,
-    [string[]]$ExtraFlags = @()
+    [string[]]$ExtraFlags = @(),
+
+    # Rebuild and rerun every test under UndefinedBehaviorSanitizer.
+    #
+    # 🔴 WHY THIS IS A MODE OF THIS SCRIPT AND NOT A SCRIPT OF ITS OWN. A
+    # separate runner would need its own copy of the TESTLANG/TESTFLAGS parsing,
+    # the compiler resolution and the MSYS2 PATH fix -- four things that must
+    # agree with this file forever. Two hand-maintained tables that must agree,
+    # with nothing checking that they do, will disagree; that lesson is written
+    # down in CLAUDE.md section 8.1 and it applies to runners too.
+    [switch]$Sanitize
 )
 # Native tools write notes to stderr; under "Stop" PowerShell 5.1 turns those into
 # terminating NativeCommandErrors even on success. Exit codes are checked explicitly.
@@ -278,6 +288,35 @@ foreach ($test in $tests) {
             $extra += "-O0"
         }
         if ($ExtraFlags.Count -gt 0) { $extra += $ExtraFlags }
+        if ($Sanitize) {
+            # 🔴 UNDEFINED BEHAVIOR IS CHECKABLE ON WINDOWS, and this project
+            # believed for a long time that it was not. mingw-w64 ships no
+            # libubsan -- but -fsanitize-undefined-trap-on-error needs no
+            # runtime at all: UB becomes SIGILL, which surfaces as exit 132.
+            # A readable report is what you lose; a gate does not need one.
+            #
+            # ⚠ WHY THIS EXISTS AS A GATE. An adversarial audit reverted jc-50
+            # WHOLESALE -- this fork's own headline defect, movelaws[] indexed
+            # by a cell's bottom layer, up to 47 entries past a 64-entry array
+            # on 18% of real levels -- and the unit suite, the golden master and
+            # the NO_FIX matrix all stayed green. Measured on the same source:
+            #   plain build  -> exit 0, 122 checks, 0 failures
+            #   this build   -> exit 132
+            # The committed fuzz reproducer for that very defect is replayed on
+            # Windows every run and could not see it, because an out-of-bounds
+            # read of .rodata does not crash and "did it crash" was the only
+            # oracle it had. The Linux sanitizers job would have caught it, but
+            # nothing a developer runs before pushing would.
+            #
+            # -w, not -Werror: -O1 turns on -Wformat-truncation inside
+            # tw_test.h. Warnings are the ordinary pass's job; this pass is
+            # asking one question only.
+            $extra += "-fsanitize=undefined"
+            $extra += "-fsanitize-undefined-trap-on-error"
+            $extra += "-g"
+            $extra += "-O1"
+            $extra += "-w"
+        }
 
         Write-Host ""
         Write-Host "=== $($test.Name) [$testLang] ===" -ForegroundColor Cyan
@@ -328,6 +367,30 @@ foreach ($test in $tests) {
                 $record.suite = $test.BaseName
                 $record.checks = [int]$legacy.Matches[0].Groups[1].Value
                 $record.failures = [int]$legacy.Matches[0].Groups[2].Value
+            } elseif ($exit -eq -1073741795 -or $exit -eq 132) {
+                # 🔴 SIGILL, which under -fsanitize-undefined-trap-on-error means
+                # exactly one thing: the test executed undefined behavior. There is
+                # no report to read -- trapping is what buys us a sanitizer with no
+                # libubsan -- so say plainly what it is and how to see the detail.
+                #
+                # ⚠ TWO CONSTANTS, AND THE WINDOWS ONE IS THE ONE THAT FIRES.
+                # CLAUDE.md section 2 documents this recipe as "exit 132", which
+                # is the POSIX SHELL convention (128 + SIGILL). Windows reports
+                # the raw exception code: 0xC000001D, STATUS_ILLEGAL_INSTRUCTION,
+                # which PowerShell surfaces as -1073741795. Written with 132
+                # alone -- as it was first -- the trap still failed the run, but
+                # through the generic "crashed" branch, so the one message that
+                # says WHAT HAPPENED never printed. Measured, not assumed.
+                Write-Host "UNDEFINED BEHAVIOR TRAPPED (SIGILL: 0xC000001D on Windows, 132 on POSIX)" -ForegroundColor Red
+                Write-Host "  The code under test did something undefined. This is a real defect" -ForegroundColor Red
+                Write-Host "  until proven otherwise -- do NOT silence it by dropping -Sanitize." -ForegroundColor Red
+                Write-Host "  For a readable diagnosis, rebuild on Linux with -fsanitize=undefined" -ForegroundColor Red
+                Write-Host "  WITHOUT -fsanitize-undefined-trap-on-error, or run it under gdb:" -ForegroundColor Red
+                Write-Host ("  the trap is the last line executed in {0}." -f $test.Name) -ForegroundColor Red
+                $record.status = "ub-trapped"
+                $failed++
+                $runs += $record
+                continue
             } else {
                 Write-Host "NO RESULT REPORTED (crashed, or exited before tw_end)" -ForegroundColor Red
                 $record.status = "no-result"
@@ -410,7 +473,12 @@ Write-Host ("  {0} run(s), {1:N0} checks total" -f $runs.Count, $totalChecks)
 # definition, and writing it here would replace a true total with a smaller one
 # that looks just as authoritative -- turning the guard into the thing it
 # guards against.
-if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and $ExtraFlags.Count -eq 0) {
+# ⚠ AND NOT ON A SANITIZE PASS. The counts are identical, so writing them would
+# be harmless today -- but a UB-trapped run reports FEWER checks (the process
+# dies mid-test), and recording that as the suite's total would bake a smaller
+# number into the file the documentation is checked against. Same reasoning as
+# the -Filter exclusion: only a complete ordinary run may define the total.
+if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and -not $Sanitize -and $ExtraFlags.Count -eq 0) {
     $countsPath = Join-Path (Split-Path -Parent $PSScriptRoot) "docs\test-counts.tsv"
     $countsLines = @(
         "# Generated by test\run-tests.ps1 on a complete run. Do not hand-edit:",

@@ -40,6 +40,24 @@ and deliberately does not pretend to check the fourth.
     editorial -- write a fact in ONE place -- not mechanical. When this script
     catches something, the right fix is usually to delete the duplicate rather
     than correct it.
+
+  ⚠ AND BE PRECISE ABOUT THE FIRST CHECK: it scans for a figure in ONE OF THESE
+    PHRASINGS, not for "any figure that contradicts a fact". That distinction
+    was disclosed too weakly until jc-57, when an audit appended eleven false
+    claims to CLAUDE.md and SIX went through -- every one a near-miss rewording
+    of a form that was caught ("25 of THE 32", "the matrix HOLDS 25 witnesses",
+    "9000 digests" with the trailing clause dropped, "99999 checks ACROSS 18
+    unit runs", "40 FUZZ targets"). All twelve are caught now, but the class is
+    open-ended and ordinary editing is what produces it: rewriting CLAUDE.md's
+    "eight targets" into some third phrasing can still retire a check silently.
+
+    🔴 THE OTHER HALF OF THAT LESSON. The first attempt to fix it broadened the
+    patterns and immediately failed on THREE CORRECT SENTENCES -- the negated
+    "14 of the 32 toggles have no witness", the golden master's unrelated "2 of
+    32", and per-file counts like "74 unit checks". A check that cries wolf gets
+    deleted rather than fixed, so it is strictly worse than the gap it closed.
+    When widening a pattern here, run this script against the REAL documents
+    before believing it.
 #>
 param(
     [switch]$Quiet
@@ -93,6 +111,24 @@ $docFiles += Get-ChildItem -LiteralPath $repo -Filter "*.md" -File
 $docFiles += Get-ChildItem -LiteralPath (Join-Path $repo "docs/adr") -Filter "*.md" -File -ErrorAction SilentlyContinue
 $docFiles += Get-ChildItem -LiteralPath (Join-Path $repo ".github") -Filter "*.md" -File -ErrorAction SilentlyContinue
 $docFiles += Get-ChildItem -LiteralPath $repo -Filter "README.txt" -File
+
+# 🔴 AND THE FILES THAT ARE NOT MARKDOWN BUT ARE STILL DOCUMENTATION.
+#
+# The scan used to be *.md plus README.txt, and an audit found a stale count
+# living exactly in the gap: docs/toolchain.lock said "run test\run-nofix.ps1 --
+# the 13 NO_FIX_* witnesses" when the answer was 18. That is a present-tense
+# instruction to whoever bumps the compiler, in the file whose entire purpose is
+# that the bump be done carefully -- the worst possible place for a wrong number
+# and the one place nothing was looking.
+#
+# ⚠ .lock and .tsv only. Extending this to *.ps1 was tried and reverted: the
+# scripts contain the very regexes this file matches with, plus flag values and
+# byte counts, and matching prose patterns against code is how a checker starts
+# crying wolf. Scripts get their numbers reviewed as code.
+foreach ($extra in @("docs/toolchain.lock")) {
+    $p = Join-Path $repo $extra
+    if (Test-Path $p) { $docFiles += Get-Item $p }
+}
 $docFiles = @($docFiles | Where-Object { $_ })
 
 $sourceFiles = @()
@@ -120,20 +156,81 @@ Say "-- derived counts --"
 
 $facts = @()
 
+# 🔴 A MISSING TRUTH SOURCE IS A FAILURE, NOT A SKIPPED CHECK.
+#
+# Every fact below used to be wrapped in a bare `if (Test-Path $source)`, so
+# deleting the file a check reads made the check quietly disappear and the script
+# print green. Measured by an audit: moving docs\test-counts.tsv out of the way
+# took the run from 13 checks to 11 and it still said "the documentation still
+# agrees with the code", exit 0.
+#
+# That is precisely the failure this script was written to stop, committed by the
+# script itself -- and the repository already had the right pattern in two other
+# places. run-golden.ps1 and run-nofix.ps1 both fail CLOSED on a missing or
+# emptied baseline, the latter with "no witnesses in the matrix at all -- refusing
+# to report success."
+#
+# Nothing here is optional: every one of these is committed, and a checkout
+# missing one is broken rather than differently configured.
+function Need-Source([string]$path, [string]$why) {
+    if (Test-Path $path) { return $true }
+    $script:checks++
+    Fail ("the truth source " + (Split-Path -Leaf $path) + " is missing") `
+         ("$why`nWithout it that fact cannot be checked, and a check that cannot run must" +
+          " not report success. Restore the file or, if it was retired deliberately," +
+          " remove its fact from this script and say why.")
+    return $false
+}
+
 # The NO_FIX_* differential matrix. This is the number that sat wrong for five
 # builds while the same file quoted it correctly three times elsewhere.
 $matrix = Join-Path $repo "test/nofix/nofix-matrix.tsv"
-if (Test-Path $matrix) {
+if (Need-Source $matrix "It records which NO_FIX_* engine toggles have a differential witness.") {
     $rows = Get-Content $matrix | Where-Object { $_ -and $_ -notmatch '^\s*#' }
     $withWitness = @($rows | Where-Object { ($_ -split "`t")[1] -and ($_ -split "`t")[1] -ne '-' }).Count
     $facts += @{
         id = "NO_FIX witnesses"
         value = $withWitness
         source = "test/nofix/nofix-matrix.tsv"
+        # ⚠ BROADENED jc-57, AFTER AN AUDIT WALKED PAST THE NARROW FORMS.
+        # Eleven false claims were appended to CLAUDE.md and SIX were not
+        # caught -- every one of them a near-miss rephrasing of a form that
+        # WAS caught: "25 of THE 32 toggles" (one word), "the matrix holds 25
+        # witnesses" (different verb), "9000 digests" (trailing clause
+        # dropped), "99999 checks across 18 unit runs" (reordered), "40 fuzz
+        # targets" (a word between the number and the noun). The novel-claim
+        # limitation is inherent and disclosed in the header; THAT class was
+        # not, and is the likelier one, because it is what ordinary editing
+        # produces.
+        #
+        # 🔴 AND THEN NARROWED AGAIN, BECAUSE THE FIRST BROADENING CRIED WOLF
+        # ON THREE CORRECT SENTENCES. `(\d+)\s+of\s+(?:the\s+)?32\b` matched
+        # all of these, every one of them true:
+        #
+        #   "14 of the 32 toggles have NO differential witness"  (the negation)
+        #   "2 of 32 NO_FIX_* toggles, measured"                 (a DIFFERENT
+        #                                    fact: the golden master's reach)
+        #
+        # A check that fails on correct text gets deleted, not fixed -- so the
+        # positive forms now require the sentence to actually ASSERT a witness,
+        # and the negation is derived and checked separately below.
         patterns = @(
             '(\d+)\s+have such a witness',
-            '(\d+)\s+of\s+32\s+(?:engine\s+)?toggles',
-            '(\d+)\s+NO_FIX_\*?\s+witness'
+            '(\d+)\s+of\s+(?:the\s+)?32[^.\r\n]{0,60}?\bhave\s+(?:such\s+)?a\s+witness',
+            '(\d+)\s+NO_FIX_\*?\s+witness',
+            '(\d+)\s+witness(?:es)?\b',
+            '(?:holds|records|found)\s+(\d+)\s+witness'
+        )
+    }
+    # The complement, so the sentence that states it is checked rather than
+    # merely tolerated by a narrower pattern.
+    $facts += @{
+        id = "NO_FIX toggles WITHOUT a witness"
+        value = $rows.Count - $withWitness
+        source = "test/nofix/nofix-matrix.tsv"
+        patterns = @(
+            '(\d+)\s+of\s+(?:the\s+)?32[^.\r\n]{0,60}?\bhave\s+no\s+(?:differential\s+)?witness',
+            '(\d+)\s+toggle\(?s\)?\s+have no witness'
         )
     }
     $facts += @{
@@ -151,7 +248,9 @@ $facts += @{
     id = "fuzz targets"
     value = $fuzz.Count
     source = "test/fuzz/fuzz_*.c[pp]"
-    patterns = @('(\d+)\s+targets', 'libFuzzer,\s+\*\*(\w+)\s+targets\*\*')
+    # `(?:fuzz\s+)?` because "There are 40 fuzz targets" walked past the
+    # narrow form -- one word between the number and the noun.
+    patterns = @('(\d+)\s+(?:fuzz\s+)?targets', 'libFuzzer,\s+\*\*(\w+)\s+targets\*\*')
 }
 
 # ADRs.
@@ -166,13 +265,16 @@ $facts += @{
 # The golden-master snapshot's size, straight off the baseline it compares
 # against. One row per level per engine.
 $snapshot = Join-Path $repo "test/golden/engine-snapshot.tsv"
-if (Test-Path $snapshot) {
+if (Need-Source $snapshot "It is the golden-master baseline; its row count IS the digest figure.") {
     $digestRows = @(Get-Content $snapshot | Where-Object { $_ -and $_ -notmatch '^\s*#' })
     $facts += @{
         id = "golden-master digests"
         value = $digestRows.Count
         source = "test/golden/engine-snapshot.tsv"
-        patterns = @('([\d,]+)\s+golden-master digests', '([\d,]+)\s+digests over')
+        # The bare `digests` form matters: "records 9000 digests" -- the same
+        # sentence with its trailing "over 903 levels" clause dropped -- was
+        # not caught by either anchored form.
+        patterns = @('([\d,]+)\s+(?:golden-master\s+)?digests\b')
     }
 }
 
@@ -181,7 +283,7 @@ if (Test-Path $snapshot) {
 # Nothing was broken by that -- which is the point. A figure nobody can check is
 # a figure that drifts quietly until someone reasons from it.
 $counts = Join-Path $repo "docs/test-counts.tsv"
-if (Test-Path $counts) {
+if (Need-Source $counts "the unit runner writes it on a complete run; it carries the unit totals.") {
     foreach ($row in (Get-Content $counts | Where-Object { $_ -match '^unit\s' })) {
         $cols = $row -split "`t"
         $facts += @{
@@ -199,7 +301,21 @@ if (Test-Path $counts) {
             # clauses in the SAME SENTENCE and reported them both as stale unit
             # counts -- a check that cries wolf about correct text is worse than
             # no check, because the fix people reach for is deleting it.
-            patterns = @('unit runs,\s+([\d,]+)\s+checks')
+            #
+            # The reordered form -- "99999 checks across 18 unit runs" -- got
+            # past the single anchored pattern, so both orders are matched now.
+            # Still anchored to the word "unit" in each, deliberately: a bare
+            # `([\d,]+)\s+checks` is what cried wolf.
+            #
+            # ⚠ `([\d,]+)\s+unit checks` was tried and REMOVED: it matches the
+            # per-file figures ("series.c ... 74 unit checks", "It has 40 unit
+            # checks and a fuzz target now"), which are correct and are not
+            # this total. Both surviving patterns name "unit runs", which only
+            # the suite-wide sentence does.
+            patterns = @(
+                'unit runs,\s+([\d,]+)\s+checks',
+                '([\d,]+)\s+checks\s+(?:across|in|over)\s+[\d,]+\s+unit runs'
+            )
         }
     }
 }
@@ -207,7 +323,7 @@ if (Test-Path $counts) {
 # The files the coverage baseline actually covers. The deleted table in
 # CLAUDE.md listed 13 when this said 16.
 $baseline = Join-Path $repo "docs/coverage-baseline.tsv"
-if (Test-Path $baseline) {
+if (Need-Source $baseline "coverage.ps1 -UpdateBaseline writes it; it carries the per-file coverage.") {
     $covRows = Get-Content $baseline | Where-Object { $_ -and $_ -notmatch '^\s*#' -and $_ -notmatch '^file\s' }
     $facts += @{
         id = "coverage-baseline files"
@@ -259,6 +375,20 @@ foreach ($fact in $facts) {
             if ($line -match '\bAs of \d{4}-\d{2}-\d{2}\b') { continue }
             foreach ($pattern in $fact.patterns) {
                 foreach ($m in [regex]::Matches($line, $pattern, 'IgnoreCase')) {
+                    # ⚠ A QUOTED NUMBER IS A QUOTATION, NOT A CLAIM -- the same
+                    # exemption the retired-claim check has had from the start,
+                    # and it belongs here for the same reason. FORK.md records
+                    # what a false statement SAID while explaining why it was
+                    # false ("the 13 NO_FIX_* witnesses", "9000 digests"), and a
+                    # check that fires on the correction is a check that gets
+                    # deleted. Added jc-57, when writing up an audit's findings
+                    # made this file fail on its own account of them.
+                    #
+                    # The cost is real and worth stating: a false count inside
+                    # quotes is now invisible to this check. That is the same
+                    # trade docs/retired-claims.tsv already made, and quoting is
+                    # how a correction is written -- there is no third option.
+                    if (Test-InsideQuotes $line $m.Index) { continue }
                     $claimed = Resolve-Number $m.Groups[1].Value
                     if ($null -ne $claimed -and $claimed -ne $fact.value) {
                         $bad += ("{0}:{1}  claims {2}, but {3} says {4}`n          {5}" -f `

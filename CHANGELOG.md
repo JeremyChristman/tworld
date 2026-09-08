@@ -21,6 +21,68 @@ stay attached to something someone can see.
 
 ---
 
+## jc-57 — 2026-09-08
+
+An adversarial audit was pointed at this repository with no context and told to assume the
+documentation was covering for the engineering. It ran **233 source mutations** across nine modules,
+tried to defeat every gate, and reported a **45% kill rate overall — 32% in the untrusted-input
+parser and 8% on the engine's memory-safety bounds.** Its verdict is the honest one:
+
+> the prose meets a very high bar; the *test power* is roughly half what the headline numbers imply,
+> and close to zero on the bounds this project's own release history says matter most.
+
+Everything below was reproduced independently before it was fixed. Two findings were **defended**
+rather than fixed, and one turned out to be an equivalent mutant; those are recorded in `FORK.md`
+alongside the rest, because a review's wrong answers are worth keeping too.
+
+### Fixed — a release gate that could report work it had not done
+
+🔴 **`run-playtest.ps1` printed "the packaged jc-56 runs, replays real solutions, and plays" — exit
+0, zero solutions replayed.** Point it at a real collection whose `.dac` files are named differently
+from the two defaults and every replay is skipped with a yellow line that records no check. This
+file's own header spends twenty lines condemning precisely that shape; the warning was written about
+the *collection* check and the fix stopped one level short. A missing set is a **failure** now, and
+the closing sentence is assembled from what actually ran instead of being asserted.
+
+### Fixed — the memory-safety bounds had volume behind them, not power
+
+🔴 **jc-50 can be reverted wholesale and every local layer stays green** — this fork's own headline
+defect, `movelaws[]` indexed by a cell's bottom layer. So can the creature-list bound, and so can
+`encoding.c`'s run-length bound, which turned out not to be *undetected* but **unreached**: no test
+input and no committed fuzz reproducer decodes past 1,024 cells.
+
+- **A sixth test layer.** `run-tests.ps1 -Sanitize` — the whole unit suite under a trapping
+  UndefinedBehaviorSanitizer, **eleven seconds**, no `libubsan` needed. `CLAUDE.md` had documented
+  the recipe for two years and wired it into nothing. It exits non-zero on the jc-50 revert.
+- ⚠ **A sanitizer is an oracle, not coverage.** On that same revert `movelaw_creature` traps and
+  `movelaw_block` does not, because nothing ever called it with a bad id. Direct cases for both
+  helpers, a phantom-creature oracle for the creature-list bound, and over-long run-length inputs
+  for both `encoding.c` decode loops close what the sanitizer structurally cannot see.
+- Two latent defects fixed in `generic/tile.c`: a **Y** coordinate bounded against `CXGRID`, and a
+  map dereference that ran *before* the only bounds check in its loop.
+
+### Fixed — the anti-drift guard failed open, and a rewording walked past it
+
+🔴 **Deleting a truth source deleted the check.** `verify-docs.ps1` went from 13 checks to 11 and
+still printed "the documentation still agrees with the code", exit 0 — while `run-golden.ps1` and
+`run-nofix.ps1` in the same repository both fail closed. And six of eleven fabricated counts got
+through as near-miss rewordings ("25 of **the** 32", "40 **fuzz** targets"). Both fixed; twelve of
+twelve are caught now. ⚠ The first attempt at the second half **cried wolf on three correct
+sentences** and had to be narrowed again — that is in `FORK.md`, because it is the more useful half
+of the lesson.
+
+Also: `docs/toolchain.lock` said "the 13 `NO_FIX_*` witnesses" when the answer is 18, in the file
+whose whole purpose is that a compiler bump be done carefully. Four stale `file:line` citations
+corrected — including `res.c:309`, which lives in the record built so that one claim could not be
+got wrong a fourth time. `SECURITY.md`'s attack-surface table was missing `res.c` and
+`generic/tile.c`. `ci.yml` claimed cppcheck covered the whole shipped program; it analyzes no C++.
+
+### Added — the numbers now say what they mean
+
+⚠ **21,110 checks is not a measure of reach: three files are 94% of it**, and `random_test.c` alone
+is 73%. That is not padding — it kills 9 of 10 mutations — but leading with the aggregate oversold
+the suite and no document said so. `CLAUDE.md` and `AGENTS.md` now say it.
+
 ## jc-56 — 2026-09-08
 
 > ⚠ **`jc-55` is a burned tag: it exists in the repository and nothing was ever published under

@@ -28,8 +28,10 @@ careless change there invalidates solutions people spent years recording.
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1                  # -> build-static\tworld2.exe (ships)
 powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic  # much faster; for development
-powershell -ExecutionPolicy Bypass -File run-tests.ps1              # unit + end-to-end
+powershell -ExecutionPolicy Bypass -File run-tests.ps1              # ALL SIX layers
 powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build       # build first
+powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Sanitize    # just the UBSan layer (~11s)
+powershell -ExecutionPolicy Bypass -File verify-docs.ps1            # the docs still match the code
 powershell -ExecutionPolicy Bypass -File package.ps1                # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1         # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1        # engine snapshot; run after ANY engine edit
@@ -75,7 +77,16 @@ with a `TESTLANG:` comment and says why. Extra flags go in a `TESTFLAGS:` commen
 
 🔴 **`tw_expect_atleast(N)` in each test is load-bearing.** It fails the run if fewer than N checks
 executed, which is what catches a test function that has silently stopped being called. Raise it when
-you add cases; **never lower it to make a run pass.**
+you add cases; **never lower it to make a run pass.** ⚠ `input_test.c` and `dirinput_test.c` predate
+`tw_test.h` and carry the same guard hand-written (`if (checks < N)`), so grepping for the macro
+under-counts — an audit read that as two unguarded tests. Both floors are exact.
+
+🔴 **And run the sixth layer: `run-tests.ps1` includes `-Sanitize`**, the same cases under
+UndefinedBehaviorSanitizer. Eleven seconds, and it is the only local layer that can see a
+memory-safety guard being deleted — reverting jc-50 leaves every other layer green.
+
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 21,110.
+Mutation kill rate is the number that means something; see `CLAUDE.md` §5.
 
 `CLAUDE.md` §5 lists what is deliberately **not** covered — the Qt **widgets**, and **14 of the 32
 `NO_FIX_*` toggles**. Both are measured numbers rather than impressions: the differential matrix

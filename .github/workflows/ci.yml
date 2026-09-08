@@ -332,9 +332,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends cppcheck
           cppcheck --version
 
-      # Everything the shipped program compiles, minus the SDL front end (this
-      # fork does not build it -- see CLAUDE.md section 4) and minus the tests,
-      # which deliberately do odd things like #including a .c file.
+      # The C core: *.c and generic/*.c.
+      #
+      # ⚠ THE SCOPE STATED HERE USED TO BE WRONG, and the wrong version was the
+      # flattering one. It said "everything the shipped program compiles, minus
+      # the SDL front end and minus the tests" -- but the command below passes
+      # `*.c generic/*.c` and `--std=c99`, so it analyzes NO C++ AT ALL.
+      # Unexamined by cppcheck: settings.cpp, score.cpp, messages.cpp and all
+      # nine oshw-qt/*.cpp, which is the entire shipped GUI.
+      #
+      # That gap is covered -- CodeQL builds the real Qt tree with
+      # build-mode: manual and does see them -- so this is a second opinion the
+      # C++ does not get, not an unanalyzed surface. But a comment claiming
+      # coverage that does not exist is the thing an audit should find, and did.
+      # The C++ pass below is report-only for the reason given there.
       - name: cppcheck
         run: |
           set -o pipefail
@@ -362,6 +373,20 @@ jobs:
           echo "===== full report (warning / performance / portability) ====="
           cppcheck --enable=warning,performance,portability $common \
                    *.c generic/*.c 2>&1 || true
+
+          # The C++ the gate below cannot take. REPORT-ONLY and deliberately so:
+          # these files have never been through cppcheck, so an unknown number of
+          # first-run diagnostics is likely, and turning a release-blocking gate
+          # red on a diagnostic nobody has triaged is how a job gets ignored.
+          # Read this section, fix what is real, and only then consider gating.
+          # --language=c++ because $common carries --std=c99.
+          echo ""
+          echo "===== C++ report only (settings/score/messages + oshw-qt) ====="
+          cppcheck --enable=warning,performance,portability --inline-suppr $supp \
+                   --language=c++ --std=c++11 --platform=win64 -DWIN32 -D__GNUC__ -I . \
+                   --suppress=missingInclude --suppress=missingIncludeSystem \
+                   --suppress=unmatchedSuppression \
+                   *.cpp oshw-qt/*.cpp 2>&1 || true
 
           # PASS 2, THE GATE. 🔴 TWO PASSES, AND THE REASON IS A TRAP WORTH
           # KNOWING: --error-exitcode fires on ANY enabled diagnostic, not only

@@ -1158,6 +1158,170 @@ exactly what's mine:
    by re-running `build.ps1 -Manifest` afterwards was attesting a *second* build, not the packaged
    one. The wipe now carries the manifest across it.
 
+33. **The release playtest could report a green run having replayed nothing** (`test/run-playtest.ps1`).
+   The worst finding of an adversarial audit, and the sharpest, because this file's own header
+   spends twenty lines condemning exactly this shape — *"a release gate that quietly drops it and
+   still exits 0 is worse than no gate."* That warning was written about the **collection** check
+   and the fix stopped one level short: a set named in `-Sets` but absent from the collection
+   printed a yellow SKIPPED line and continued, recording no check at all.
+
+   Reproduced verbatim, with a real collection whose `.dac` files are simply named differently:
+
+   ```
+   --    SKIPPED: CCLP1.dat-ms.dac is not in the collection
+   --    SKIPPED: CCLP1.dat-lynx.dac is not in the collection
+   ########## 11 check(s), 0 failure(s) ##########
+     the packaged jc-56 runs, replays real solutions, and plays
+   EXIT = 0
+   ```
+
+   Two fixes, because there were two defects. The missing set is now a **failure** naming `-Sets`
+   and `-NoSolutions` as the deliberate ways to say you meant it. And the closing sentence is no
+   longer prose: it is assembled from `$script:replayedSets` and `$script:guiRan`, so a reduced run
+   says *"runs and replays real solutions (2 set(s))"* under a REDUCED banner, and a run that proved
+   neither says *"NOTHING ELSE WAS PROVEN. Do not cut a release from this."*
+
+   ⚠ **The general lesson is about the sentence, not the check.** The checklist above it was always
+   accurate; nobody reads a checklist when the last line says it passed. A summary line that can
+   describe work which did not happen is a lie the tool tells on the tool's own authority.
+
+34. **Eleven of twelve engine bound-mutations survived every layer that runs on Windows**
+   (`test/run-tests.ps1`, `test/mslogic_test.c`). The audit's central measurement, and it is worse
+   than it sounds: **jc-50 can be reverted wholesale** — this fork's own headline defect,
+   `movelaws[]` indexed by a cell's bottom layer, up to 47 entries past a 64-entry array on 18% of
+   real levels — and `run-tests.ps1`, the golden master and the `NO_FIX_*` matrix all report green.
+   Confirmed here independently: `122 checks, 0 failures`, and `1806 row(s) ... unchanged`.
+
+   🔴 **The committed fuzz reproducer for that defect is replayed on Windows every run and is
+   vacuous there.** `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature` reaches the bug; its
+   only oracle is "did the process die", and an out-of-bounds read of `.rodata` does not. Measured
+   on the same source: plain build `exit=0`, the same file under
+   `-fsanitize=undefined -fsanitize-undefined-trap-on-error` **exit 132**.
+
+   Three responses, and they are different kinds of thing:
+
+   - **A sixth layer.** `run-tests.ps1 -Sanitize` rebuilds every unit test with the trapping UBSan
+     that `CLAUDE.md` §2 had documented and wired into nothing. Eleven seconds for all 18 runs,
+     zero false positives on correct code, and it exits non-zero on the jc-50 revert. ⚠ Windows
+     reports `0xC000001D`, **not** the POSIX `132` that §2 quotes — written with `132` alone, the
+     diagnosis branch never fired and the failure surfaced as a generic "crashed".
+   - **Direct cases for the jc-50 helpers.** Because a sanitizer is an *oracle*, not coverage:
+     measured on the same revert, `movelaw_creature` traps and `movelaw_block` **survives**, since
+     nothing ever called it with a bad id. `movelaw_block(MOVELAWCOUNT + 47)` is now asserted to be
+     0 — which also pins the *chosen* answer, the one jc-50 had to invent because the old read was
+     undefined and had no correct value to preserve.
+   - **A phantom-creature oracle for the creature-list bound.** ⚠ And the obvious oracle was wrong
+     on the way. "The guard warns, so count warnings" passes either way — remove the guard and the
+     *next* check warns instead, from the out-of-bounds bytes it just read. What only happens on the
+     wrong side of the bound is a creature getting **built** out of memory past the map, so the case
+     poisons `map[POS_INVALID]` (which is `msstate`) with a monster id and asserts
+     `creaturecount == 1`.
+
+   ⭐ **And one mutation turned out to be equivalent, which is a real answer rather than a dodge.**
+   Turning initgame's `xy->to < CXGRID * CYGRID` into `<=` cannot change behavior: the map is
+   `CXGRID * (CYGRID + 1)`, so 1024 is the row-32 area and *in bounds*, and it is provably zero
+   there — `play.c:117` and `expandmsdatlevel()` both memset it, the decode loops cannot reach it,
+   and the one thing that gives row 32 a live cell runs during play. No test can kill that mutant.
+   What a test can do is pin the **premise**, so the case asserts row 32 is empty after load rather
+   than pretending to test the bound.
+
+35. **`encoding.c`'s run-length bound was not undetected — it was unreached** (`test/encoding_test.c`).
+   Deleting `pos < CXGRID * CYGRID` from the decode loops left everything green, and no sanitizer
+   could have helped: **no test input and no committed fuzz reproducer decodes to more than 1,024
+   cells**, so the guard was never executed. Without it, `state->map[pos++].top.id = id` writes an
+   attacker-chosen tile id past the array, from a downloaded `.dat`.
+
+   Six `0xFF` runs of 255 is 1,530 cells from eighteen bytes. ⚠ The oracle is **row 32**, not a
+   crash: the first 32 cells overrun are still inside the array, so they neither fault nor trip a
+   sanitizer — and they are always zero after a correct decode. Both layers get a case, because the
+   bound is written twice and jc-44's was two bytes short in exactly one of a matched pair.
+
+   ⚠ Two arithmetic mistakes worth recording, both caught by the case failing loudly rather than
+   passing vacuously. Five runs proves the *write* bound but not the outer loop's, because the fifth
+   run is read in full and merely written short — `n == size` either way, so no "extra bytes"
+   warning fires. And the lower layer must be **exactly** 1,024 cells: a short one warns for its own
+   reason and silently defeats the warning assertion. Also added: `readpos` at **x == 32 exactly**,
+   the only value that tells `< CXGRID` from `<= CXGRID`, where a mis-bound does not fault but
+   **aliases** onto a valid-but-wrong cell one row down.
+
+36. **`verify-docs.ps1` failed open, and a rewording walked past it** (`verify-docs.ps1`).
+   Two defects in the guard this project built to stop facts drifting.
+
+   **It failed open.** Every fact sat behind a bare `if (Test-Path $source)`, so deleting a truth
+   source deleted the check: moving `docs/test-counts.tsv` aside took the run from 13 checks to 11
+   and it still printed *"the documentation still agrees with the code"*, exit 0. The repository
+   already had the right pattern twice over — `run-golden.ps1` and `run-nofix.ps1` both fail closed,
+   the latter with *"no witnesses in the matrix at all -- refusing to report success."* Now
+   `Need-Source` fails the run and names the file.
+
+   **And it matched phrasings, not facts.** Eleven fabricated counts were appended to `CLAUDE.md`
+   and six went through, every one of them a near-miss of a form that *was* caught:
+
+   | the fabricated claim | why it slipped |
+   |---|---|
+   | "25 of the 32 toggles have a witness" | one extra word, "the" |
+   | "the matrix holds 25 witnesses" | a different verb |
+   | "9000 digests" | the trailing "over 903 levels" clause dropped |
+   | "99999 checks across 18 unit runs" | the clauses reordered |
+   | "40 fuzz targets" | a word between the number and the noun |
+
+   Twelve of twelve are caught now.
+
+   ⚠ Each quoted claim above sits on ONE line on purpose. `Test-InsideQuotes` counts quotes within a
+   single line, so a quoted example that wraps loses its opening `"` and reads as an assertion —
+   which is exactly how this paragraph made `verify-docs.ps1` fail on its own account of the fix.
+
+   🔴 **The first attempt to fix that was worse than the gap it closed.** Broadening the patterns
+   immediately failed on three *correct* sentences: the negation "14 of the 32 toggles have **no**
+   witness", the golden master's unrelated "2 of 32", and per-file figures like "74 unit checks". A
+   check that cries wolf gets deleted rather than fixed. The positive forms now require the sentence
+   to assert a witness, the negation is **derived and checked separately**, and the header says
+   plainly that this matches phrasings — because the limitation that bites is not the novel claim it
+   disclosed, it is the ordinary rewording it did not.
+
+   Also: the scan reached `*.md` and `README.txt` only, and a stale count was living exactly in the
+   gap — `docs/toolchain.lock` said *"the 13 NO_FIX_* witnesses"* when the answer was 18, in a
+   present-tense instruction to whoever bumps the compiler. The number is gone (a duplicate nothing
+   can check should not exist) and the file is scanned now.
+
+37. **Two latent defects in `generic/tile.c`, and an honest accounting of what is still untested**
+   (`generic/tile.c`). Both found by reading, neither reachable by any test in the tree.
+
+   - `:476` bounded a **Y** coordinate against **`CXGRID`**. Correct only because both grids are 32,
+     and silently wrong the moment they differ.
+   - `:500` dereferenced `state->map[cr->pos]` in the `pedanticmode` branch **before** the only
+     bounds check in the loop — which comes after it and checks x and y against the *viewport*, not
+     the array. An out-of-range `cr->pos` is precisely what jc-45 and jc-50 were, and `readpos()`
+     yields `POS_INVALID`, one past the map. Now bounded first.
+
+   ⚠ **What was NOT fixed, stated rather than left implied.** `generic/tile.c` has the worst
+   mutation score in the tree (24%): its 3,270 checks come from three loops over the tileset lookup
+   table, and the map-viewport geometry at `:417-510` has no coverage at all. That half needs a fake
+   surface layer and a rendering oracle, which is a larger piece of work than this release; it is
+   recorded here so the next person starts from the measurement rather than from the check count.
+
+38. **Documentation coordinates that had rotted, including inside the file built to stop that**
+   (`CLAUDE.md`, `SECURITY.md`, `docs/retired-claims.tsv`, `.github/workflows/ci.yml`). The
+   substance of each claim was right; only the line numbers moved.
+
+   🔴 The one worth naming: `SECURITY.md` and `retired-claims.tsv` both cite **`res.c:309`** as the
+   line that lowercases *the key* — the citation in the record built so that claim could not be got
+   wrong a fourth time. It lowercases the **section name**; the key is lowercased at **`:324`**. It
+   went unnoticed because 309 happens to be a structurally identical `tolower` loop.
+
+   Also corrected: the option string is at `tworld.c:2256` (not 2205); `combinepath()` is at
+   `fileio.c:452` with the `dest[-1]` read at `:472` (not 394, which is inside a different
+   function); the `#ifdef WIN32` branch is `fileio.c:21`. And `SECURITY.md`'s attack-surface table
+   omitted **`res.c`** — which has had its own fuzz target since jc-47 — and **`generic/tile.c`**,
+   whose input is a downloaded `.bmp` whose *dimensions* select the decode path.
+
+   ⚠ `ci.yml` claimed cppcheck covered "everything the shipped program compiles"; it passes
+   `*.c generic/*.c --std=c99` and analyzes **no C++ at all** — not `settings.cpp`, not `score.cpp`,
+   not any of the nine `oshw-qt/*.cpp`. CodeQL does build and see them, so the gap is a missing
+   second opinion rather than an unanalyzed surface, but the comment asserted coverage that did not
+   exist. A report-only C++ pass was added; report-only because a never-triaged first run of a
+   linter must not be able to block a release.
+
 
 ## Testing
 

@@ -140,7 +140,7 @@ program returns `EXIT_SUCCESS` however many solutions failed. And even with `-q`
 
 `test\run-tests.ps1` compiles with **`-std=gnu11` / `-std=gnu++11`, never `-std=c99`.** Under
 `-std=c99` GCC sets `__STRICT_ANSI__`, and MinGW then defines `_WIN32` but **not** bare `WIN32` —
-while `fileio.c:20` branches on `#ifdef WIN32` to choose `DIRSEP_CHAR` and `createdir()`. A
+while `fileio.c:21` branches on `#ifdef WIN32` to choose `DIRSEP_CHAR` and `createdir()`. A
 strict-ANSI test compiles the POSIX branch, which is not the branch that ships. (It happens not to
 compile at all, which is the lucky outcome; a module that differed more quietly would just lie.)
 
@@ -197,16 +197,42 @@ a by-hand comparison found the script had been silent about that class the whole
 ## 5. Tests
 
 ```
-run-tests.ps1              entry point: runs ALL FIVE layers below
+run-tests.ps1              entry point: runs ALL SIX layers below
   test\run-tests.ps1       unit — compiles the source under test directly; needs only gcc
   test\run-e2e.ps1         end-to-end — drives the real executable's GUI-free command line
   test\run-qt-tests.ps1    the oshw-qt layer; skips cleanly without Qt
   test\run-golden.ps1      the golden-master engine snapshot
   test\run-nofix.ps1       the NO_FIX_* differential matrix
+  test\run-tests.ps1 -Sanitize   the same unit cases under UndefinedBehaviorSanitizer
 ```
 
-Current state: **18 unit runs, 21,082 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
+🔴 **The sixth layer is new in jc-57 and it exists because of one measurement.** An adversarial
+audit reverted **jc-50** — this fork's own headline defect, `movelaws[]` indexed by a cell's bottom
+layer — and the unit suite, the golden master and the `NO_FIX_*` matrix all stayed green. So did
+the committed fuzz reproducer for that exact defect, which is replayed on Windows every run: its
+only oracle is "did it crash", and an out-of-bounds read of `.rodata` does not crash. The Linux
+`sanitizers` job would have caught it; nothing a developer runs before pushing would.
+`-fsanitize=undefined -fsanitize-undefined-trap-on-error` needs no `libubsan`, takes **11 seconds**
+over the whole suite, and turns that revert into an exit-132 failure.
+
+⚠ **A sanitizer is an oracle, not coverage** — it sees only what a test actually executes. Measured
+on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive it) and
+`movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
+is why jc-57 also added direct cases for those helpers.
+
+Current state: **18 unit runs, 21,110 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
+
+🔴 **DO NOT READ 21,110 AS A MEASURE OF REACH. Three files are 94% of it.**
+`random_test.c` alone is **15,534** — 73.6%, because it asserts a handful of properties a couple of
+thousand times each — then `tile_test.c` 3,270 and `solution_test.c` 1,207. That leaves about
+**1,100 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+`series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
+
+That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
+it is a strong test whose *counting* happens to dominate. But an audit was right that leading with
+the aggregate oversells the suite, and no document said so. **Mutation kill rate is the number that
+means something; check count is a smoke alarm.** See §5's coverage note and `docs/coverage-baseline.tsv`.
 
 ⚠ **Four of those six numbers are now CHECKED rather than typed** — the unit pair against
 `docs/test-counts.tsv` (written by `test\run-tests.ps1` on a complete run), the digests against
@@ -632,6 +658,7 @@ story here, add it to `FORK.md` instead and put the lesson here, once.
 | jc-52 | `TWTextCoder::encode()` shifted one byte for eleven characters; two more unguarded `movelaws[]` indexes; an uninitialized pointer on a path-qualified command line | `FORK.md` items 23–25 |
 | jc-54 | `tw_settings.ini` was rewritten by truncating it in place, so an interrupted write destroyed it; and a value ending in a carriage return did not survive its own round trip | `FORK.md` items 26–27 |
 | jc-56 | Not shipped defects — a feature, and five quiet failures found by building its guards: an unchecked third copy of the stock settings file, a documented count four out, a `foreach` variable that had been eating a script parameter since the file was written, a **flaky wall-clock test that burned the jc-55 tag**, and `package.ps1` deleting the build manifest RELEASING.md tells you to write one command earlier | `FORK.md` items 28–32 |
+| jc-57 | **An adversarial audit's findings.** A release gate that reported replaying solutions it had skipped; eleven of twelve engine bound-mutations surviving every local layer, jc-50 revertible wholesale among them; `encoding.c`'s run-length bound unREACHED rather than undetected; `verify-docs.ps1` failing open; and two latent `generic/tile.c` defects | `FORK.md` items 33–38 |
 
 Every one of those is replay-neutral where it touches the engine, and the evidence is in `FORK.md`
 with the release that carries it.
@@ -708,6 +735,33 @@ how the next edit will break something, you have just specified a test.** Write 
 well. Both were cheap here — one asserts every row is terminated inside the bound, and it fires
 with a readable message.
 
+**🔴 A LESSON WRITTEN DOWN AND APPLIED ONCE IS NOT APPLIED.** The poisoned-byte technique above is
+called, three paragraphs up, "the single most reusable idea in the file". An audit found it had been
+used on **exactly one** of at least four analogous guards, and the other three were all revertible
+with the whole suite green — including jc-50, this fork's own headline defect. When you solve a
+class of problem, **grep for the rest of the class in the same sitting.** The lesson costs nothing
+to write and everything to leave unapplied.
+
+**🔴 "NOT DETECTED" AND "NOT EXERCISED" ARE DIFFERENT DIAGNOSES AND NEED DIFFERENT FIXES.** Separate
+them before reaching for a tool. `encoding.c`'s run-length bound was not undetected — no input in
+the tree, and no committed fuzz reproducer, decoded past 1,024 cells, so nothing ever *ran* it and
+no sanitizer could have helped. Meanwhile jc-50's revert was executed and simply unnoticed, which a
+sanitizer fixes instantly. **A sanitizer is an oracle, not coverage.** Measured on one revert:
+`movelaw_creature` traps, `movelaw_block` sails through, and the only difference is whether a test
+happened to call it.
+
+**⚠ ASK WHAT ONLY HAPPENS ON THE WRONG SIDE OF THE BOUND — AND THEN CHECK THAT NOTHING ELSE CAUSES
+IT.** The obvious oracle is usually contaminated. "The guard warns, so count warnings" failed twice
+in one sitting: remove the creature-list bound and the *next* check warns instead, from the
+out-of-bounds bytes it just read; give a test record a short lower layer and it warns for its own
+unrelated reason. Both versions passed while killing nothing. The working oracles were a phantom
+creature and a non-zero row 32 — side effects with exactly one possible cause.
+
+**⚠ A CHECK THAT CRIES WOLF IS WORSE THAN THE GAP IT CLOSES.** Broadening `verify-docs.ps1`'s
+patterns to catch six rewordings immediately failed on three *correct* sentences — a negation, an
+unrelated fact sharing a number, and a per-file figure. The fix people reach for then is deleting
+the check. Run a widened checker against the **real** documents before believing it.
+
 **🔴 NEVER MAKE ELAPSED TIME THE ORACLE WHEN THE PROPERTY IS A COUNT.** jc-54 proved its settings
 retry loop ran by asserting 30 ms had passed, arguing "Sleep can only ever overshoot, so this cannot
 flake in the fast direction." It flaked and **burned the jc-55 tag**, on the same commit whose CI
@@ -736,7 +790,7 @@ What follows is what is still live.
 
 ### 8.2 `-v` cannot work as documented
 
-The option string at `tworld.c:2205` is `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v`
+The option string at `tworld.c:2256` is `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v`
 takes an argument, while its handler takes none and the usage text says "Display version number and
 exit". `tworld2 -v` prints "option requires an argument"; `tworld2 -v x` prints `2.3.1`. One
 character. `test/run-e2e.ps1` pins the current behavior deliberately, so fixing it turns that case
@@ -744,7 +798,7 @@ red and tells you to invert it. Upstream's.
 
 ### 8.3 The smaller ones
 
-- **`combinepath()` reads `dest[-1]` when `dir` is empty** (`fileio.c:394`). No shipped configuration
+- **`combinepath()` reads `dest[-1]` when `dir` is empty** (`fileio.c:472`, inside `combinepath()` at `:452`). No shipped configuration
   reaches it: `SAVEDIR` is defined for non-Windows Debug only, and `root` cannot be empty since
   jc-40. The one way in is an explicit `-R ""` on the command line. Latent, not live. Upstream's.
 - **`series.c:41`** passes `sizeof g->list` (a pointer) where `sizeof *g->list` was meant. It
