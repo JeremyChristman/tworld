@@ -67,7 +67,7 @@ if (-not (Test-Path $exePath)) { throw "no executable at $exePath -- build it fi
 # Wipe the whole dist folder: a package run that fails partway must not leave the PREVIOUS zip
 # sitting next to a half-built staging folder under the same name, looking current.
 #
-# 🔴 EXCEPT THE BUILD MANIFEST, WHICH THIS USED TO DESTROY (fixed jc-55). RELEASING.md step 5 says,
+# 🔴 EXCEPT THE BUILD MANIFEST, WHICH THIS USED TO DESTROY (fixed jc-56). RELEASING.md step 5 says,
 # in this order:
 #
 #     build.ps1 -ExpectTag jc-N -Manifest dist\build-manifest.json
@@ -131,12 +131,12 @@ foreach ($dll in "zlib1.dll", "libzstd.dll") {
 #                   loader falls back to the rc file's built-in tiles, which is exactly the
 #                   behavior of an absent key. Shipping the line with no value documents that
 #                   the setting exists and can be edited -- same pattern as selectedseries=.
-#   showlevelname=true   jc-55. 🔴 THE ONE VALUE HERE THAT IS NOT "false", and it is not an
+#   showlevelname=true   jc-56. 🔴 THE ONE VALUE HERE THAT IS NOT "false", and it is not an
 #                   oversight: this switch is OPT-OUT, because showing the level name is
 #                   upstream 2.3.1's own behavior. settingoptedout() answers "not opted out"
 #                   for an absent key, so true IS the absent-key behavior. Writing false here
 #                   would silently blank every fresh install's title bar.
-#   showlevelpack=false  jc-55. Opt-in, like every other switch here. The pack name in the
+#   showlevelpack=false  jc-56. Opt-in, like every other switch here. The pack name in the
 #                   title is this fork's addition, so a downloader gets stock Tile World --
 #                   the same reasoning as showbuildtag (ADR 0006).
 #

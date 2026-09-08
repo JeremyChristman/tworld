@@ -31,7 +31,7 @@ void setstringsetting(char const * name, char const * val);
  * core and TileWorldApp::SettingOptedIn(). */
 int settingoptedin(char const * name);
 
-/* MOD (Jeremy, jc-55): TRUE when an OPT-OUT switch has been turned off -- only "0" or "false"
+/* MOD (Jeremy, jc-56): TRUE when an OPT-OUT switch has been turned off -- only "0" or "false"
  * (any casing, surrounding whitespace ignored) count; absent, blank, "1", "true" and garbage all
  * mean "not opted out", so the feature stays on.
  *

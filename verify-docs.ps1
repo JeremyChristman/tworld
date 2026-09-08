@@ -225,7 +225,7 @@ $numberWords = @{
 }
 function Resolve-Number([string]$token) {
     if ($token -match '^\d+$') { return [int]$token }
-    # ⚠ THOUSANDS SEPARATORS, added jc-55. This file writes its larger counts as
+    # ⚠ THOUSANDS SEPARATORS, added jc-56. This file writes its larger counts as
     # "21,082" and "1,806", and without this the resolver returned $null for
     # them -- which does not fail, it SKIPS. Two facts would have been checked
     # vacuously and reported "ok". The grouping is required to be well formed so

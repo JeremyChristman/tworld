@@ -505,7 +505,7 @@ static void test_optedin(void)
 
 /* --- the opt-OUT predicate ------------------------------------------------ *
  *
- * MOD (Jeremy, jc-55). settingoptedout() is settingoptedin()'s mirror, for a
+ * MOD (Jeremy, jc-56). settingoptedout() is settingoptedin()'s mirror, for a
  * switch whose default is ON -- showlevelname, the level name in the title bar,
  * which is upstream 2.3.1's own behavior and so may only be turned off
  * deliberately.
@@ -579,12 +579,12 @@ static void test_optedout(void)
 
 /* --- the section table's own shape ---------------------------------------- *
  *
- * MOD (Jeremy, jc-55). SECTIONS[] rows are BOTH sentinel-terminated and
+ * MOD (Jeremy, jc-56). SECTIONS[] rows are BOTH sentinel-terminated and
  * length-bounded, and the comment above the table says why: fill every slot
  * with real keys and the terminator quietly disappears, and savesettings()
  * walks into the next row's name.
  *
- * 🔴 THIS IS NOT HYPOTHETICAL, IT IS WHAT jc-55 ALMOST DID. [Display] sat at
+ * 🔴 THIS IS NOT HYPOTHETICAL, IT IS WHAT jc-56 ALMOST DID. [Display] sat at
  * eleven of twelve slots and this release added two keys to it. The jc-41
  * comment predicting that ("the NEXT [Display] setting must raise
  * SECTION_MAXKEYS") was read and acted on -- but a comment is not a check, and
@@ -619,7 +619,7 @@ static void test_sectiontable(void)
                       SECTIONS[s].keys[k], seen);
         }
 
-    tw_case("jc-55's two title keys are in the table, so they are written back");
+    tw_case("jc-56's two title keys are in the table, so they are written back");
     /* A setting missing from SECTIONS[] still works, but lands under [Other]
      * rather than beside the other display switches -- which is how
      * lynxtileset and mstileset shipped wrong for two releases. */
@@ -710,7 +710,7 @@ static void test_roundtrip(void)
      * program reproduces its own format exactly, so merely running the game
      * never rewrites a user's file into something else. */
     /* ⚠ THIS LITERAL IS A SECOND COPY OF package.ps1's STOCK FILE, and it had
-     * silently drifted from it once already: jc-55 added two keys there and
+     * silently drifted from it once already: jc-56 added two keys there and
      * every case here still passed, because the round trip is happy to
      * reproduce whatever it is handed. verify-defaults.ps1 now compares the two
      * character for character, which is the only reason this copy is allowed to
@@ -1012,12 +1012,9 @@ static void test_staging(void)
 
 	CHECK(h != INVALID_HANDLE_VALUE);
 	if (h != INVALID_HANDLE_VALUE) {
-	    ULONGLONG	t0, elapsed;
-
 	    warn_count = 0;
-	    t0 = GetTickCount64();
+	    replaceattempts = 0;
 	    savesettings();
-	    elapsed = GetTickCount64() - t0;
 	    CloseHandle(h);
 
 	    CHECK_STR(filetext(), before.c_str());
@@ -1031,14 +1028,24 @@ static void test_staging(void)
 	     * retry matters more than the atomicity does -- measured, one attempt
 	     * loses 19% of writes and four lose none -- so it needs a witness.
 	     *
-	     * Measured on this machine: ~71-80 ms with the full backoff against
-	     * ~0.4 ms with one attempt. A 30 ms floor sits between them with
-	     * enormous margin, and Sleep can only ever overshoot, so this cannot
-	     * flake in the fast direction. It does NOT witness that a lock which
-	     * clears mid-call is recovered -- that needs a second thread. */
-	    CHECK_MSG(elapsed >= 30,
-		      "the failed replace took %llums; the backoff cannot have run",
-		      (unsigned long long)elapsed);
+	     * ⚠ THIS WAS A WALL-CLOCK FLOOR UNTIL jc-56 AND IT FLAKED, on the
+	     * release build of a commit whose CI build had just passed. The old
+	     * comment argued it could not: "Sleep can only ever overshoot." Sleep
+	     * does -- but GetTickCount64 advances in ~15.6 ms steps, so the
+	     * MEASUREMENT undershoots regardless, and how long Sleep(2) really
+	     * takes depends on a system timer resolution any other process can
+	     * change. The maintainer's desktop measured 71-80 ms; the CI runner
+	     * measured 16 against a 30 ms floor.
+	     *
+	     * The count is exact and is the property that was actually meant. Four
+	     * is the length of settings.cpp's backoff table; if that table is
+	     * deliberately resized, change this number to match it and say why in
+	     * both places. It does NOT witness that a lock which clears mid-call
+	     * is recovered -- that needs a second thread. */
+	    CHECK_MSG(replaceattempts == 4,
+		      "the failed replace made %u attempt(s), not 4:"
+		      " the backoff loop cannot have run to the end",
+		      replaceattempts);
 	}
     }
 
@@ -1251,7 +1258,7 @@ int main(void)
      * mechanism exists to report: it would let a case stop running while the
      * suite stayed green.
      *
-     * jc-55 raised this from 128: test_optedout() adds 28 checks and
+     * jc-56 raised this from 128: test_optedout() adds 28 checks and
      * test_sectiontable() 21, none of them platform-dependent. ⚠ Twelve of
      * test_sectiontable()'s are derived from the NUMBER OF KEYS in SECTIONS[],
      * so adding a setting raises the real count on its own -- which is fine for

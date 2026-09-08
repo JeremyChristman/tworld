@@ -472,7 +472,7 @@ static void test_issolved(void)
     CHECK_INT(issolved(&gs, 3), TRUE);
 }
 
-/* jc-55: the window title. composesubtitle() is pure -- buffer in, string out,
+/* jc-56: the window title. composesubtitle() is pure -- buffer in, string out,
  * two settings read through the stubs above -- so all four states are directly
  * reachable here, which is the reason it was lifted out of runcurrentlevel()
  * rather than gated in place. */

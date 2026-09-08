@@ -710,7 +710,7 @@ static void changesubtitle(char const* subtitle) {
     setsubtitle(subtitle);
 }
 
-/* MOD (Jeremy, jc-55): build the window subtitle out of the level PACK name and the level NAME,
+/* MOD (Jeremy, jc-56): build the window subtitle out of the level PACK name and the level NAME,
  * under two independent switches in tw_settings.ini's [Display] section.
  *
  * The four reachable titles, with what each one is:
@@ -1767,7 +1767,7 @@ static int runcurrentlevel(gamespec* gs) {
 
     valid = initgamestate(gs->series.games + gs->currentgame,
                           gs->series.ruleset);
-    /* MOD (Jeremy, jc-55): what the title bar says is now two settings rather
+    /* MOD (Jeremy, jc-56): what the title bar says is now two settings rather
      * than fixed. composesubtitle() above has the four states and why the two
      * switches need two different predicates. */
     {

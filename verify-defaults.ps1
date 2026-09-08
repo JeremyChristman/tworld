@@ -27,13 +27,13 @@ WHAT IS AND IS NOT CHECKED
 
 Checked: the SET OF KEYS in the stock file against settings.cpp's SECTIONS[],
 which section each key sits under, the headroom left in SECTION_MAXKEYS, and --
-added in jc-55 -- the whole stock file against the C string literal in
+added in jc-56 -- the whole stock file against the C string literal in
 settings_test.c's "comes back BYTE FOR BYTE" case, character for character.
 
 That third copy exists because a test that read the file from package.ps1 would
 assert only that the round trip reproduces whatever it is handed, which is true
 of any input at all. The literal is what makes the assertion mean something. It
-promptly drifted the first time it could: jc-55 added two keys, and every case
+promptly drifted the first time it could: jc-56 added two keys, and every case
 in settings_test.c stayed green while its literal described the PREVIOUS
 release's file. So it is compared here rather than trusted.
 
@@ -170,13 +170,13 @@ foreach ($name in $shipped.Keys) {
 
 # ------------------------------------------- and the test's own copy of it ---
 #
-# 🔴 THERE IS A THIRD COPY OF THE STOCK FILE, and until jc-55 nothing checked it.
+# 🔴 THERE IS A THIRD COPY OF THE STOCK FILE, and until jc-56 nothing checked it.
 # settings_test.c's "the shipped stock file comes back BYTE FOR BYTE" case holds
 # the whole file as a C string literal, because that is what makes the assertion
 # a real one -- a test that read package.ps1 would only be asserting that the
 # round trip reproduces whatever it is handed, which it does for any input.
 #
-# The cost is a duplicate, and it drifted the first time it could: jc-55 added
+# The cost is a duplicate, and it drifted the first time it could: jc-56 added
 # two keys to package.ps1 and settings.cpp, and every case in settings_test.c
 # still passed while its literal described the previous release's file. So the
 # duplicate stays -- and is compared here, character for character. ADR 0006

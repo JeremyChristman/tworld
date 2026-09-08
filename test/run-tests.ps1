@@ -215,7 +215,7 @@ foreach ($test in $tests) {
         Write-Host "=== $($test.Name) === skipped: its TESTLANG excludes '$Lang'" -ForegroundColor DarkGray
         continue
     }
-    # $testLang, NOT $lang. MOD (Jeremy, jc-55): this loop variable used to be
+    # $testLang, NOT $lang. MOD (Jeremy, jc-56): this loop variable used to be
     # spelled $lang, which -- PowerShell being CASE-INSENSITIVE about variable
     # names -- IS the $Lang parameter, exactly the trap written up at the top of
     # this file for $OutDir, live two dozen lines below it. By the end of the
@@ -223,7 +223,7 @@ foreach ($test in $tests) {
     #
     # It was never loud: the only two readers after this loop were the skip
     # message above, which then named the wrong language for every test after
-    # the first, and jc-55's new "was this a complete run?" guard, which read
+    # the first, and jc-56's new "was this a complete run?" guard, which read
     # "c++" and silently never wrote its file. That is how a shadowed parameter
     # fails -- not with an error, with a quietly wrong answer downstream.
     foreach ($testLang in $testLanguages) {
@@ -398,7 +398,7 @@ foreach ($r in $runs) {
 }
 Write-Host ("  {0} run(s), {1:N0} checks total" -f $runs.Count, $totalChecks)
 
-# MOD (Jeremy, jc-55): record the totals so a document cannot quote them wrong.
+# MOD (Jeremy, jc-56): record the totals so a document cannot quote them wrong.
 #
 # 🔴 CLAUDE.md section 5 had "21,008 checks" while a full run reported 21,012 --
 # four checks stale, nobody's fault in particular, and exactly the drift

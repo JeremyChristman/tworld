@@ -417,9 +417,9 @@ public class TWPT {
                 # oracle for "a level is actually loaded" rather than "a window
                 # exists". It reads a bare "Tile World" on the prologue screen.
                 #
-                # ⚠ THE PATTERN WAS ' - .+ - ' UNTIL jc-55 AND HAD TO CHANGE.
+                # ⚠ THE PATTERN WAS ' - .+ - ' UNTIL jc-56 AND HAD TO CHANGE.
                 # Two separators meant "<pack> - <level>", which was the only
-                # title this fork could produce; jc-55 made the pack name
+                # title this fork could produce; jc-56 made the pack name
                 # opt-in and the shipped default is now upstream's one
                 # separator. The gate caught its own staleness by failing on a
                 # correct build -- which is the right way round, but note that
@@ -437,7 +437,7 @@ public class TWPT {
                 # nobody can find out about is not shipped" cuts both ways.
                 # This is the release's headline behavior change: a fresh
                 # download must show plain Tile World 2.3.1's title.
-                Check "jc-55: the stock title does NOT include the pack name" `
+                Check "jc-56: the stock title does NOT include the pack name" `
                       ($title -notmatch ' - .+ - ') `
                       ("expected one separator, got: " + $title)
                 Check "the GUI survives a few moves" (-not $proc.HasExited)
@@ -524,11 +524,11 @@ public class TWPT {
                 Start-Sleep -Milliseconds 900
                 $proc2.Refresh()
                 $title2 = $proc2.MainWindowTitle
-                Check "jc-55: showlevelpack=true puts the pack name back" `
+                Check "jc-56: showlevelpack=true puts the pack name back" `
                       ($title2 -match ' - .+ - ') `
                       ("expected two separators with showlevelpack=true, got: " + $title2)
             } else {
-                Check "jc-55: the game reopened to read the edited settings file" $false `
+                Check "jc-56: the game reopened to read the edited settings file" $false `
                       "no main window on the second launch, so the setting could not be checked"
             }
         }

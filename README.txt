@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-55
+  Tile World  --  Jeremy Christman's fork                    build jc-56
 ==============================================================================
 
   1. What this is
@@ -417,7 +417,7 @@ showlevelpack   Whether the title bar also names the level SET you are playing,
                     off   off    Tile World
 
                 With showbuildtag on as well, the build tag goes first:
-                "Tile World [jc-55] - CCLP1 - Clubhouse".
+                "Tile World [jc-56] - CCLP1 - Clubhouse".
 
 
 [Game]
@@ -497,8 +497,17 @@ nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
 
-jc-55  --  You choose what the title bar says
+jc-56  --  You choose what the title bar says
 --------------------------------------------------------------------
+
+  * IF YOU ARE LOOKING FOR jc-55, THERE IS NO SUCH DOWNLOAD. It was tagged
+    with this same change and the automated release checks then failed one
+    test -- on the same code that had passed the same test minutes earlier.
+    The test itself was at fault: it measured elapsed time to prove the
+    settings file's retry loop had run, and elapsed time turned out to depend
+    on machine settings outside this program's control. It counts the retries
+    now, which cannot be ambiguous. Tags here are never reused or moved, so
+    the corrected build is jc-56 and nothing was ever released as jc-55.
 
   * THE TITLE BAR IS NOW TWO SETTINGS INSTEAD OF ONE FIXED FORMAT.
     showlevelname decides whether the level's name appears; showlevelpack

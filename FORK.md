@@ -1043,7 +1043,7 @@ exactly what's mine:
    (`tworld.c`, `settings.cpp`). Not a defect — a feature, recorded here because the interesting
    part is the trap it walked into on the way.
 
-   Since jc-1 the title was `"<pack> - <level>"`, fixed. jc-55 splits it: `showlevelpack` (the set
+   Since jc-1 the title was `"<pack> - <level>"`, fixed. jc-56 splits it: `showlevelpack` (the set
    name, this fork's addition) and `showlevelname` (the level name, upstream 2.3.1's own behavior).
    All four combinations are reachable, and **the default is upstream's**, not jc-54's — the same
    reasoning as the build tag in ADR 0006, that a stranger's download should look like stock Tile
@@ -1078,7 +1078,7 @@ exactly what's mine:
    whole shipped file as a C string literal — deliberately, because a test that *read* the file
    from `package.ps1` would assert only that the round trip reproduces whatever it is handed, which
    is true of any input at all. So the literal earns its place. What it did not have was a check:
-   jc-55 added two keys to `settings.cpp` and `package.ps1`, and every case in `settings_test.c`
+   jc-56 added two keys to `settings.cpp` and `package.ps1`, and every case in `settings_test.c`
    stayed green while its literal described the previous release's file.
 
    `verify-defaults.ps1` now compares the two character for character and reports which keys
@@ -1111,6 +1111,52 @@ exactly what's mine:
    about this exact trap for `$OutDir`, two dozen lines above where it was live. It was never loud:
    the only other reader was a skip message, which had been naming the wrong language for every
    test after the first.
+
+31. **A wall-clock assertion that could not have worked, and the tag it burned** (`settings.cpp`,
+   `test/settings_test.c`). jc-54 needed a witness that `replacefile()`'s retry loop actually runs —
+   without one, cutting it to a single attempt leaves the whole suite green, because every
+   successful write in every other case succeeds on the first try. The witness it got was a floor on
+   elapsed time, with this reasoning written beside it:
+
+   > Measured on this machine: ~71-80 ms with the full backoff against ~0.4 ms with one attempt. A
+   > 30 ms floor sits between them with enormous margin, and **Sleep can only ever overshoot, so
+   > this cannot flake in the fast direction.**
+
+   🔴 **It flaked on its second release, on the same commit whose CI job had just passed.** The
+   release runner reported 16 ms. Two independent reasons, and the quoted sentence addresses
+   neither:
+
+   - **`GetTickCount64` advances in ~15.6 ms steps.** Sleep overshooting the requested time says
+     nothing about the *measurement*, which can undershoot the true elapsed by nearly a tick
+     depending only on where the first read landed within one.
+   - **How long `Sleep(2)` takes is not a property of this process.** With the default coarse timer
+     each step rounds up to ~15.6 ms and the four sleeps total ~76 ms — the maintainer's desktop.
+     Any process on the machine can call `timeBeginPeriod(1)` and make it ~19 ms globally, which is
+     the state the CI runner was in. The "enormous margin" was measured on one side of a setting
+     nothing here controls.
+
+   `replacefile()` now increments a file-scope `replaceattempts` and the test asserts it reached 4.
+   Deterministic, free, readable when it fails (*"the failed replace made 1 attempt(s), not 4"*),
+   and — the part worth carrying — **it is the property that was actually meant.** Nobody cared how
+   long the write took; they cared that four attempts happened. Verified by the same mutation as
+   before: cutting the backoff table to one entry fails the case.
+
+   ⚠ **The renumbering, and why the workflow was not simply re-run.** `jc-55` was tagged, the
+   release job failed, and a re-run would very probably have gone green — the test is a coin flip,
+   not a real defect in the artifact. That is exactly the reason it was not done. A gate that fails
+   half the time gets re-run until it passes, which is indistinguishable from having no gate; and
+   the fix changes `settings.cpp`, so the executable is not the one `jc-55` would have described in
+   any case. The ruleset on `refs/tags/jc-*` forbids moving or deleting a tag, so the corrected
+   build ships as jc-56 and nothing was ever published as jc-55 — the same handling as jc-53.
+
+32. **`package.ps1` destroyed the build manifest it was documented to be run after** (`package.ps1`).
+   `.github/RELEASING.md` step 5 says, in this order: `build.ps1 -Manifest dist\build-manifest.json`,
+   then `package.ps1`. The second wiped all of `dist/`, including the file the first had just
+   written — silently, with a correct zip as the visible result. The provenance record is the
+   SHA-256 and the exact compiler and CMake versions, and with the build tag switched off (its
+   default for downloaders) it is the only way to tell two builds apart at all. Anyone recovering it
+   by re-running `build.ps1 -Manifest` afterwards was attesting a *second* build, not the packaged
+   one. The wipe now carries the manifest across it.
 
 
 ## Testing

@@ -564,7 +564,7 @@ BYTE FOR BYTE" case. ⚠ `SECTION_MAXKEYS` is 16 and `[Display]` holds 12 keys p
 
 Run **`verify-defaults.ps1`** after: it compares all three machine-readable copies against each
 other — the code's table, the shipped file, and the test's literal — and reports which one is
-behind. It said "three places" here until jc-55, when the fourth was found by having drifted.
+behind. It said "three places" here until jc-56, when the fourth was found by having drifted.
 
 🔴 **Two switches, two predicates, and they are not interchangeable.** `settingoptedin()` is for a
 setting that defaults OFF; `settingoptedout()` is for one that defaults ON. Both answer FALSE for an
@@ -631,7 +631,7 @@ story here, add it to `FORK.md` instead and put the lesson here, once.
 | jc-51 | `chipsneeded` is a signed `short` filled from an unsigned file word, so a level demanding ≥ 0x8000 chips opened the socket and then killed the program | `FORK.md` item 22 |
 | jc-52 | `TWTextCoder::encode()` shifted one byte for eleven characters; two more unguarded `movelaws[]` indexes; an uninitialized pointer on a path-qualified command line | `FORK.md` items 23–25 |
 | jc-54 | `tw_settings.ini` was rewritten by truncating it in place, so an interrupted write destroyed it; and a value ending in a carriage return did not survive its own round trip | `FORK.md` items 26–27 |
-| jc-55 | Not shipped defects — a feature, and the three quiet failures found by building its guards: an unchecked third copy of the stock settings file, a documented count four out, and a `foreach` variable that had been eating a script parameter since the file was written | `FORK.md` items 28–30 |
+| jc-56 | Not shipped defects — a feature, and five quiet failures found by building its guards: an unchecked third copy of the stock settings file, a documented count four out, a `foreach` variable that had been eating a script parameter since the file was written, a **flaky wall-clock test that burned the jc-55 tag**, and `package.ps1` deleting the build manifest RELEASING.md tells you to write one command earlier | `FORK.md` items 28–32 |
 
 Every one of those is replay-neutral where it touches the engine, and the evidence is in `FORK.md`
 with the release that carries it.
@@ -701,12 +701,23 @@ compiled here, so the change could not be built or tested. Note the precise clai
 `oshw-qt/CMakeLists.txt` *does* compile `oshw-sdl/sdlsfx.c`, which simply has no ctype calls.
 
 **🔴 A comment that correctly predicts a trap is still not a check.** `settings.cpp` said, in as
-many words, "the NEXT `[Display]` setting must raise `SECTION_MAXKEYS`". jc-55 added two and the
+many words, "the NEXT `[Display]` setting must raise `SECTION_MAXKEYS`". jc-56 added two and the
 comment was read and acted on — which is the good outcome, and it is luck, because nothing would
 have failed if it had not been. The rule that generalizes: **when you write a comment predicting
 how the next edit will break something, you have just specified a test.** Write that instead, or as
 well. Both were cheap here — one asserts every row is terminated inside the bound, and it fires
 with a readable message.
+
+**🔴 NEVER MAKE ELAPSED TIME THE ORACLE WHEN THE PROPERTY IS A COUNT.** jc-54 proved its settings
+retry loop ran by asserting 30 ms had passed, arguing "Sleep can only ever overshoot, so this cannot
+flake in the fast direction." It flaked and **burned the jc-55 tag**, on the same commit whose CI
+job had just passed. Two reasons the argument missed: `GetTickCount64` advances in ~15.6 ms steps,
+so the *measurement* undershoots however faithfully `Sleep` overshoots; and how long `Sleep(2)`
+takes depends on the system timer resolution, which **any other process** can change globally with
+`timeBeginPeriod`. 71–80 ms on the desktop, 16 ms on the runner. The fix was to count the attempts —
+exact, free, and the thing actually meant. **Ask what you are really asserting: "four attempts
+happened" is a count, and a count that has to be inferred from a clock is a count you should just
+keep.**
 
 **⚠ A shadowed parameter does not fail; it answers wrongly, somewhere else.** `foreach ($lang in
 ...)` in `test/run-tests.ps1` **is** the `-Lang` parameter, because PowerShell variable names are

@@ -84,7 +84,7 @@ namespace
      * sizeof(), and the "unknown keys survive a round trip" guarantee comes from the [Other] pass,
      * not from this table, so growing it cannot lose a setting.
      *
-     * MOD (Jeremy, jc-55): raised 12 -> 16, because the title switches took [Display] to twelve
+     * MOD (Jeremy, jc-56): raised 12 -> 16, because the title switches took [Display] to twelve
      * keys and the terminator would have had nowhere to go. The jc-41 comment below had called
      * this exact shot ("the NEXT [Display] setting must raise SECTION_MAXKEYS") and it was right;
      * the margin is now four slots rather than one, so the next setting is not a landmine. */
@@ -92,7 +92,7 @@ namespace
     struct SectionSpec { char const *name; char const *keys[SECTION_MAXKEYS]; };
     SectionSpec const SECTIONS[] = {
         /* MOD (Jeremy, jc-41): lynxtileset/mstileset name the user's chosen tileset per ruleset.
-         * MOD (Jeremy, jc-55): showlevelname/showlevelpack choose what the title bar says.
+         * MOD (Jeremy, jc-56): showlevelname/showlevelpack choose what the title bar says.
          * ⚠ This row now holds TWELVE keys plus the terminator = 13 of SECTION_MAXKEYS (16). */
         { "Display", { "bgcolor", "deathcount", "displayccx", "forceshowtimer", "legacyscores",
                        "lynxtileset", "mstileset",
@@ -466,9 +466,35 @@ static string stagingname(string const &dest, unsigned seq)
     return s.str();
 }
 
+/* MOD (Jeremy, jc-56): how many attempts the last replacefile() made.
+ *
+ * 🔴 A TEST SEAM, AND IT REPLACED A TEST THAT FLAKED ON CI. settings_test.c has to witness that the
+ * retry loop actually ran -- cutting it to one attempt otherwise leaves the whole suite green,
+ * because every successful write in every other case succeeds on the first try. jc-54 witnessed it
+ * with a wall-clock floor and a comment claiming "Sleep can only ever overshoot, so this cannot
+ * flake in the fast direction." That was wrong twice over, and CI proved it by failing the RELEASE
+ * job on a commit whose CI job had just passed:
+ *
+ *   - GetTickCount64 advances in ~15.6 ms steps, so the MEASUREMENT can undershoot the true
+ *     elapsed time by nearly a tick however faithfully Sleep overshoots; and
+ *   - how long Sleep(2) actually takes depends on the system timer resolution, which any OTHER
+ *     process can change globally with timeBeginPeriod. The 71-80 ms measured on the maintainer's
+ *     desktop was a coarse-timer machine; the CI runner sleeps the requested ~19 ms and reported
+ *     16 ms after granularity.
+ *
+ * So the oracle is the count, which is exact, free, and says the thing actually meant. Time was
+ * never the property under test -- the number of attempts was. Reset at entry, so a reader is
+ * always the last call's.
+ *
+ * ⚠ NOT WRAPPED IN #ifdef. POSIX rename() cannot fail for a lock, so the count is 1 there and no
+ * test asserts on it -- but a counter that exists on only one platform is a compile error waiting
+ * for whoever writes the portable case. */
+unsigned replaceattempts = 0;
+
 static bool replacefile(char const *src, char const *dest, unsigned long *err)
 {
     *err = 0;
+    replaceattempts = 0;
 #ifdef _WIN32
     /* 🔴 EXACTLY THE POLICY THAT WAS MEASURED: four attempts, sleeping 0/2/5/12 ms. That lost 0 of
      * 120 writes where a single attempt lost 19%. An earlier draft added a fifth 25 ms step, which
@@ -481,6 +507,7 @@ static bool replacefile(char const *src, char const *dest, unsigned long *err)
     {
         if (backoffms[i])
             Sleep(backoffms[i]);
+        ++replaceattempts;
         if (MoveFileExA(src, dest, MOVEFILE_REPLACE_EXISTING))
             return true;
         /* The FIRST failure, not the last. If attempt 1 is ACCESS_DENIED and a later one is
@@ -491,6 +518,7 @@ static bool replacefile(char const *src, char const *dest, unsigned long *err)
     }
     return false;
 #else
+    ++replaceattempts;
     if (rename(src, dest) == 0)
         return true;
     *err = (unsigned long)errno;
@@ -721,7 +749,7 @@ void setstringsetting(char const * name, char const * val)
  * "showdeathcounter=true" is what someone reading the README will naturally type.
  * getintsetting() cannot parse that and would silently report -1. */
 
-/* MOD (Jeremy, jc-55): the trimmed, lowercased value of a switch, or "" when the key is absent or
+/* MOD (Jeremy, jc-56): the trimmed, lowercased value of a switch, or "" when the key is absent or
  * holds nothing but whitespace. Factored out when settingoptedout() arrived, so that the two
  * predicates cannot drift apart on what counts as " TRUE " -- the same reasoning that moved the
  * parse out of TileWorldApp::SettingOptedIn() in the first place.
@@ -761,7 +789,7 @@ int settingoptedin(char const * name)
     return (s == "1" || s == "true") ? 1 : 0;
 }
 
-/* MOD (Jeremy, jc-55): the MIRROR of settingoptedin(), for a switch whose default is ON.
+/* MOD (Jeremy, jc-56): the MIRROR of settingoptedin(), for a switch whose default is ON.
  * TRUE only when the value is explicitly "0" or "false"; absent, blank, "1", "true" and garbage
  * all mean "not opted out", i.e. the feature stays on.
  *

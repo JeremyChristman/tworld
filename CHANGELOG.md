@@ -21,7 +21,26 @@ stay attached to something someone can see.
 
 ---
 
-## jc-55 — 2026-09-07
+## jc-56 — 2026-09-08
+
+> ⚠ **`jc-55` is a burned tag: it exists in the repository and nothing was ever published under
+> it.** It was tagged with this same feature, and the release workflow then failed a unit test —
+> **on the same commit whose CI run had just passed.** The test was jc-54's own witness that the
+> settings write's retry loop actually runs, and it used a wall-clock floor under a comment
+> asserting it could not flake. It could: `GetTickCount64` advances in ~15.6 ms steps so the
+> *measurement* undershoots whatever `Sleep` does, and how long `Sleep(2)` really takes depends on a
+> system timer resolution any other process can change globally. The maintainer's desktop measured
+> 71–80 ms; the runner measured 16 against a 30 ms floor. The oracle is now the attempt **count**,
+> which is exact.
+>
+> The tag ruleset forbids moving or deleting a `jc-*` tag (deliberately — that is what makes a
+> published tag mean something), and fixing this changed `settings.cpp`, so the executable is not
+> the one jc-55 described either way. The corrected build ships as jc-56. **No executable ever
+> reported jc-55.**
+>
+> 🔴 A gate that fails half the time gets re-run until it passes, which is the same as not having
+> it. Re-running the workflow would very likely have produced a green release; that is precisely
+> why it was not done.
 
 ### Added — the window title is now two settings, defaulting to upstream's
 
@@ -67,6 +86,12 @@ Each was found by this release breaking it, which is the only reason any of them
   `Resolve-Number` returned `$null` for `21,082`, and `$null` *skips* rather than fails; the obvious
   pattern also matched the e2e and Qt clauses in the same sentence; and a dated `As of <date>` line
   in `FORK.md` is history, exempt on the same reasoning as `CHANGELOG.md`.
+- 🔴 **A timing test that could not have worked, which burned a tag proving it.** jc-54 witnessed
+  the settings write's retry loop with a wall-clock floor, under a comment reasoning that "Sleep can
+  only ever overshoot, so this cannot flake in the fast direction." Sleep does overshoot; the
+  *clock* does not resolve it, and the length of the sleep is not even a property of this process.
+  `replacefile()` now counts its attempts and the test asserts four — deterministic, free, and the
+  property that was actually meant all along. **Time was never what was under test.**
 - 🔴 **A live bug in the unit runner, found by the guard that needed to read a parameter.**
   `foreach ($lang in ...)` **is** the `-Lang` parameter — PowerShell variable names are
   case-insensitive — so the loop had been overwriting it since the file was written, and the top of
