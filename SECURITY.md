@@ -146,14 +146,19 @@ backport to. Fixes ship in the next tagged build.
   CodeQL jobs all run on Linux, because mingw-w64 ships no `libasan` and no libFuzzer. The portable
   core — every parser, both engines — is identical between the two, and every defect found so far
   has been there; but `#ifdef WIN32` branches are analyzed in their POSIX form only.
-- ⚠ **Fuzzing is 60 seconds per target per push, not a soak.** That catches shallow regressions. A
-  deep campaign (`FUZZ_SECONDS=600` or more) is a manual act, and no scheduled soak job exists.
+- ⚠ **Fuzzing is 60 seconds per target per push, which catches shallow regressions only** — but a
+  **weekly soak** now runs 15 minutes per target and carries its discovered corpus between runs
+  (`.github/workflows/soak.yml`). This bullet previously ended "and no scheduled soak job exists",
+  which stopped being true the day that workflow landed and stayed in the security policy for
+  several builds afterwards.
 - ✅ **Both engines are now fuzzed and unit-tested**, closing what this section used to name as its
   largest gap: an engine crash reachable from a malformed level that *survives* `readleveldata()`.
   That is jc-45's exact shape — a file the parser accepted, then dereferenced out of bounds inside
   `initgame()` — and no parser target could have found it. `fuzz_mslogic.c` and `fuzz_lxlogic.c`
   load a level and play it; `lxlogic.c` went from 0% to 49.1% line coverage.
-- ⚠ **What remains uncovered in the engines is behavior, not memory safety.** The thirty-two
-  `NO_FIX_*` toggles have no differential test, and `mslogic.c` sits at 38.1% lines. A change that
-  is merely *different* rather than unsafe is caught by the solution-corpus differential, not by
-  anything in CI.
+- ⚠ **What remains uncovered in the engines is behavior, not memory safety.** A change that is
+  merely *different* rather than unsafe is caught by the solution-corpus differential, not by
+  anything in CI. ⚠ This bullet used to add that the `NO_FIX_*` toggles "have no differential test"
+  and quote a coverage figure; **both went stale** — the `nofix` job has run a differential matrix
+  since jc-49, and per-file coverage lives in `docs/coverage-baseline.tsv`. Figures are not repeated
+  here any more, for the reason `verify-docs.ps1` exists.

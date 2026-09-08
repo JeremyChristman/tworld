@@ -589,170 +589,106 @@ Check [`docs/adr/`](docs/adr/) before changing anything that looks wrong.
 
 ---
 
-## 8. Known defects
+## 8. What the defects taught
 
-**Fixed in jc-44** (all upstream's; `git blame` puts them on the 2.3.1 import): a `.tws` could smash
-a 256-byte stack buffer through `loadsolutionsetname()` — measured on the shipped jc-43 release
-binary as a segfault at a 1000-byte declared set name; `readleveldata()` advanced a pointer by a
-file-supplied size before dereferencing it; and the lower map layer's RLE guard reserved two fewer
-bytes than the upper layer's.
+🔴 **THE PER-DEFECT NARRATIVE LIVES IN [`FORK.md`](FORK.md), AND THERE IS NO SECOND COPY OF IT HERE.**
+This section used to retell every fix in full, which meant every fix was written out three times —
+here, in `FORK.md`, and in `CHANGELOG.md`. That triplication was not harmless: an independent review
+traced four separate wrong statements in this repository to it, because a correction would land in
+one telling and not the others. `SECURITY.md` spent five builds asserting something two other
+documents had already disproven.
 
-**Fixed in jc-45**: the last unguarded map index. `initgame()`'s spring-the-traps loop dereferenced a
-trap wiring's `to` with no bound, and `readpos()` validates only the X byte. Real: 7 malformed
-wirings in 4 sets in circulation. Verified replay-neutral over the maintainer's whole collection —
-290 sets, 0 of 303 outputs changed. See `FORK.md` item 17.
+So this section keeps only what does not belong anywhere else — **the lessons that transfer to the
+next change** — and points at `FORK.md` for what actually happened. If you are about to add a defect
+story here, add it to `FORK.md` instead and put the lesson here, once.
 
-🔴 **The lesson from jc-45 is worth more than the fix.** A *behavioral* test cannot catch a
-memory-safety fix whose entire point is that behavior does not change: the first version of that test
-passed with the guard removed. The one that works **poisons the out-of-bounds byte** —
-`map[POS_INVALID]` coincides exactly with `msstate`, so writing `Block_Static` into
-`msstate.chipwait` is what the unguarded read sees. Reach for that shape whenever you fix a bound
-here, and assert the layout assumption first so the case fails loudly rather than going quietly
-vacuous.
+| Build | What it was | Detail |
+|---|---|---|
+| jc-44 | Three `.tws`/`.dat` memory-safety defects: a 256-byte stack smash, a pointer advanced by a file-supplied size, an RLE guard two bytes short | `FORK.md` items 14–16 |
+| jc-45 | The last unguarded map index — a trap wiring's `to`, dereferenced with no bound. 7 malformed wirings in 4 sets in circulation | `FORK.md` item 17 |
+| jc-46 | Signed-shift overflow assembling a `.tws`'s 32-bit fields. Fired on about half of every solution file ever recorded; no replay was ever affected | `FORK.md` item 18 |
+| jc-47 | A 64-byte leak on every failed playback | `FORK.md` item 19 |
+| jc-48 | A `.dac` could name a file outside the data directory, including a Windows device name; and 22 ctype casts on a signed `char` | `FORK.md` item 20 |
+| jc-50 | **This fork's own.** `movelaws[]` indexed by a cell's bottom layer, which can hold a creature — up to 47 entries past a 64-entry array, on 18% of real levels | `FORK.md` item 21 |
+| jc-51 | `chipsneeded` is a signed `short` filled from an unsigned file word, so a level demanding ≥ 0x8000 chips opened the socket and then killed the program | `FORK.md` item 22 |
+| jc-52 | `TWTextCoder::encode()` shifted one byte for eleven characters; two more unguarded `movelaws[]` indexes; an uninitialized pointer on a path-qualified command line | `FORK.md` items 23–25 |
+| jc-54 | `tw_settings.ini` was rewritten by truncating it in place, so an interrupted write destroyed it; and a value ending in a carriage return did not survive its own round trip | `FORK.md` items 26–27 |
 
-**Fixed in jc-46**: signed-shift overflow assembling a `.tws`'s 32-bit fields. `solutiondata[N]` is
-an `unsigned char`, which promotes to a **signed** `int`, so `<< 24` on a byte `>= 0x80` overflowed
-the sign bit — in `expandsolution()`'s seed and `readsolution()`'s best time. Upstream's. Seeds are
-random, so it fired on about **half of every solution file ever recorded**; no replay was ever
-affected because both consumers mask the damaged bits off. Replay-neutral: 289 sets, 0 of 303
-outputs changed. See `FORK.md` item 18.
+Every one of those is replay-neutral where it touches the engine, and the evidence is in `FORK.md`
+with the release that carries it.
 
-🔴 **jc-46 is the first defect here found by a TOOL rather than by a person**, on the sanitizer
-job's first run, in a line nobody had reason to suspect — through a test that had been green for
-weeks and had no way to report what it was already exercising. Prefer running a tool over reading
-another parser by hand.
+### 8.1 The lessons, which is why this section exists
 
-⚠ **And "sanitizers cannot run on Windows" is only half true.** `-fsanitize=address` cannot —
-mingw-w64 ships no `libasan`. But **`-fsanitize=undefined -fsanitize-undefined-trap-on-error` needs
-no runtime library** and works here now; each check becomes `__builtin_trap()`, so you get `SIGILL`
-instead of a report, which is all a gate or a mutation check needs. It requires `-O1`, which turns on
-`-Wformat-truncation` in `tw_test.h`, so add `-w` for a one-off run.
+**🔴 A behavioral test cannot catch a memory-safety fix whose entire point is that behavior does not
+change.** The first version of jc-45's test passed with the guard removed. The one that works
+**poisons the out-of-bounds byte**: `map[POS_INVALID]` coincides exactly with `msstate`, so writing
+`Block_Static` into `msstate.chipwait` is what the unguarded read sees. Assert the layout assumption
+first, so the case fails loudly rather than going quietly vacuous.
 
-**Fixed in jc-47**: a 64-byte leak on every failed playback. `prepareplayback()`'s `solutioninfo` is
-a **stack local**, and `expandsolution()` has already called `initmovelist()` by the time it can
-fail — so both early exits dropped the allocation. Reachable from any malformed, truncated or
-empty solution record. Upstream's. Replay-neutral: 289 sets, 0 of 303 outputs changed.
+⚠ **This is the single most reusable idea in the file, and it was needed again in jc-54.** An
+independent review mutated `encoding.c:193` — the upper map layer's bound — and *nothing* caught it,
+not the unit suite and not the golden master. The obvious fix did not work either: asserting the
+record is refused passes either way, because the lower layer's guard rejects it later for a different
+reason. The oracle had to be **whether the decode loop ran at all**. When you bound something, ask
+what observable side effect only happens on the wrong side of the bound.
 
-⭐ **Found by LeakSanitizer on the fuzz job's first run.** With jc-46, that is two consecutive
-releases where a *tool* found a defect nobody had gone looking for. The lesson has now been paid for
-twice: **run the instrument before reading another parser by hand.**
+**🔴 Run the instrument before reading another parser by hand.** Three consecutive releases were
+found by a tool nobody had aimed at a line: jc-46 by UndefinedBehaviorSanitizer on the sanitizer
+job's first run, jc-47 by LeakSanitizer on the fuzz job's first run, jc-50 by the MS-engine fuzz
+target **one second into its first run**. All three were in lines nobody had reason to suspect,
+through tests that had been green for weeks. (`-fsanitize=undefined` runs on Windows too — see §2.)
 
-**Fixed in jc-48**, both upstream's, and **both found by writing the first unit test the `.dac`
-parser ever had** — not by a fuzzer or a sanitizer:
+**⚠ A parser fuzzer structurally cannot find an engine defect.** jc-50 needed a level that *loads*
+and a creature that *tries to move*. jc-45 was the same shape and had to be found by hand. That is
+why `fuzz_mslogic.c` and `fuzz_lxlogic.c` exist alongside the parser targets.
 
-1. **A `.dac` could name a file outside the data directory.** `readconfigfile()` asked
-   `haspathname()` to reject a path; that tests only `DIRSEP_CHAR` (a **backslash** on Windows) and
-   additionally `stat()`s the name, so it answers "is there an existing file behind a path".
-   `openfileindir()` then *joins* the name onto the data directory and `../../../x.dat` resolves out
-   of it. Now tested for both separators at the call site — **and for Windows device names**, which
-   need no separator at all: `CON`/`NUL`/`COM1`/`LPT1` resolve to the device from inside any
-   directory. This fork already guarded *tilesets* against that in jc-42 and left level sets open, so
-   the check moved from `res.c` to `fileio.c` as `isreservedfilename()` and both callers share it.
-   0 of 598 real `.dac` files are affected by either rule.
-2. **Twenty-two ctype casts on a signed `char`** — `isspace`/`tolower`/`isalpha` are defined only
-   for `unsigned char` values or `EOF`, and every byte `>= 0x80` arrived negative. `series.c` 6,
-   `solution.c` 6, `tworld.c` 5, `res.c` 3, `unslist.c` 1, `fileio.c` 1. `tworld.c` also needed a
-   range check: `Cmd` runs past 255. ⚠ **Nothing observable was broken** — all 256 byte values give
-   identical answers signed or unsigned on this toolchain, so **no test can distinguish the two
-   states**, and the high-bit cases in `series_test.c` are a crash net, not a regression net.
+**🔴 Before reaching for a fuzzer, check what has no coverage at all.** jc-48's two defects were both
+in `readconfigfile()` — the only parser in the C core with no test of any kind — and both fell out of
+writing its first one. The lesson was applied immediately afterwards: `oshw-qt/CCMetaData.cpp` was
+the next thing with none, and now has `test/qt/ccmetadata_test.cpp`. It found nothing, and **"we
+looked and it was fine" is a result worth having**, because until it existed nobody could say so.
+The same reasoning produced the first tests for `settings.cpp`, `generic/tile.c` and `score.cpp`;
+the first two of those found defects.
 
-⚠ Three ctype instances remain in `oshw-sdl` (`sdlout.c:812`, `sdltext.c:110`, `:336`), deliberately
-left: **those three files** are not compiled here, so the change could not be built or tested. Note
-the precise claim — `oshw-qt/CMakeLists.txt` *does* compile `oshw-sdl/sdlsfx.c`, which simply has no
-ctype calls. **Do not "finish the sweep" without building what you touch.**
+**⚠ When you fix an out-of-bounds read, do not assume there is a correct old value to preserve.** The
+old read in jc-50 was undefined — what it returned depended on what the linker placed after the array
+— so replay was never guaranteed stable across toolchains for those levels. Pick the defensible
+answer and **measure it against the corpus**, which is what settled it.
 
-🔴 **The lesson of jc-48 is the cheapest one in this file.** The `.dac` parser was the only one in the
-C core with no test, and it was the one with the bugs. Before reaching for a fuzzer, check what has
-no coverage at all. That lesson was applied straight away: `oshw-qt/CCMetaData.cpp`, the `.ccx`
-parser, was the next thing with none, and it now has `test/qt/ccmetadata_test.cpp`. It found no
-defect — the level index really is bounds-checked and Qt does the parsing — and **"we looked and it
-was fine" is a result worth having**, because until it existed nobody could say so.
+**🔴 An assert tells you which invariant broke. Only tracing the reproducer tells you why.** This file
+used to record a suspicion about jc-51 — "something reaches `endmovement()` with a socket destination
+without passing that gate" — and it was wrong, and it pointed at the wrong file. Nothing bypassed the
+gate; the gate itself said yes, because the value was negative. **When a value can be negative, check
+the type before you go looking for an exotic control-flow path.**
 
-**Fixed in jc-50 — and this one is THIS FORK'S, not upstream's.** `movelaws[]` has exactly 64
-entries, one per *terrain* id, but a cell's **bottom layer can hold a creature**, and creature ids
-start at `Chip == 64`. So `movelaws[cellat(to)->bot.id]` read up to 47 entries past the array and
-used whatever followed it in `.rodata` as a movement rule. Not exotic: **5,743 of 31,090 real levels
-(18%) do this, including CC1 and every CCLP.** All three sites came in with the desync work
-(`FIX_KEEPSLOT_OCCUPANT`, jc-17 era) and now go through `movelaw_block()`/`movelaw_creature()`.
-Replay-neutral: 0 of 303 outputs changed. See `FORK.md` item 21.
+**🔴 Two hand-maintained tables that must agree, with nothing checking that they do, will disagree.**
+jc-52's `TWTextCoder::encode()` was fixed by **deleting** its switch rather than correcting eleven
+constants: `encode()` now reverse-looks-up the same table `decode()` uses, so the two are inverse *by
+construction*. Correcting the constants would have fixed that instance and left the next edit free to
+reintroduce it. Prefer removing the second source over synchronising it — the same reasoning retired
+the coverage table in §5 and produced `verify-docs.ps1`.
 
-⭐ **Found by the MS-engine fuzz target one second into its first run** — the third consecutive find
-by tooling nobody aimed at a line (jc-46 UBSan, jc-47 LSan, jc-50 the engine fuzzer), and the first
-from fuzzing an **engine** rather than a parser. A parser target structurally could not reach it: it
-needs a level that *loads* and a creature that *tries to move*. jc-45 was the same shape and had to
-be found by hand.
+**⚠ `#ifdef` scaffolding is untested code, and untested code rots.** Two `NO_FIX_*` toggles had
+decayed to the point that defining them stopped `mslogic.c` compiling — a declaration guarded by one
+toggle and used under another. Nothing in the repository would have said so, because a broken opt-out
+changes no shipped behavior: not the unit suite, not the fuzzers, not CI. This is exactly the rot
+[ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md) exists to prevent, and it had already
+set in. **If you add a `NO_FIX_*`, build with it defined at least once before committing.** The
+`nofix` job now builds all 32.
 
-⚠ **When you fix an out-of-bounds read, do not assume there is a correct old value to preserve.** The
-old read here was undefined — what it returned depended on what the linker put after the array, so
-replay was never guaranteed stable across toolchains for these levels. Pick the defensible answer and
-**measure it against the corpus**, which is what settled this one.
+**⚠ Do not "finish a sweep" without building what you touch.** Three ctype instances remain in
+`oshw-sdl` (`sdlout.c:812`, `sdltext.c:110`, `:336`), deliberately left: those three files are not
+compiled here, so the change could not be built or tested. Note the precise claim —
+`oshw-qt/CMakeLists.txt` *does* compile `oshw-sdl/sdlsfx.c`, which simply has no ctype calls.
 
-**Fixed in jc-51 — the finding jc-50 shipped with OPEN.** `chipsneeded` is a **signed** `short`
-(`state.h:251`) filled from the `.dat`'s **unsigned** 16-bit word (`encoding.c:187`), so a level
-demanding `0x8000` chips or more arrives **negative**. `canmakemove()` gated the socket on
-`chipsneeded() > 0` — false for a negative count, **so the socket opened** — and `endmovement()` then
-asserted `chipsneeded() == 0`, which is also false, so `die()` ran and **the shipped game exited**.
-Both gates now ask `chipsneeded() != 0`. **Upstream's** (`929d9c6`). Both engines. No real level
-reaches it: 31,090 levels across 393 `.dat` files, zero asking 32,768 or more. Replay-neutral: 0 of
-303 outputs differ. See `FORK.md` item 22.
-
-🔴 **The suspicion recorded here was wrong, and it pointed at the wrong file.** This entry used to
-say "something reaches `endmovement()` with a socket destination without passing that gate — a slide
-or teleport path is the suspect." **Nothing bypasses the gate; the gate itself says yes.** An assert
-tells you which invariant broke. Only tracing the reproducer tells you why — and when a value can be
-negative, check the *type* before you go looking for an exotic control-flow path.
-
-⚠ **The type mismatch is still there, deliberately.** `chipsneeded` remains a signed `short` holding
-an unsigned file value. Widening it touches a struct every engine path reads; rejecting the file in
-`expandleveldata()` would refuse input upstream accepts. Making the two predicates agree is the
-minimal fix, and the only one that is provably behavior-preserving — **for every non-negative count,
-`> 0` and `!= 0` are the same predicate.**
-
-**Fixed, unreleased — two `NO_FIX_*` toggles that could not be switched on at all.** This fork's own.
-`rff_keepdir` was declared under `#ifdef FIX_RFF_DRAW_ONCE` but also written by the
-`FIX_RFF_CHIP_REARM` block; `prepush_destfloor` was declared under `NO_FIX_TELEPORT_STALE_FG` but
-also read under `FIX_TELEPORT_BROKEN_DYNAMIC`. So `-DNO_FIX_RFF_DRAW_ONCE` and
-`-DNO_FIX_TELEPORT_STALE_FG` each dropped a declaration while leaving a use standing, and
-`mslogic.c` **did not compile**. Each declaration is now guarded by *either* toggle. Shipped
-behavior is unchanged — at the defaults the declaration is present either way, and all 1,806 golden
-digests are identical across the change. **All 32 toggles build now.**
-
-🔴 **This is the rot [ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md) exists to prevent,
-and it had already set in.** The toggles are kept precisely so a future desync investigation can
-flip one. Two of them were unflippable, and **nothing in the repository would have said so** — not
-the unit suite, not the fuzzers, not CI — until somebody reached for one of those switches
-mid-investigation, years from now, and lost an afternoon to a compile error in code they had not
-touched. Found only because the golden-master work built all 32 one at a time.
-
-⚠ **The general lesson: `#ifdef` scaffolding is untested code, and untested code rots.** If you add
-a `NO_FIX_*`, build with it defined at least once before committing. It costs one command.
-
-**Fixed, unreleased — `TWTextCoder::encode()` was shifted one byte.** `decode()` reserves `0x81` as
-an undefined slot (it decodes to a space, as CP1252 does) and maps `0x82..0x8C` to U+20A1, U+0192,
-U+201E … U+0152. `encode()`'s hand-written switch was built against a table with **no gap at 0x81**
-and packed those same eleven characters from `0x81` upward, so each encoded to the byte *below* the
-one it decoded from. Measured before the fix: **11 of 255 byte values did not round-trip**; after,
-none. `decode` was the correct side — it agrees with CP1252 across `0x83..0x8C`. Upstream's
-(`929d9c6`).
-
-🔴 **Fixed by DELETING the switch, not by correcting eleven constants.** `encode()` now does a
-reverse lookup of `encodeTable` — the same table `decode()` uses — so the two are inverse *by
-construction*. The bug existed because two hand-maintained tables had to agree and nothing checked
-that they did; correcting the constants would have fixed this instance and left the next edit free to
-reintroduce it. There is now one table, and adding to it needs no matching change in `encode()`.
-
-⚠ Found by `test/qt/textcoder_test.cpp` on its first run, which is the whole argument for covering
-the non-widget files in `oshw-qt/`. The test drives all 255 non-NUL byte values; with the old code it
-reports exactly 11 failures.
-
-⚠ Separately odd and NOT part of the shift, left alone: `decode` maps `0x82` to **U+20A1** (colon
-sign) where CP1252 has **U+201A** (low quotation mark) — a digit transposition apart. It is the
-table's own business, the round trip is self-consistent either way, and changing it would alter what
-an existing level name displays as.
+**⚠ Some fixes are provably behavior-preserving and some are merely believed to be.** jc-51 kept the
+signed `short` and changed both predicates to `!= 0`, because for every non-negative count `> 0` and
+`!= 0` are the same predicate — that is a proof. Widening the field would have touched a struct every
+engine path reads, which is not.
 
 What follows is what is still live.
 
-### 8.1 `-v` cannot work as documented
+### 8.2 `-v` cannot work as documented
 
 The option string at `tworld.c:2205` is `"abD:dFfHhL:lm:n:PpqR:rS:stVv:c"` — `v:` declares that `-v`
 takes an argument, while its handler takes none and the usage text says "Display version number and
@@ -760,7 +696,7 @@ exit". `tworld2 -v` prints "option requires an argument"; `tworld2 -v x` prints 
 character. `test/run-e2e.ps1` pins the current behavior deliberately, so fixing it turns that case
 red and tells you to invert it. Upstream's.
 
-### 8.2 The smaller ones
+### 8.3 The smaller ones
 
 - **`combinepath()` reads `dest[-1]` when `dir` is empty** (`fileio.c:394`). No shipped configuration
   reaches it: `SAVEDIR` is defined for non-Windows Debug only, and `root` cannot be empty since
