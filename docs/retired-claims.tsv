@@ -1,0 +1,36 @@
+# Claims this project has written down, proven false, and must not assert again.
+#
+# 🔴 WHY THIS FILE EXISTS. An independent review found that corrections here
+# propagate to CLAUDE.md and stop: SECURITY.md was still telling security
+# researchers that unslist.c is unreachable dead code -- the THIRD writing of a
+# claim already disproven twice -- and "the settings file sits beside the
+# executable" survived in four places while ADR 0007 recorded it as fixed.
+#
+# fork.h has five mechanical guards making it the single definition of the build
+# tag (ADR 0006). Facts had none. verify-docs.ps1 is that guard, and this is its
+# data.
+#
+# ⚠ A RETIRED CLAIM IS NOT A BANNED PHRASE, and getting that wrong makes the
+# check useless. Three kinds of mention are legitimate and must not fire:
+#
+#   1. A NEGATION -- "the file is in the working directory, NOT beside the
+#      executable" is the correction, not the error.
+#   2. A QUOTATION -- FORK.md and tworld.c both write "beside the executable" in
+#      quotes while explaining why it is wrong.
+#   3. THE SAME WORDS MEANING SOMETHING ELSE -- ADR 0001 says the two DLLs "must
+#      ship beside the executable", which is about zlib1.dll and is TRUE.
+#
+# So each row carries exemptions. Write them as tightly as the claim needs and
+# no tighter: an exemption that swallows the assertion turns this row into
+# decoration.
+#
+# COLUMNS, tab-separated:
+#   id       short name, for the failure message
+#   pattern  .NET regex; a line matching it is asserting the retired claim
+#   exempt   .NET regex; if the SAME LINE also matches this, the mention is
+#            legitimate. Use (?!) for "no exemptions".
+#   why      what is actually true, printed when the check fires
+#
+id	pattern	exempt	why
+settings-location	beside the executable|next to the executable|NEXT TO THE PROGRAM	not beside the executable|"beside the executable"|zlib1|libzstd|DLL|two dynamic imports	tw_settings.ini is written to the WORKING directory, not the executable's. tworld.c:2146 sets appdir = root, and root is $TWORLDDIR or ".". Nothing in this tree resolves the executable's own path. It looks like "beside the executable" only because double-clicking makes that the working directory. See docs/adr/0007.
+unslist-unreachable	unslist[^\n]{0,80}(never read|not actually reached|is not reached)|(never read|not actually reached)[^\n]{0,80}unslist	"is not actually reached|previously said	unslist.c IS parsed by every stock build, on every series load: res/rc:6 sets UnsolvableList=unslist.txt, res.c:309 lowercases the key before comparing so it matches rclist[], res.c:568 loads it, and series.c:404 calls markunsolvablelevels(). Follow the call, not the grep -- the rc file and the table spell the key differently.

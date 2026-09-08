@@ -47,6 +47,7 @@ powershell -ExecutionPolicy Bypass -File test\run-e2e.ps1             # end-to-e
 powershell -ExecutionPolicy Bypass -File test\run-qt-tests.ps1        # the oshw-qt layer (needs Qt)
 powershell -ExecutionPolicy Bypass -File package.ps1                  # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock ini vs. settings.cpp
+powershell -ExecutionPolicy Bypass -File verify-docs.ps1              # the docs still agree with the code
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit layer
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1          # golden-master engine snapshot
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1 -Update  # REWRITE the baseline (deliberate)

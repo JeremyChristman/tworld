@@ -67,6 +67,18 @@ jobs:
           fi
           echo "README.txt header names $tag"
 
+      # 🔴 THE SAME DISCIPLINE, APPLIED TO FACTS. The check above makes fork.h
+      # the single definition of the build tag. Nothing did that for anything
+      # else, and an independent review found the consequence: SECURITY.md
+      # telling researchers that a live parser was dead code -- the third
+      # writing of a claim this project had already disproven twice -- and a
+      # witness count sitting stale in one paragraph while three other places in
+      # the same file were correct. Corrections propagated to CLAUDE.md and
+      # stopped there. See verify-docs.ps1's header.
+      - name: The documentation still agrees with the code
+        shell: pwsh
+        run: pwsh -File verify-docs.ps1
+
   # The unit layer needs only a C compiler, so it is separate from -- and much
   # faster than -- the job that builds Qt. It is the one that should tell you
   # what broke.
