@@ -710,6 +710,74 @@ static void changesubtitle(char const* subtitle) {
     setsubtitle(subtitle);
 }
 
+/* MOD (Jeremy, jc-55): build the window subtitle out of the level PACK name and the level NAME,
+ * under two independent switches in tw_settings.ini's [Display] section.
+ *
+ * The four reachable titles, with what each one is:
+ *
+ *   showlevelpack=0 showlevelname=1   "Tile World - Clubhouse"          UPSTREAM 2.3.1, the DEFAULT
+ *   showlevelpack=1 showlevelname=1   "Tile World - CCLP1 - Clubhouse"  what jc-1..jc-54 did
+ *   showlevelpack=1 showlevelname=0   "Tile World - CCLP1"
+ *   showlevelpack=0 showlevelname=0   "Tile World"
+ *
+ * 🔴 THE DEFAULTS ARE NOT THE SAME AND THAT IS THE WHOLE POINT OF THE TWO PREDICATES. The pack
+ * name is this fork's addition, so it defaults OFF and needs settingoptedin(); the level name is
+ * upstream's own behavior, so it defaults ON and needs settingoptedout(). Reaching for one
+ * predicate for both would compile, pass a careless test, and silently make a fresh install's
+ * title bar say nothing at all. See the note on settingoptedout() in settings.h.
+ *
+ * ⚠ The default is upstream's rather than jc-54's, which is a deliberate BEHAVIOR CHANGE for
+ * anyone who downloads a fresh build: the same reasoning as the build tag (ADR 0006), that what a
+ * stranger sees should be stock Tile World and this fork's flourishes should be opted into. The
+ * maintainer's own install carries showlevelpack=true so nothing changes there.
+ *
+ * series.name is the set FILENAME -- "Joshie.dat-ms.dac" -- so known extensions come off the end,
+ * repeatedly, because "dat-ms.dac" is two of them. Both parts are dropped when empty, so a set
+ * with no name cannot produce a title that begins with a stray " - ".
+ */
+static void composesubtitle(char* buf, size_t bufsize,
+                            char const* seriesname, char const* levelname) {
+    static char const* knownexts[] = { "dac", "dat", "ccl", "dat-ms", "dat-lynx" };
+    char packname[sizeof ((gameseries*)0)->name];
+    char const* parts[2];
+    int nparts = 0;
+    char* dot;
+    unsigned int i;
+    int again = 1;
+
+    if (!bufsize)
+        return;
+    *buf = '\0';
+
+    /* Bounded rather than strcpy(): both buffers are 256 and series.name is filled from a
+     * filename, so an unterminated one would have run off the end of the old copy. */
+    if (!seriesname)
+        seriesname = "";
+    strncpy(packname, seriesname, sizeof packname - 1);
+    packname[sizeof packname - 1] = '\0';
+
+    while (again && (dot = strrchr(packname, '.')) != NULL) {
+        again = 0;
+        for (i = 0 ; i < sizeof knownexts / sizeof *knownexts ; ++i) {
+            if (!stricmp(dot + 1, knownexts[i])) {
+                *dot = '\0';
+                again = 1;
+                break;
+            }
+        }
+    }
+
+    if (settingoptedin("showlevelpack") && *packname)
+        parts[nparts++] = packname;
+    if (!settingoptedout("showlevelname") && levelname && *levelname)
+        parts[nparts++] = levelname;
+
+    if (nparts == 2)
+        snprintf(buf, bufsize, "%s - %s", parts[0], parts[1]);
+    else if (nparts == 1)
+        snprintf(buf, bufsize, "%s", parts[0]);
+}
+
 /*
  *
  */
@@ -1699,36 +1767,13 @@ static int runcurrentlevel(gamespec* gs) {
 
     valid = initgamestate(gs->series.games + gs->currentgame,
                           gs->series.ruleset);
-    /* MOD (Jeremy): window title shows the level PACK name AND the current
-     * LEVEL name, i.e. "<pack> - <level>". series.name is the set filename
-     * (e.g. "Joshie.dat-ms.dac"), so strip known extensions off the end;
-     * the level name is games[currentgame].name (upstream's original title).
-     */
+    /* MOD (Jeremy, jc-55): what the title bar says is now two settings rather
+     * than fixed. composesubtitle() above has the four states and why the two
+     * switches need two different predicates. */
     {
-        static char const *knownexts[] = { "dac", "dat", "ccl",
-                                           "dat-ms", "dat-lynx" };
-        static char packname[256];
         static char titlebuf[520];
-        char const *levelname;
-        char *dot;
-        unsigned int i;
-        int again = 1;
-        strcpy(packname, gs->series.name);
-        while (again && (dot = strrchr(packname, '.')) != NULL) {
-            again = 0;
-            for (i = 0 ; i < sizeof knownexts / sizeof *knownexts ; ++i) {
-                if (!stricmp(dot + 1, knownexts[i])) {
-                    *dot = '\0';
-                    again = 1;
-                    break;
-                }
-            }
-        }
-        levelname = gs->series.games[gs->currentgame].name;
-        if (levelname && *levelname)
-            snprintf(titlebuf, sizeof titlebuf, "%s - %s", packname, levelname);
-        else
-            snprintf(titlebuf, sizeof titlebuf, "%s", packname);
+        composesubtitle(titlebuf, sizeof titlebuf, gs->series.name,
+                        gs->series.games[gs->currentgame].name);
         changesubtitle(titlebuf);
     }
     passwordseen(gs, gs->currentgame);

@@ -21,7 +21,58 @@ stay attached to something someone can see.
 
 ---
 
-## Unreleased
+## jc-55 — 2026-09-07
+
+### Added — the window title is now two settings, defaulting to upstream's
+
+`showlevelpack` and `showlevelname` in `[Display]`. All four combinations are reachable, from
+`Tile World - CCLP1 - Clubhouse` down to a bare `Tile World`.
+
+🔴 **The default is upstream 2.3.1's, not jc-54's**, which is a visible change for anyone updating:
+the set name is gone from the title until you add `showlevelpack=true`. Same reasoning as the build
+tag ([ADR 0006](docs/adr/0006-fork-h-owns-the-build-tag.md)) — a download should look like the Tile
+World people know, and this fork's additions should be things you switched on.
+
+- 🔴 **The two switches have opposite defaults, so they need two predicates.** `settingoptedout()`
+  joins `settingoptedin()` rather than the tempting `!settingoptedin()`, which is **not** its mirror:
+  it answers TRUE for garbage, so `showlevelname=yes` would have switched the level name off. Both
+  answer FALSE for an absent, blank or unparseable value — each reading it as "keep my own default" —
+  and that shared FALSE is why neither substitutes for the other. Match the predicate to the default.
+- The composition moved out of `runcurrentlevel()` into a pure `composesubtitle()` so it could be
+  tested; `tworld_test.c` pins all four states and **which key goes through which predicate**, the
+  edit most likely to break the default while everything else still passed. Swapping them fails five
+  cases and eleven checks, measured.
+- ⚠ **`SECTION_MAXKEYS` was 12 and `[Display]` sat at 11 of it.** The comment in `settings.cpp` had
+  predicted this in as many words — "the NEXT `[Display]` setting must raise SECTION_MAXKEYS" — and
+  was right. Raised to 16. **A comment that is right is still not a check**, so `settings_test.c` now
+  asserts every row is terminated inside the bound; filling the row exactly fails it with a readable
+  message, and overflowing it fails to compile.
+
+### Fixed — three places a number or a copy could go stale unnoticed
+
+Each was found by this release breaking it, which is the only reason any of them is here.
+
+- **The stock settings file had a third copy nobody checked.** `settings_test.c`'s "comes back BYTE
+  FOR BYTE" case holds the shipped file as a string literal — deliberately, since a test that *read*
+  `package.ps1` would assert only that the round trip reproduces whatever it is handed. Adding two
+  keys left that literal describing the previous release's file with every case still green.
+  `verify-defaults.ps1` now compares them character for character, reporting which **keys** differ
+  rather than which lines: one added line shifts every line after it, and a positional diff buried
+  the real change under twenty false ones.
+- **The last hand-typed count in `CLAUDE.md` was four out.** It said 21,008 checks; a full run
+  reported 21,012. `test/run-tests.ps1` now writes `docs/test-counts.tsv` on a complete run — and
+  refuses to write a partial one, since a `-Filter` run reports 15,534 and would look just as
+  authoritative — and `verify-docs.ps1` checks the sentence against it, plus the golden-master
+  digest count against its own baseline. ⚠ Three flaws in that guard were caught while building it:
+  `Resolve-Number` returned `$null` for `21,082`, and `$null` *skips* rather than fails; the obvious
+  pattern also matched the e2e and Qt clauses in the same sentence; and a dated `As of <date>` line
+  in `FORK.md` is history, exempt on the same reasoning as `CHANGELOG.md`.
+- 🔴 **A live bug in the unit runner, found by the guard that needed to read a parameter.**
+  `foreach ($lang in ...)` **is** the `-Lang` parameter — PowerShell variable names are
+  case-insensitive — so the loop had been overwriting it since the file was written, and the top of
+  that same script warns about this exact trap for `$OutDir` two dozen lines above where it was
+  live. Never loud: its only other reader was a skip message, which had been naming the wrong
+  language for every test after the first.
 
 ### Fixed — six things an independent hostile review found, five of them documentation
 

@@ -163,6 +163,47 @@ $facts += @{
     patterns = @('(\w+)\s+(?:decisions|ADRs)\b')
 }
 
+# The golden-master snapshot's size, straight off the baseline it compares
+# against. One row per level per engine.
+$snapshot = Join-Path $repo "test/golden/engine-snapshot.tsv"
+if (Test-Path $snapshot) {
+    $digestRows = @(Get-Content $snapshot | Where-Object { $_ -and $_ -notmatch '^\s*#' })
+    $facts += @{
+        id = "golden-master digests"
+        value = $digestRows.Count
+        source = "test/golden/engine-snapshot.tsv"
+        patterns = @('([\d,]+)\s+golden-master digests', '([\d,]+)\s+digests over')
+    }
+}
+
+# The unit suite's totals. 🔴 THE LAST HAND-TYPED NUMBER IN CLAUDE.md, and it
+# was wrong: section 5 said 21,008 checks while a full run reported 21,012.
+# Nothing was broken by that -- which is the point. A figure nobody can check is
+# a figure that drifts quietly until someone reasons from it.
+$counts = Join-Path $repo "docs/test-counts.tsv"
+if (Test-Path $counts) {
+    foreach ($row in (Get-Content $counts | Where-Object { $_ -match '^unit\s' })) {
+        $cols = $row -split "`t"
+        $facts += @{
+            id = "unit runs"
+            value = [int]$cols[1]
+            source = "docs/test-counts.tsv (written by test\run-tests.ps1)"
+            patterns = @('([\d,]+)\s+unit runs')
+        }
+        $facts += @{
+            id = "unit checks"
+            value = [int]$cols[2]
+            source = "docs/test-counts.tsv (written by test\run-tests.ps1)"
+            # ⚠ Anchored to the "unit runs," that precedes it. Written as the
+            # obvious '([\d,]+)\s+checks;' this also matched the e2e and Qt
+            # clauses in the SAME SENTENCE and reported them both as stale unit
+            # counts -- a check that cries wolf about correct text is worse than
+            # no check, because the fix people reach for is deleting it.
+            patterns = @('unit runs,\s+([\d,]+)\s+checks')
+        }
+    }
+}
+
 # The files the coverage baseline actually covers. The deleted table in
 # CLAUDE.md listed 13 when this said 16.
 $baseline = Join-Path $repo "docs/coverage-baseline.tsv"
@@ -184,6 +225,12 @@ $numberWords = @{
 }
 function Resolve-Number([string]$token) {
     if ($token -match '^\d+$') { return [int]$token }
+    # ⚠ THOUSANDS SEPARATORS, added jc-55. This file writes its larger counts as
+    # "21,082" and "1,806", and without this the resolver returned $null for
+    # them -- which does not fail, it SKIPS. Two facts would have been checked
+    # vacuously and reported "ok". The grouping is required to be well formed so
+    # that a genuine "3,2" is still refused rather than read as 32.
+    if ($token -match '^\d{1,3}(,\d{3})+$') { return [int]($token -replace ',', '') }
     $key = $token.ToLower()
     if ($numberWords.ContainsKey($key)) { return $numberWords[$key] }
     return $null
@@ -203,6 +250,13 @@ foreach ($fact in $facts) {
         $lineNo = 0
         foreach ($line in (Read-Lines $file.FullName)) {
             $lineNo++
+            # ⚠ A DATED LINE IS HISTORY, on the same reasoning as the CHANGELOG
+            # exemption above. FORK.md records measurements as they were taken
+            # -- "As of 2026-09-06: 15 unit runs / 17,531 checks" -- and that
+            # sentence is TRUE, permanently, about that date. "Correcting" it to
+            # today's number would destroy the record and make the file claim a
+            # measurement nobody took. Only undated counts assert the present.
+            if ($line -match '\bAs of \d{4}-\d{2}-\d{2}\b') { continue }
             foreach ($pattern in $fact.patterns) {
                 foreach ($m in [regex]::Matches($line, $pattern, 'IgnoreCase')) {
                     $claimed = Resolve-Number $m.Groups[1].Value

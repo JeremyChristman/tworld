@@ -82,17 +82,22 @@ namespace
      * uses EIGHT of the twelve slots as of jc-37 (the death counter added two). Raising this
      * constant is the ONLY edit needed to make room -- savesettings() derives its loop bound from
      * sizeof(), and the "unknown keys survive a round trip" guarantee comes from the [Other] pass,
-     * not from this table, so growing it cannot lose a setting. */
-    int const SECTION_MAXKEYS = 12;
+     * not from this table, so growing it cannot lose a setting.
+     *
+     * MOD (Jeremy, jc-55): raised 12 -> 16, because the title switches took [Display] to twelve
+     * keys and the terminator would have had nowhere to go. The jc-41 comment below had called
+     * this exact shot ("the NEXT [Display] setting must raise SECTION_MAXKEYS") and it was right;
+     * the margin is now four slots rather than one, so the next setting is not a landmine. */
+    int const SECTION_MAXKEYS = 16;
     struct SectionSpec { char const *name; char const *keys[SECTION_MAXKEYS]; };
     SectionSpec const SECTIONS[] = {
         /* MOD (Jeremy, jc-41): lynxtileset/mstileset name the user's chosen tileset per ruleset.
-         * ⚠ This row now holds TEN keys plus the terminator = 11 of SECTION_MAXKEYS (12). It fits,
-         * but the margin is one slot: the NEXT [Display] setting must raise SECTION_MAXKEYS. That
-         * is exactly the drift the comment above warns about, so it is called out here too. */
+         * MOD (Jeremy, jc-55): showlevelname/showlevelpack choose what the title bar says.
+         * ⚠ This row now holds TWELVE keys plus the terminator = 13 of SECTION_MAXKEYS (16). */
         { "Display", { "bgcolor", "deathcount", "displayccx", "forceshowtimer", "legacyscores",
                        "lynxtileset", "mstileset",
-                       "showbuildtag", "showdeathcounter", "showinitstate", nullptr } },
+                       "showbuildtag", "showdeathcounter", "showinitstate",
+                       "showlevelname", "showlevelpack", nullptr } },
         { "Game",    { "ignorepasswords", "selectedruleset", "selectedseries", nullptr } },
         { "Sound",   { "volume", nullptr } },
     };
@@ -715,30 +720,67 @@ void setstringsetting(char const * name, char const * val)
  * A STRING read, not getintsetting(), on purpose: the file is meant to be hand-edited and
  * "showdeathcounter=true" is what someone reading the README will naturally type.
  * getintsetting() cannot parse that and would silently report -1. */
+
+/* MOD (Jeremy, jc-55): the trimmed, lowercased value of a switch, or "" when the key is absent or
+ * holds nothing but whitespace. Factored out when settingoptedout() arrived, so that the two
+ * predicates cannot drift apart on what counts as " TRUE " -- the same reasoning that moved the
+ * parse out of TileWorldApp::SettingOptedIn() in the first place.
+ *
+ * ⚠ ABSENT AND BLANK DELIBERATELY LOOK THE SAME, and both mean "no opinion, use the default".
+ * That is why this returns a word rather than a tri-state: neither predicate has any use for the
+ * distinction, and inventing one would make "showlevelname=" mean something different from
+ * omitting the line, which nobody hand-editing an ini file would expect. */
+namespace
+{
+    string switchword(char const * name)
+    {
+        map<string, string>::const_iterator loc(settings.find(name));
+        if (loc == settings.end())
+            return string();
+
+        /* The whitespace set is QChar::isSpace()'s, matching the QString::trimmed() this replaced
+         * -- vertical tab and form feed included, not because an ini file will ever contain them
+         * but so that "equivalent to the old Qt implementation" is true without an asterisk. */
+        static char const WS[] = " \t\n\v\f\r";
+        string s(loc->second);
+        string::size_type const first = s.find_first_not_of(WS);
+        if (first == string::npos)
+            return string();
+        string::size_type const last = s.find_last_not_of(WS);
+        s = s.substr(first, last - first + 1);
+
+        for (string::size_type i = 0; i < s.size(); ++i)
+            s[i] = static_cast<char>(tolower(static_cast<unsigned char>(s[i])));
+        return s;
+    }
+}
+
 int settingoptedin(char const * name)
 {
-    map<string, string>::const_iterator loc(settings.find(name));
-    if (loc == settings.end())
-        return 0;
+    string const s(switchword(name));
+    return (s == "1" || s == "true") ? 1 : 0;
+}
 
-    /* The whitespace set is QChar::isSpace()'s, matching the QString::trimmed() this replaced --
-     * vertical tab and form feed included, not because an ini file will ever contain them but so
-     * that "equivalent to the old Qt implementation" is true without an asterisk. */
-    static char const WS[] = " \t\n\v\f\r";
-    string s(loc->second);
-    string::size_type const first = s.find_first_not_of(WS);
-    if (first == string::npos)
-        return 0;
-    string::size_type const last = s.find_last_not_of(WS);
-    s = s.substr(first, last - first + 1);
-
-    if (s == "1")
-        return 1;
-    if (s.size() != 4)
-        return 0;
-    for (string::size_type i = 0; i < 4; ++i)
-        s[i] = static_cast<char>(tolower(static_cast<unsigned char>(s[i])));
-    return s == "true" ? 1 : 0;
+/* MOD (Jeremy, jc-55): the MIRROR of settingoptedin(), for a switch whose default is ON.
+ * TRUE only when the value is explicitly "0" or "false"; absent, blank, "1", "true" and garbage
+ * all mean "not opted out", i.e. the feature stays on.
+ *
+ * 🔴 WHY A SECOND FUNCTION RATHER THAN !settingoptedin(). Because they are not complements.
+ * settingoptedin() answers FALSE for an absent key, so !settingoptedin() would answer TRUE for
+ * one -- which is right here by luck, and wrong the moment the value is garbage: "showlevelname=yes"
+ * would silently turn the level name OFF. A default-on switch must treat an unparseable value as
+ * "leave it alone", and only an explicit off-word may turn it off. SuperCC learned this the same
+ * way and its rule is written down: MATCH THE PREDICATE TO THE DEFAULT, and never share one
+ * between two switches whose defaults differ.
+ *
+ * The polarity is deliberately left visible at the call site -- `if (!settingoptedout(...))` --
+ * rather than hidden behind a "shown" wrapper. A reader skimming tworld.c can see which of the
+ * two switches is which; two functions that both read `if (setting...(x))` could not be told
+ * apart, and telling them apart is the entire hazard. */
+int settingoptedout(char const * name)
+{
+    string const s(switchword(name));
+    return (s == "0" || s == "false") ? 1 : 0;
 }
 
 /* MOD (Jeremy, jc-37): FALSE when the settings file exists but could not be read, i.e. when the map

@@ -66,8 +66,30 @@ if (-not (Test-Path $exePath)) { throw "no executable at $exePath -- build it fi
 
 # Wipe the whole dist folder: a package run that fails partway must not leave the PREVIOUS zip
 # sitting next to a half-built staging folder under the same name, looking current.
+#
+# 🔴 EXCEPT THE BUILD MANIFEST, WHICH THIS USED TO DESTROY (fixed jc-55). RELEASING.md step 5 says,
+# in this order:
+#
+#     build.ps1 -ExpectTag jc-N -Manifest dist\build-manifest.json
+#     package.ps1
+#
+# and the second line deleted the file the first line had just written. Silently: nothing failed,
+# the zip was correct, and the provenance record -- the SHA-256 and toolchain versions that are the
+# only way to tell two builds apart once the build tag is switched off -- simply was not there
+# afterwards. Anyone who then reran build.ps1 -Manifest to recover it was attesting a SECOND build,
+# not the one in the zip.
+#
+# The manifest describes the executable being packaged, so it belongs beside the zip. Carried across
+# the wipe rather than moved elsewhere, which would break every path already written down.
 $dist = Join-Path $root "dist"
+$manifestPath = Join-Path $dist "build-manifest.json"
+$manifestSaved = $null
+if (Test-Path $manifestPath) { $manifestSaved = [IO.File]::ReadAllBytes($manifestPath) }
 if (Test-Path $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
+if ($manifestSaved) {
+    New-Item -ItemType Directory -Force -Path $dist | Out-Null
+    [IO.File]::WriteAllBytes($manifestPath, $manifestSaved)
+}
 $pkgDir = Join-Path $dist "TileWorld-$tag"
 New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 
@@ -109,6 +131,14 @@ foreach ($dll in "zlib1.dll", "libzstd.dll") {
 #                   loader falls back to the rc file's built-in tiles, which is exactly the
 #                   behavior of an absent key. Shipping the line with no value documents that
 #                   the setting exists and can be edited -- same pattern as selectedseries=.
+#   showlevelname=true   jc-55. 🔴 THE ONE VALUE HERE THAT IS NOT "false", and it is not an
+#                   oversight: this switch is OPT-OUT, because showing the level name is
+#                   upstream 2.3.1's own behavior. settingoptedout() answers "not opted out"
+#                   for an absent key, so true IS the absent-key behavior. Writing false here
+#                   would silently blank every fresh install's title bar.
+#   showlevelpack=false  jc-55. Opt-in, like every other switch here. The pack name in the
+#                   title is this fork's addition, so a downloader gets stock Tile World --
+#                   the same reasoning as showbuildtag (ADR 0006).
 #
 # Re-check this list whenever a default changes -- and run verify-defaults.ps1, which compares
 # these keys against settings.cpp's SECTIONS[] so that "re-check" is not left to memory.
@@ -124,6 +154,8 @@ mstileset=
 showbuildtag=false
 showdeathcounter=false
 showinitstate=0
+showlevelname=true
+showlevelpack=false
 
 [Game]
 ignorepasswords=false

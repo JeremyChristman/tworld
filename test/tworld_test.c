@@ -136,6 +136,23 @@ void setsoundeffects(int action) { }
 int setstepping(int stepping, int display) { return 0; }
 void setstringsetting(char const * name, char const * val) { }
 void setsubtitle(char const *subtitle) { }
+/* 🔴 NOT INERT EITHER. composesubtitle() reads both of these, and WHICH KEY IT
+ * ASKS EACH ONE FOR is the thing most worth pinning: the two switches have
+ * opposite defaults, so putting the level name through settingoptedin() would
+ * compile, look right, and turn a fresh install's title bar blank. These
+ * record the name they were handed so a case can assert the pairing, and
+ * answer from a variable so the four title states are reachable.
+ *
+ * They deliberately do NOT re-implement settings.cpp's parse. A second copy of
+ * "what counts as true" in the test is exactly the two-tables-that-must-agree
+ * trap that CLAUDE.md section 8.1 warns about; the parse itself is tested in
+ * settings_test.c, against the real code. */
+static char const *asked_optedin;
+static char const *asked_optedout;
+static int answer_optedin;
+static int answer_optedout;
+int settingoptedin(char const * name) { asked_optedin = name; return answer_optedin; }
+int settingoptedout(char const * name) { asked_optedout = name; return answer_optedout; }
 int setvolume(int volume, int display) { return 0; }
 void shutdowngamestate(void) { }
 char *skippathname(char const *name) { return 0; }
@@ -455,6 +472,116 @@ static void test_issolved(void)
     CHECK_INT(issolved(&gs, 3), TRUE);
 }
 
+/* jc-55: the window title. composesubtitle() is pure -- buffer in, string out,
+ * two settings read through the stubs above -- so all four states are directly
+ * reachable here, which is the reason it was lifted out of runcurrentlevel()
+ * rather than gated in place. */
+
+/* pack switch off / level switch on = absent keys = upstream 2.3.1's default */
+static void subtitle_of(char *buf, size_t n, char const *series, char const *level,
+                        int packon, int levelon)
+{
+    answer_optedin = packon;        /* showlevelpack: opt-IN, so 1 means shown */
+    answer_optedout = !levelon;     /* showlevelname: opt-OUT, so 1 means HIDDEN */
+    asked_optedin = NULL;
+    asked_optedout = NULL;
+    memset(buf, '@', n);            /* poison: a helper that writes nothing must not pass */
+    composesubtitle(buf, n, series, level);
+}
+
+static void test_subtitle(void)
+{
+    char buf[520];
+
+    tw_case("composesubtitle: the four states");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", "Clubhouse", 0, 1);
+    CHECK_STR(buf, "Clubhouse");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", "Clubhouse", 1, 1);
+    CHECK_STR(buf, "CCLP1 - Clubhouse");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", "Clubhouse", 1, 0);
+    CHECK_STR(buf, "CCLP1");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", "Clubhouse", 0, 0);
+    CHECK_STR(buf, "");
+
+    /* 🔴 THE POINT OF THE WHOLE FEATURE. Absent keys must reproduce upstream
+     * 2.3.1 exactly -- bare level name, no pack -- because that is what a
+     * downloader gets. Both predicates answer 0 for an absent key, which is
+     * "off" for the opt-in one and "on" for the opt-out one. */
+    tw_case("composesubtitle: absent keys give upstream 2.3.1's title");
+    answer_optedin = 0;
+    answer_optedout = 0;
+    memset(buf, '@', sizeof buf);
+    composesubtitle(buf, sizeof buf, "CCLP1.dat", "Clubhouse");
+    CHECK_STR(buf, "Clubhouse");
+
+    /* 🔴 Which key goes through which predicate. Swapping these two lines in
+     * tworld.c is the single most plausible edit that would break the default
+     * while every other case above still passed. */
+    tw_case("composesubtitle: each switch uses the predicate matching its default");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", "Clubhouse", 1, 1);
+    /* CHECK_STR fails on a NULL, so "never asked at all" is caught here too. */
+    CHECK_STR(asked_optedin, "showlevelpack");
+    CHECK_STR(asked_optedout, "showlevelname");
+
+    /* series.name is a FILENAME, and "dat-ms.dac" is two known extensions. */
+    tw_case("composesubtitle: extension stripping");
+    subtitle_of(buf, sizeof buf, "Joshie.dat-ms.dac", "Lesson 1", 1, 0);
+    CHECK_STR(buf, "Joshie");
+    subtitle_of(buf, sizeof buf, "CCLXP2.DAT", "Lesson 1", 1, 0);
+    CHECK_STR(buf, "CCLXP2");         /* stricmp: case must not matter */
+    subtitle_of(buf, sizeof buf, "public_TS0.ccl", "Lesson 1", 1, 0);
+    CHECK_STR(buf, "public_TS0");
+    subtitle_of(buf, sizeof buf, "my.levels.zzz", "Lesson 1", 1, 0);
+    CHECK_STR(buf, "my.levels.zzz");  /* an UNKNOWN extension is part of the name */
+
+    /* An empty part is dropped rather than joined, so no title can begin or
+     * end with a stray " - ". A level with no name is real: .dat records may
+     * omit the title field entirely. */
+    tw_case("composesubtitle: an empty part is dropped, not joined");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", "", 1, 1);
+    CHECK_STR(buf, "CCLP1");
+    subtitle_of(buf, sizeof buf, "CCLP1.dat", NULL, 1, 1);
+    CHECK_STR(buf, "CCLP1");
+    subtitle_of(buf, sizeof buf, "", "Clubhouse", 1, 1);
+    CHECK_STR(buf, "Clubhouse");
+    subtitle_of(buf, sizeof buf, ".dac", "Clubhouse", 1, 1);
+    CHECK_STR(buf, "Clubhouse");      /* strips to empty, so the pack drops out */
+    subtitle_of(buf, sizeof buf, "", "", 1, 1);
+    CHECK_STR(buf, "");
+
+    /* The old code strcpy()'d series.name into a 256-byte buffer, so an
+     * unterminated one ran off the end. gameseries.name is exactly 256, which
+     * is why this is bounded now rather than merely long enough. */
+    tw_case("composesubtitle: a full-length series name does not overrun");
+    {
+        char longname[600];
+        memset(longname, 'x', sizeof longname - 1);
+        longname[sizeof longname - 1] = '\0';
+        subtitle_of(buf, sizeof buf, longname, "Clubhouse", 1, 0);
+        CHECK_INT((int)strlen(buf), 255);
+        CHECK_INT(buf[255], '\0');
+    }
+
+    /* A caller with no room must still get a terminated buffer, and must not
+     * be written past. */
+    tw_case("composesubtitle: a tiny buffer truncates and terminates");
+    {
+        char small[8];
+        memset(small, '@', sizeof small);
+        answer_optedin = 1;
+        answer_optedout = 0;
+        composesubtitle(small, 8, "CCLP1.dat", "Clubhouse");
+        CHECK_STR(small, "CCLP1 -");
+        CHECK_INT(small[7], '\0');
+
+        /* bufsize 0 is the one case snprintf cannot be handed a terminator
+         * for; the guard returns before touching anything. */
+        memset(small, '@', sizeof small);
+        composesubtitle(small, 0, "CCLP1.dat", "Clubhouse");
+        CHECK_INT(small[0], '@');
+    }
+}
+
 int main(void)
 {
     tw_begin("tworld_test.c");
@@ -464,8 +591,9 @@ int main(void)
     test_passwords();
     test_islastinseries();
     test_issolved();
+    test_subtitle();
 
     /* Raise this when cases are added; never lower it to make a run pass. */
-    tw_expect_atleast(51);
+    tw_expect_atleast(72);
     return tw_end();
 }

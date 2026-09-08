@@ -416,9 +416,30 @@ public class TWPT {
                 # The title bar carries the level name, which makes it a real
                 # oracle for "a level is actually loaded" rather than "a window
                 # exists". It reads a bare "Tile World" on the prologue screen.
+                #
+                # ⚠ THE PATTERN WAS ' - .+ - ' UNTIL jc-55 AND HAD TO CHANGE.
+                # Two separators meant "<pack> - <level>", which was the only
+                # title this fork could produce; jc-55 made the pack name
+                # opt-in and the shipped default is now upstream's one
+                # separator. The gate caught its own staleness by failing on a
+                # correct build -- which is the right way round, but note that
+                # the fix here WEAKENS the oracle, so the pack half is asserted
+                # separately below rather than dropped.
+                $title = $proc.MainWindowTitle
                 Check "a level is loaded (the title names one)" `
-                      ($proc.MainWindowTitle -match ' - .+ - ') `
-                      ("title was: " + $proc.MainWindowTitle)
+                      ($title -match ' - .+') `
+                      ("title was: " + $title)
+
+                # 🔴 THE SHIPPED DEFAULT, ON THE SHIPPED BINARY. tworld_test.c
+                # pins all four title states, but it stubs the settings layer --
+                # nothing there proves the real executable reads these keys out
+                # of a real tw_settings.ini at all, and "a shipped setting
+                # nobody can find out about is not shipped" cuts both ways.
+                # This is the release's headline behavior change: a fresh
+                # download must show plain Tile World 2.3.1's title.
+                Check "jc-55: the stock title does NOT include the pack name" `
+                      ($title -notmatch ' - .+ - ') `
+                      ("expected one separator, got: " + $title)
                 Check "the GUI survives a few moves" (-not $proc.HasExited)
 
                 $shot = Join-Path $root ("playtest-" + $ExpectTag + ".png")
@@ -463,6 +484,66 @@ public class TWPT {
                 $proc.Refresh()
                 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
             }
+        }
+
+        # ---- and now the setting, honored end to end -------------------------
+        #
+        # 🔴 THE UNIT TESTS CANNOT REACH THIS. tworld_test.c pins every title
+        # composesubtitle() can produce, but it stubs settingoptedin() -- so
+        # nothing there says the shipped executable reads showlevelpack out of a
+        # real tw_settings.ini in its working directory. That is the whole
+        # distance between "the code composes titles" and "the feature works in
+        # the thing people download", and it is the same distance that let a
+        # setting ship undocumented twice before verify-defaults.ps1 existed.
+        #
+        # Cheap because the scratch install already exists: write one line, open
+        # the game again, read the title back.
+        $iniPath = Join-Path $scratch "tw_settings.ini"
+        $iniBefore = if (Test-Path $iniPath) { [IO.File]::ReadAllText($iniPath) } else { "" }
+        [IO.File]::WriteAllText($iniPath, "[Display]`r`nshowlevelpack=true`r`n",
+                                (New-Object Text.UTF8Encoding $false))
+        $proc2 = Start-Process -FilePath $exe -ArgumentList $guiArgs -PassThru -WorkingDirectory $scratch
+        try {
+            Start-Sleep -Seconds 5
+            $proc2.Refresh()
+            if (-not $proc2.HasExited -and $proc2.MainWindowHandle -ne 0) {
+                $h2 = $proc2.MainWindowHandle
+                $null = [TWPT]::ShowWindow($h2, 9)
+                $null = [TWPT]::SetForegroundWindow($h2)
+                Start-Sleep -Milliseconds 800
+                $rect2 = New-Object TWPT+RECT
+                $null = [TWPT]::GetWindowRect($h2, [ref]$rect2)
+                for ($i = 0; $i -lt 8; $i++) {
+                    $null = [TWPT]::SetCursorPos(($rect2.R - 66), ($rect2.B - 47))
+                    Start-Sleep -Milliseconds 200
+                    [TWPT]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+                    Start-Sleep -Milliseconds 90
+                    [TWPT]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                }
+                Start-Sleep -Milliseconds 900
+                $proc2.Refresh()
+                $title2 = $proc2.MainWindowTitle
+                Check "jc-55: showlevelpack=true puts the pack name back" `
+                      ($title2 -match ' - .+ - ') `
+                      ("expected two separators with showlevelpack=true, got: " + $title2)
+            } else {
+                Check "jc-55: the game reopened to read the edited settings file" $false `
+                      "no main window on the second launch, so the setting could not be checked"
+            }
+        }
+        finally {
+            $proc2.Refresh()
+            if (-not $proc2.HasExited) {
+                $null = $proc2.CloseMainWindow()
+                Start-Sleep -Seconds 2
+                $proc2.Refresh()
+                if (-not $proc2.HasExited) { Stop-Process -Id $proc2.Id -Force }
+            }
+            # Put the scratch install back as the zip shipped it. It is a temp
+            # directory, but a later check reading this file would otherwise be
+            # reading what this block wrote rather than what was packaged.
+            [IO.File]::WriteAllText($iniPath, $iniBefore, (New-Object Text.UTF8Encoding $false))
         }
     }
 

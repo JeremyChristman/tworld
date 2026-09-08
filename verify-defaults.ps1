@@ -26,7 +26,16 @@ settings file that silently omits settings is not doing the job it ships to do.
 WHAT IS AND IS NOT CHECKED
 
 Checked: the SET OF KEYS in the stock file against settings.cpp's SECTIONS[],
-which section each key sits under, and the headroom left in SECTION_MAXKEYS.
+which section each key sits under, the headroom left in SECTION_MAXKEYS, and --
+added in jc-55 -- the whole stock file against the C string literal in
+settings_test.c's "comes back BYTE FOR BYTE" case, character for character.
+
+That third copy exists because a test that read the file from package.ps1 would
+assert only that the round trip reproduces whatever it is handed, which is true
+of any input at all. The literal is what makes the assertion mean something. It
+promptly drifted the first time it could: jc-55 added two keys, and every case
+in settings_test.c stayed green while its literal described the PREVIOUS
+release's file. So it is compared here rather than trusted.
 
 Not checked: whether each VALUE equals the program's real fallback. Those
 fallbacks live in a dozen different call sites -- getintsetting() returning -1
@@ -43,6 +52,7 @@ param(
 $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
 $problems = @()
+$literalDrift = $false
 
 function Say([string]$text) { if (-not $Quiet) { Write-Host $text } }
 
@@ -158,6 +168,71 @@ foreach ($name in $shipped.Keys) {
     }
 }
 
+# ------------------------------------------- and the test's own copy of it ---
+#
+# 🔴 THERE IS A THIRD COPY OF THE STOCK FILE, and until jc-55 nothing checked it.
+# settings_test.c's "the shipped stock file comes back BYTE FOR BYTE" case holds
+# the whole file as a C string literal, because that is what makes the assertion
+# a real one -- a test that read package.ps1 would only be asserting that the
+# round trip reproduces whatever it is handed, which it does for any input.
+#
+# The cost is a duplicate, and it drifted the first time it could: jc-55 added
+# two keys to package.ps1 and settings.cpp, and every case in settings_test.c
+# still passed while its literal described the previous release's file. So the
+# duplicate stays -- and is compared here, character for character. ADR 0006
+# makes fork.h the single definition of the build tag and CI enforces it; where
+# a second copy genuinely earns its place, a check is what earns it.
+$testPath = Join-Path $root "test\settings_test.c"
+if (-not (Test-Path $testPath)) {
+    $problems += "test\settings_test.c is missing -- the stock file's byte-for-byte case cannot be checked"
+} else {
+    $testSrc = [System.IO.File]::ReadAllText($testPath, [System.Text.Encoding]::UTF8)
+    if ($testSrc -notmatch '(?s)BYTE FOR BYTE.*?loadtext\(plat\((?<lit>.*?)\)\);') {
+        $problems += "could not find the stock-file literal in test\settings_test.c. If that case was renamed or reshaped, update the regular expression in this script rather than deleting the check."
+    } else {
+        # A C string literal split across lines: join the quoted runs, then turn
+        # the only escape it uses back into a real newline.
+        $literal = ""
+        foreach ($m in [regex]::Matches($Matches['lit'], '"((?:[^"\\]|\\.)*)"')) {
+            $literal += $m.Groups[1].Value
+        }
+        $literal = $literal -replace '\\n', "`n"
+
+        # Both sides to LF, both without a trailing newline. The shipped file
+        # deliberately ends without one -- the here-string stops after volume=10
+        # -- and the test's own next case is about the writer restoring it.
+        $normShipped = ($iniText -replace "`r`n", "`n").TrimEnd("`n")
+        $normTest = ($literal -replace "`r`n", "`n").TrimEnd("`n")
+
+        if ($normShipped -ne $normTest) {
+            $literalDrift = $true
+            $problems += "settings_test.c's stock-file literal does not match the file package.ps1 ships"
+
+            # Report the KEYS that differ, not the lines. A single added line
+            # shifts every line after it, so a positional diff reports twenty
+            # mismatches for a one-key change and buries the actual one.
+            $shippedKeys = @($normShipped -split "`n" | Where-Object { $_ -match '^\s*[^\[\s][^=]*=' })
+            $testKeys = @($normTest -split "`n" | Where-Object { $_ -match '^\s*[^\[\s][^=]*=' })
+            foreach ($line in @($shippedKeys | Where-Object { $testKeys -notcontains $_ })) {
+                $problems += "  package.ps1 ships `"$line`"; settings_test.c's literal does not have it"
+            }
+            foreach ($line in @($testKeys | Where-Object { $shippedKeys -notcontains $_ })) {
+                $problems += "  settings_test.c's literal has `"$line`"; package.ps1 does not ship it"
+            }
+            # ⚠ Parenthesized deliberately. Written as `$a -join "x" -eq $b -join "x"`
+            # PowerShell binds -eq tighter than the second -join and the test is
+            # always true, which is exactly what the first version of this line did.
+            $shippedSorted = (($shippedKeys | Sort-Object) -join "`n")
+            $testSorted = (($testKeys | Sort-Object) -join "`n")
+            if ($shippedSorted -eq $testSorted) {
+                $problems += "  the same keys and values, so the difference is in ORDER, blank lines or section headings"
+            }
+        } else {
+            Say ("settings_test.c's byte-for-byte literal matches, {0} line(s)" -f ($normTest -split "`n").Count)
+        }
+    }
+}
+
 # Section ORDER, checked separately and reported as a note rather than a failure:
 # the parser does not care (headings are decoration -- docs\adr\0007), but the
 # package.ps1 comment claims the order matches, and a claim that stops being true
@@ -176,6 +251,13 @@ if ($problems.Count -gt 0) {
     Write-Host ""
     Write-Host "Fix the here-string in package.ps1 (add the key with the value the code actually" -ForegroundColor Yellow
     Write-Host "defaults to when it is absent), and document it in README.txt section 6." -ForegroundColor Yellow
+    if ($literalDrift) {
+        Write-Host ""
+        Write-Host "And update the string literal in settings_test.c's `"comes back BYTE FOR BYTE`"" -ForegroundColor Yellow
+        Write-Host "case to match, along with the settings.size() counts in that case and the next." -ForegroundColor Yellow
+        Write-Host "That copy is deliberate -- it is what makes the assertion mean something -- so" -ForegroundColor Yellow
+        Write-Host "bring it into line rather than deleting the check that found this." -ForegroundColor Yellow
+    }
     exit 1
 }
 

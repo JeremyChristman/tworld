@@ -31,6 +31,16 @@ void setstringsetting(char const * name, char const * val);
  * core and TileWorldApp::SettingOptedIn(). */
 int settingoptedin(char const * name);
 
+/* MOD (Jeremy, jc-55): TRUE when an OPT-OUT switch has been turned off -- only "0" or "false"
+ * (any casing, surrounding whitespace ignored) count; absent, blank, "1", "true" and garbage all
+ * mean "not opted out", so the feature stays on.
+ *
+ * 🔴 NOT the complement of settingoptedin(), and must not be replaced by one. Both answer FALSE
+ * for an absent key, because both mean "no opinion here" -- which is what makes each one safe for
+ * ITS OWN default and unsafe for the other's. Use settingoptedin() for a switch that defaults OFF
+ * and this for a switch that defaults ON; never one predicate for both. */
+int settingoptedout(char const * name);
+
 /* MOD (Jeremy, jc-37): FALSE when the settings file exists but could not be read, in which case
  * the settings map is empty and savesettings() will refuse to write. Only callers that must tell
  * "no value yet" apart from "value unavailable" need this -- see the death counter. */

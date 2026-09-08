@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-54
+  Tile World  --  Jeremy Christman's fork                    build jc-55
 ==============================================================================
 
   1. What this is
@@ -238,6 +238,8 @@ This is the complete stock file:
     showbuildtag=false
     showdeathcounter=false
     showinitstate=0
+    showlevelname=true
+    showlevelpack=false
 
     [Game]
     ignorepasswords=false
@@ -250,6 +252,13 @@ This is the complete stock file:
 ON/OFF SETTINGS TAKE "true" OR "1". Anything else -- "false", "0", a typo, a
 missing line, a missing file -- means OFF. Nothing switches itself on by
 accident.
+
+ONE SETTING IS THE OTHER WAY ROUND: showlevelname. It is on unless you turn it
+off, because showing the level name is what plain Tile World does and this fork
+should not quietly take that away. So it takes "false" or "0" to switch OFF, and
+anything else -- including a typo, a missing line or a missing file -- leaves it
+ON. The rule is the same in spirit either way: only a value you clearly meant
+changes anything, and a mistake leaves the setting where it was.
 
 
 [Display]
@@ -372,6 +381,44 @@ showinitstate   Whether to show the initial random state of a level, a detail
                 Default: 0
                 Toggled in the game under the Options menu.
 
+showlevelname   Whether the title bar names the level you are on.
+                Values:  false or 0 turns it OFF. ANYTHING ELSE IS ON.
+                Default: true -- on, including when the key is absent or the
+                         file does not exist.
+                On:   Tile World - Clubhouse
+                Off:  Tile World
+                READ THE "Values" LINE AGAIN: this is the one opt-OUT setting
+                in the file. It works backwards from the others because it is
+                what plain Tile World 2.3.1 already did, and a fork should not
+                silently remove something the original gave you. See the note
+                under the stock file above.
+
+showlevelpack   Whether the title bar also names the level SET you are playing,
+                in front of the level name.
+                Values:  true or 1 turns it on. ANYTHING ELSE IS OFF.
+                Default: false -- off, including when the key is absent or the
+                         file does not exist.
+                On:   Tile World - CCLP1 - Clubhouse
+                Off:  Tile World - Clubhouse
+                Opt-in on purpose, for the same reason as showbuildtag: a fresh
+                download should look like the Tile World people already know,
+                and this fork's additions should be things you switched on.
+                The set name comes from the file you opened, with .dac, .dat and
+                .ccl trimmed off the end -- so "CCLP1.dat-ms.dac" shows as
+                "CCLP1".
+
+                THESE TWO COMBINE, and all four results are reachable:
+
+                    pack  name   title bar
+                    ----  ----   ---------------------------------
+                    off   on     Tile World - Clubhouse    (stock)
+                    on    on     Tile World - CCLP1 - Clubhouse
+                    on    off    Tile World - CCLP1
+                    off   off    Tile World
+
+                With showbuildtag on as well, the build tag goes first:
+                "Tile World [jc-55] - CCLP1 - Clubhouse".
+
 
 [Game]
 --------
@@ -448,6 +495,42 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-55  --  You choose what the title bar says
+--------------------------------------------------------------------
+
+  * THE TITLE BAR IS NOW TWO SETTINGS INSTEAD OF ONE FIXED FORMAT.
+    showlevelname decides whether the level's name appears; showlevelpack
+    decides whether the level SET's name appears in front of it. All four
+    combinations work, from "Tile World - CCLP1 - Clubhouse" down to a bare
+    "Tile World". Section 6 has the full table.
+
+  * WHAT CHANGES IF YOU ALREADY HAD jc-54. The stock title is now
+    "Tile World - Clubhouse" rather than "Tile World - CCLP1 - Clubhouse" --
+    that is, plain Tile World 2.3.1's title, which is what a new download
+    should look like. To get the set name back, add one line to
+    tw_settings.ini:
+
+        showlevelpack=true
+
+    Nothing else changed, and no saved solution, score or setting is affected.
+    This is the same reasoning as showbuildtag: what this fork adds should be
+    something you switched on, not something you have to discover and switch
+    off.
+
+  * WHY THE TWO SETTINGS READ DIFFERENTLY. showlevelpack is opt-in, like every
+    other switch here. showlevelname is opt-OUT, because the level name was
+    already there in the original game and taking it away by default would be
+    the fork deciding something on your behalf. The practical effect is that a
+    typo in either one leaves the setting where it was rather than flipping it.
+
+  * Also in this build, none of which you can see while playing: first tests
+    for the window title and for the settings file's section table, a check
+    that the settings file shipped in this zip matches the one the tests
+    assert on, and a check that the numbers written in the developer notes
+    still match what the test suite actually reports. The last of those found
+    a count that had been four out for several releases.
 
 
 jc-54  --  Your settings file can no longer be destroyed by a crash

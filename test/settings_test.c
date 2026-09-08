@@ -503,6 +503,140 @@ static void test_optedin(void)
     CHECK_INT(settingsarereadable(), 1);
 }
 
+/* --- the opt-OUT predicate ------------------------------------------------ *
+ *
+ * MOD (Jeremy, jc-55). settingoptedout() is settingoptedin()'s mirror, for a
+ * switch whose default is ON -- showlevelname, the level name in the title bar,
+ * which is upstream 2.3.1's own behavior and so may only be turned off
+ * deliberately.
+ *
+ * 🔴 THE CASE THAT MATTERS IS "NOT COMPLEMENTS". The obvious implementation is
+ * !settingoptedin(), and it is wrong: settingoptedin() answers FALSE for
+ * garbage, so its negation answers TRUE, and "showlevelname=yes" would turn the
+ * level name off. Both predicates answer 0 for an absent, blank or unparseable
+ * value -- each one reading that as "no opinion, keep MY default" -- and that
+ * shared FALSE is exactly why neither can stand in for the other. */
+
+static void test_optedout(void)
+{
+    tw_case("an opt-out switch is ON when the key is absent entirely");
+    loadtext("volume=8\n");
+    CHECK_INT(settingoptedout("showlevelname"), 0);
+
+    tw_case("\"false\" and \"0\" are the only things that switch one OFF");
+    loadtext("showlevelname=false\na=0\n");
+    CHECK_INT(settingoptedout("showlevelname"), 1);
+    CHECK_INT(settingoptedout("a"), 1);
+
+    tw_case("the off word is matched case-INSENSITIVELY");
+    loadtext("a=FALSE\nb=False\nc=fAlSe\n");
+    CHECK_INT(settingoptedout("a"), 1);
+    CHECK_INT(settingoptedout("b"), 1);
+    CHECK_INT(settingoptedout("c"), 1);
+
+    tw_case("🔴 anything else leaves it ON, including \"no\" and \"off\"");
+    /* Deliberately as narrow as the on-word set: "yes" does not switch an
+     * opt-in on, so "no" does not switch an opt-out off. One vocabulary. */
+    loadtext("a=no\nb=off\nc=falsex\nd=fals\ne=2\nf=-1\ng=true\nh=1\n");
+    CHECK_INT(settingoptedout("a"), 0);
+    CHECK_INT(settingoptedout("b"), 0);
+    CHECK_INT(settingoptedout("c"), 0);
+    CHECK_INT(settingoptedout("d"), 0);
+    CHECK_INT(settingoptedout("e"), 0);
+    CHECK_INT(settingoptedout("f"), 0);
+    CHECK_INT(settingoptedout("g"), 0);
+    CHECK_INT(settingoptedout("h"), 0);
+
+    tw_case("an empty or all-whitespace value leaves it ON");
+    loadtext("a=\n");
+    CHECK_INT(settingoptedout("a"), 0);
+    settings["b"] = " \t\r\n\v\f";
+    CHECK_INT(settingoptedout("b"), 0);
+
+    tw_case("it trims its own whitespace, the same set as the opt-in one");
+    settings["a"] = "\v\ffalse\v\f";
+    CHECK_INT(settingoptedout("a"), 1);
+    settings["b"] = "\r\n0\r\n";
+    CHECK_INT(settingoptedout("b"), 1);
+
+    tw_case("🔴 the two predicates are NOT complements of each other");
+    /* Where they agree is the design: absent, blank and garbage all mean "no
+     * opinion", so each predicate falls back to ITS OWN default. Replace
+     * settingoptedout() with !settingoptedin() and every row below flips. */
+    loadtext("absent_is_not_here=x\nblank=\ngarbage=yes\nonword=true\noffword=false\n");
+    CHECK_INT(settingoptedin("absent"), 0);
+    CHECK_INT(settingoptedout("absent"), 0);
+    CHECK_INT(settingoptedin("blank"), 0);
+    CHECK_INT(settingoptedout("blank"), 0);
+    CHECK_INT(settingoptedin("garbage"), 0);
+    CHECK_INT(settingoptedout("garbage"), 0);
+    /* And where they disagree, each answers only for its own word. */
+    CHECK_INT(settingoptedin("onword"), 1);
+    CHECK_INT(settingoptedout("onword"), 0);
+    CHECK_INT(settingoptedin("offword"), 0);
+    CHECK_INT(settingoptedout("offword"), 1);
+}
+
+/* --- the section table's own shape ---------------------------------------- *
+ *
+ * MOD (Jeremy, jc-55). SECTIONS[] rows are BOTH sentinel-terminated and
+ * length-bounded, and the comment above the table says why: fill every slot
+ * with real keys and the terminator quietly disappears, and savesettings()
+ * walks into the next row's name.
+ *
+ * 🔴 THIS IS NOT HYPOTHETICAL, IT IS WHAT jc-55 ALMOST DID. [Display] sat at
+ * eleven of twelve slots and this release added two keys to it. The jc-41
+ * comment predicting that ("the NEXT [Display] setting must raise
+ * SECTION_MAXKEYS") was read and acted on -- but a comment is not a check, and
+ * the next person to add a key gets this instead. */
+
+static void test_sectiontable(void)
+{
+    size_t s, k;
+
+    tw_case("🔴 every SECTIONS row is terminated inside SECTION_MAXKEYS");
+    for (s = 0 ; s < sizeof SECTIONS / sizeof *SECTIONS ; ++s) {
+        int terminated = 0;
+        for (k = 0 ; k < (size_t)SECTION_MAXKEYS ; ++k)
+            if (!SECTIONS[s].keys[k]) { terminated = 1; break; }
+        CHECK_MSG(terminated,
+                  "section [%s] fills all %d slots: raise SECTION_MAXKEYS",
+                  SECTIONS[s].name, SECTION_MAXKEYS);
+    }
+
+    tw_case("no key is listed under two sections");
+    /* A duplicate would be written twice and read back as whichever came last,
+     * which is a silent way to lose a setting's grouping. */
+    for (s = 0 ; s < sizeof SECTIONS / sizeof *SECTIONS ; ++s)
+        for (k = 0 ; SECTIONS[s].keys[k] ; ++k) {
+            size_t s2, k2;
+            int seen = 0;
+            for (s2 = 0 ; s2 < sizeof SECTIONS / sizeof *SECTIONS ; ++s2)
+                for (k2 = 0 ; SECTIONS[s2].keys[k2] ; ++k2)
+                    if (!strcmp(SECTIONS[s].keys[k], SECTIONS[s2].keys[k2]))
+                        ++seen;
+            CHECK_MSG(seen == 1, "key \"%s\" appears %d times in SECTIONS",
+                      SECTIONS[s].keys[k], seen);
+        }
+
+    tw_case("jc-55's two title keys are in the table, so they are written back");
+    /* A setting missing from SECTIONS[] still works, but lands under [Other]
+     * rather than beside the other display switches -- which is how
+     * lynxtileset and mstileset shipped wrong for two releases. */
+    {
+        int foundpack = 0, foundname = 0;
+        for (s = 0 ; s < sizeof SECTIONS / sizeof *SECTIONS ; ++s)
+            for (k = 0 ; SECTIONS[s].keys[k] ; ++k) {
+                if (!strcmp(SECTIONS[s].keys[k], "showlevelpack"))
+                    foundpack = !strcmp(SECTIONS[s].name, "Display");
+                if (!strcmp(SECTIONS[s].keys[k], "showlevelname"))
+                    foundname = !strcmp(SECTIONS[s].name, "Display");
+            }
+        CHECK_MSG(foundpack, "showlevelpack is not under [Display] in SECTIONS");
+        CHECK_MSG(foundname, "showlevelname is not under [Display] in SECTIONS");
+    }
+}
+
 /* --- the round trip ------------------------------------------------------ */
 
 static void test_roundtrip(void)
@@ -575,21 +709,28 @@ static void test_roundtrip(void)
      * makes about its own settings file (449 bytes in, 449 identical out): the
      * program reproduces its own format exactly, so merely running the game
      * never rewrites a user's file into something else. */
+    /* ⚠ THIS LITERAL IS A SECOND COPY OF package.ps1's STOCK FILE, and it had
+     * silently drifted from it once already: jc-55 added two keys there and
+     * every case here still passed, because the round trip is happy to
+     * reproduce whatever it is handed. verify-defaults.ps1 now compares the two
+     * character for character, which is the only reason this copy is allowed to
+     * exist -- a literal is what makes "byte for byte" a real assertion, and a
+     * checked duplicate is not the same hazard as an unchecked one. */
     loadtext(plat("[Display]\n"
 		  "bgcolor=#285080\ndeathcount=0\ndisplayccx=1\n"
 		  "forceshowtimer=0\nlegacyscores=false\nlynxtileset=\n"
 		  "mstileset=\nshowbuildtag=false\nshowdeathcounter=false\n"
-		  "showinitstate=0\n"
+		  "showinitstate=0\nshowlevelname=true\nshowlevelpack=false\n"
 		  "\n[Game]\n"
 		  "ignorepasswords=false\nselectedruleset=2\nselectedseries=\n"
 		  "\n[Sound]\nvolume=10\n"));
-    CHECK_INT((int)settings.size(), 14);
+    CHECK_INT((int)settings.size(), 16);
     first = getfile();
     map1 = dumpmap();
     savesettings();
     CHECK_STR(filetext(), first.c_str());
     loadsettings();
-    CHECK_INT((int)settings.size(), 14);
+    CHECK_INT((int)settings.size(), 16);
     CHECK_STR(maptext(), map1.c_str());
 
     tw_case("...and the shipped file's missing final newline is restored");
@@ -607,7 +748,7 @@ static void test_roundtrip(void)
     settings.clear();
     settingsUnreadable = false;
     loadsettings();
-    CHECK_INT((int)settings.size(), 14);
+    CHECK_INT((int)settings.size(), 16);
     savesettings();
     CHECK_STR(filetext(), first.c_str());
 }
@@ -1078,6 +1219,8 @@ int main(void)
     test_lineendings();
     test_accessors();
     test_optedin();
+    test_optedout();
+    test_sectiontable();
     test_roundtrip();
     test_staging();
     test_unreadable();
@@ -1096,17 +1239,23 @@ int main(void)
 
     /* Raise this when cases are added; never lower it to make a run pass.
      *
-     * 128, not the 134 a Windows run reports, and the arithmetic is worth
+     * 177, not the 183 a Windows run reports, and the arithmetic is worth
      * writing down because the first version of this comment got it wrong twice.
      * Two regions differ by platform:
      *
      *   the locked-destination block   7 checks on Windows, 0 on POSIX  (-7)
      *   the "will not open" setup      2 checks on Windows, 3 on POSIX  (+1)
      *
-     * so POSIX reaches 134 - 7 + 1 = 128, and that is the number every platform
+     * so POSIX reaches 183 - 7 + 1 = 177, and that is the number every platform
      * is guaranteed to hit. A floor with slack in it is the failure this
      * mechanism exists to report: it would let a case stop running while the
-     * suite stayed green. */
-    tw_expect_atleast(128);
+     * suite stayed green.
+     *
+     * jc-55 raised this from 128: test_optedout() adds 28 checks and
+     * test_sectiontable() 21, none of them platform-dependent. ⚠ Twelve of
+     * test_sectiontable()'s are derived from the NUMBER OF KEYS in SECTIONS[],
+     * so adding a setting raises the real count on its own -- which is fine for
+     * a floor, but do not read this number as an exact total. */
+    tw_expect_atleast(177);
     return tw_end();
 }

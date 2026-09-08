@@ -1039,6 +1039,79 @@ exactly what's mine:
    is kept only as belt-and-braces, said so at the site. Reproducer committed as
    `test/fuzz/corpus/settings/cr-before-space` and replayed by the unit suite (ADR 0011).
 
+28. **The window title became two settings, and needed a second predicate to do it**
+   (`tworld.c`, `settings.cpp`). Not a defect — a feature, recorded here because the interesting
+   part is the trap it walked into on the way.
+
+   Since jc-1 the title was `"<pack> - <level>"`, fixed. jc-55 splits it: `showlevelpack` (the set
+   name, this fork's addition) and `showlevelname` (the level name, upstream 2.3.1's own behavior).
+   All four combinations are reachable, and **the default is upstream's**, not jc-54's — the same
+   reasoning as the build tag in ADR 0006, that a stranger's download should look like stock Tile
+   World and this fork's flourishes should be opted into.
+
+   🔴 **The two switches have opposite defaults, and one predicate cannot serve both.**
+   `settingoptedin()` answers TRUE only for `1`/`true`, so everything else — absent, blank,
+   `yes`, a typo — is OFF. That is exactly right for a default-off switch and exactly wrong for a
+   default-on one, and the tempting shortcut, `!settingoptedin("showlevelname")`, is **not** the
+   mirror: it answers TRUE for garbage, so `showlevelname=yes` would have switched the level name
+   off. `settingoptedout()` is a separate function answering TRUE only for `0`/`false`. **Both
+   answer FALSE for an absent, blank or unparseable value** — each reading it as "no opinion, keep
+   my own default" — and that shared FALSE is precisely why neither can stand in for the other.
+   SuperCC reached the same conclusion from the same direction and states the rule the same way:
+   match the predicate to the default, and never share one across switches whose defaults differ.
+
+   The composition moved out of `runcurrentlevel()` into a pure `composesubtitle()` so it could be
+   tested at all; `tworld_test.c` now pins all four states, which key goes through which predicate,
+   the extension stripping, and — new — that a full-length series name does not overrun. The old
+   code `strcpy()`'d a 256-byte `series.name` into a 256-byte buffer.
+
+   ⚠ **`SECTION_MAXKEYS` was 12 and `[Display]` was at 11 of it.** The comment in `settings.cpp`
+   had predicted this in as many words: "the NEXT `[Display]` setting must raise SECTION_MAXKEYS."
+   It was right, and adding two keys would have left the `nullptr` terminator nowhere to go and
+   `savesettings()` walking into the next section. Raised to 16 — but a comment that is right is
+   still not a check, so `settings_test.c` now asserts every row is terminated inside the bound,
+   and `verify-defaults.ps1` already reported the headroom. Measured both ways: filling the row
+   exactly makes the new case fail with a readable message; overflowing it fails to compile.
+
+29. **The stock settings file had a third copy nobody was checking** (`verify-defaults.ps1`).
+   Found by this release breaking it. `settings_test.c`'s "comes back BYTE FOR BYTE" case holds the
+   whole shipped file as a C string literal — deliberately, because a test that *read* the file
+   from `package.ps1` would assert only that the round trip reproduces whatever it is handed, which
+   is true of any input at all. So the literal earns its place. What it did not have was a check:
+   jc-55 added two keys to `settings.cpp` and `package.ps1`, and every case in `settings_test.c`
+   stayed green while its literal described the previous release's file.
+
+   `verify-defaults.ps1` now compares the two character for character and reports which keys
+   differ rather than which lines — a single added line shifts every line after it, and a
+   positional diff turned a two-key change into twenty mismatches with the real one buried.
+
+30. **The last hand-typed number in `CLAUDE.md` was wrong** (`verify-docs.ps1`,
+   `test/run-tests.ps1`). Section 5 said "21,008 checks"; a full run reported 21,012. Four checks,
+   no consequence — which is the entire point, since a figure with no consequence is one nobody
+   re-measures. The coverage table and the `NO_FIX_*` count had already been moved to generated
+   sources for this reason; this was what remained.
+
+   `test/run-tests.ps1` now writes `docs/test-counts.tsv` and `verify-docs.ps1` checks the sentence
+   against it, along with the golden-master digest count against its own baseline. Three smaller
+   things fell out of building it, each of which would have made the check quietly useless:
+
+   - `Resolve-Number` parsed `18` but returned `$null` for `21,082`, and `$null` **skips** rather
+     than fails — two facts would have reported "ok" without comparing anything.
+   - The obvious pattern for the check count also matched the end-to-end and Qt clauses in the
+     same sentence and called them stale unit counts. A check that cries wolf about correct text
+     gets deleted, not fixed.
+   - A dated line is history. `FORK.md` records "As of 2026-09-06: 15 unit runs / 17,531 checks",
+     which is permanently true about that date; the count checks now skip any line carrying an
+     `As of <date>` marker, on the same reasoning as the existing `CHANGELOG.md` exemption.
+
+   🔴 **And writing the guard found a live bug in the runner.** The "was this a complete run?"
+   test read `$Lang` and always saw `c++`, because the inner loop was `foreach ($lang in ...)` and
+   **PowerShell variable names are case-insensitive** — `$lang` *is* `$Lang`, so the loop had been
+   overwriting the caller's parameter since the file was written. The top of that same script warns
+   about this exact trap for `$OutDir`, two dozen lines above where it was live. It was never loud:
+   the only other reader was a skip message, which had been naming the wrong language for every
+   test after the first.
+
 
 ## Testing
 
