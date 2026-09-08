@@ -325,7 +325,23 @@ public class TWPT {
                     Write-Host ("  --    screenshot: {0}" -f $shot)
                 }
             } else {
-                Write-Host "  --    no main window; skipping the interactive half" -ForegroundColor Yellow
+                # 🔴 THIS IS A FAILURE, NOT AN OPT-OUT, and it used to be a
+                # yellow line that let the release gate exit 0.
+                #
+                # "No main window" is the SYMPTOM of the thing this half exists
+                # to catch: a static-link problem, a missing Qt platform plugin,
+                # a binary that dies with 0xC0000135 before it can draw. Every
+                # one of those produces exactly this branch, and skipping
+                # quietly meant the release gate could pass having never
+                # confirmed the game drew anything at all.
+                #
+                # ci.yml:425 already applies this reasoning to the Qt job ("it
+                # must never skip here"); it had not been carried to the release
+                # playtest, which is the more important of the two.
+                Check "the GUI opened a window at all" $false `
+                      ("no main window ever appeared, so the interactive half could not run." +
+                       " That is the symptom this check exists to catch -- a static-link or" +
+                       " Qt-plugin failure looks exactly like this. It is not a skip.")
             }
         }
         finally {

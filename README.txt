@@ -36,8 +36,9 @@ of MS behavior. This fork closed them, one at a time, by finding the exact rule
 each engine applied and making Tile World match the reference.
 
   When the work started, 135 solutions replayed correctly in SuperCC and
-  desynced in Tile World. As of build jc-32 that count is ZERO, across a
-  collection of 274 level sets, with no release ever costing a level that
+  desynced in Tile World. That count reached ZERO at build jc-28 -- see its
+  entry, "THE LAST DESYNC", in section 7 -- and has stayed there since, across
+  a collection of 274 level sets, with no release ever costing a level that
   replayed before.
 
 Most of the revision history below is that project. The rest is quality of life:
@@ -129,9 +130,15 @@ not include them, so:
     project, then copy these files over its executable.
 
 Put the folder somewhere you can write to -- your Documents or a games folder.
-Installing under C:\Program Files is a bad idea: Windows blocks writes there,
-and since tw_settings.ini now sits beside the executable, the game would not be
-able to save your settings.
+Installing under C:\Program Files is a bad idea: Windows blocks writes there, so
+the game would not be able to save your settings or your solutions.
+
+  A precise note, because it matters if you use a shortcut: tw_settings.ini is
+  written to the folder the game is RUN FROM, which for a double-clicked
+  Tile World.exe is the folder it sits in. If you launch it from a shortcut that
+  sets its own "Start in" folder, that is where the settings file goes -- and
+  starting the game from two different places gives you two different settings
+  files. Solutions are unaffected; they follow save\.
 
 RUNNING IT
 
@@ -1117,9 +1124,9 @@ jc-34  --  An About box that tells the truth about this build
 jc-33  --  Its own settings file, and the 2.2 score list back
 ------------------------------------------------------------
 
-  * SETTINGS NOW LIVE IN tw_settings.ini, next to the executable, instead of in
-    a file named "settings" inside save\. The old file is not read or converted;
-    see the upgrading note in section 4.
+  * SETTINGS NOW LIVE IN tw_settings.ini, in the folder the game is run from,
+    instead of in a file named "settings" inside save\. The old file is not read
+    or converted; see the upgrading note in section 4.
     Accomplishes: the settings file ships WITH the download, so every setting is
     visible and editable without hunting for an extension-less file inside a
     save folder. It also stops colliding with SuperCC, which lives in the same

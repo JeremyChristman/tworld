@@ -23,6 +23,52 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Fixed — six things an independent hostile review found, five of them documentation
+
+A reviewer was given the repository and no context, and told to assume it was being deceived by
+presentation. It applied 14 mutations to shipped guards and **13 were caught** — but its verdict was
+*"world-class on the engineering; the prose is a grade below the code it describes,"* and it was
+right. Its structural diagnosis is the finding that matters:
+
+> 🔴 **Corrections propagate to `CLAUDE.md` and stop there.** This project enforces single-source
+> rigorously for the build tag — `fork.h`, [ADR 0006](docs/adr/0006-fork-h-owns-the-build-tag.md), a
+> CI check, a build check, and a check against the binary — **and not at all for facts.**
+
+- **`SECURITY.md` told security researchers that `unslist.c` is unreachable dead code.** It is parsed
+  by every stock build, on every series load. **This was the third time this project wrote that claim
+  down** — and the previous correction had been applied to `CLAUDE.md` alone. The chain is now
+  tabulated there, with the reason people keep getting it wrong (the `rc` key is spelled
+  `UnsolvableList`, the table spells it `unsolvablelist`, and `readrcfile()` lowercases before
+  comparing — so grepping reads exactly like proof of absence). **Follow the call, not the grep.**
+- **"The settings file sits beside the executable" was still asserted in four places** — twice in
+  `settings.cpp`, twice in the shipped `README.txt` — while ADR 0007 recorded the claim as false and
+  believed it fixed. It is the *working* directory. One of those comments then built a false
+  consequence on it ("an installation in Program Files cannot save settings at all"), which is not
+  true: a shortcut with a writable start-in folder saves fine.
+- 🔴 **One mutation survived, and it is now caught.** `encoding.c:193` — the upper map layer's bound —
+  lost its `+ 2` and neither the suite nor the golden master noticed. ⚠ The first fix did not work
+  either: asserting the record is *refused* passes either way, because the lower layer's guard
+  catches it later for a different reason. The oracle had to be **whether the run-length loop ran at
+  all** — with the bound correct the map is never touched; without it, 40 tiles decoded from two
+  bytes past the record appear in it. The jc-45 lesson in miniature.
+- **The coverage table in `CLAUDE.md` is deleted, not corrected.** It was a hand-maintained duplicate
+  of `docs/coverage-baseline.tsv`, which is generated and has a checker — and it had drifted to 13
+  files against the baseline's 16, missing `settings.cpp` at 91.3%.
+- **`test/run-playtest.ps1` could pass without the GUI ever drawing.** "No main window" printed a
+  yellow skip and left the exit code 0 — and that message is the *symptom* of a static-link or
+  Qt-plugin failure, which is the one class of defect this gate exists to catch. It is now a failure.
+  `ci.yml` had already applied this reasoning to the Qt job; it had not been carried here.
+- **`README.md` described jc-1** — "a pack-name window-title mod and optional desync-trace
+  instrumentation" — 53 builds later, and never mentioned `AGENTS.md`, so a human contributor's
+  onboarding path never reached the brief.
+
+Also corrected while in there, same root cause: the `NO_FIX_*` witness count (13 → **18**, five
+builds stale), the two shared-seed values, and the claim that **two** pairs share a witness seed when
+**three** do — the third being `KEEPSLOT_OCCUPANT`/`KEEPSLOT_BLOCK_OCCUPANT`, whose byte-identical
+digests suggest one may be subsumed by the other and which nobody had looked at *because the document
+said there were two*. Plus two stale `file:line` references in the `-Werror` suppression table, and
+`README.txt`'s intro contradicting its own revision history about when the desync count hit zero.
+
 ### Added — first tests for `generic/tile.c` and `score.cpp`, the last two untested files with substance
 
 Neither changes the executable; both close the pattern that has been paying since jc-43. **Every file

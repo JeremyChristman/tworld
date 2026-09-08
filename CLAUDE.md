@@ -229,8 +229,10 @@ layers that can see an engine behavior change**, so run them after any edit to `
 
 - **`test\run-nofix.ps1`** — the **`NO_FIX_*` differential matrix** (the `nofix` job). For each of
   the 32 engine toggles it asks whether any input tells a fix-on build apart from a fix-off one.
-  **13 have such a witness**, committed in `test/nofix/nofix-matrix.tsv` and replayed on every push;
-  the check asserts both digests are unchanged *and that the two still differ*.
+  **18 have such a witness**, committed in `test/nofix/nofix-matrix.tsv` and replayed on every push;
+  the check asserts both digests are unchanged *and that the two still differ*. (This sentence said
+  13 for five builds after the search was widened to 18, while three other places in this same file
+  were corrected. `test/nofix/nofix-matrix.tsv` is the source; count it there, not here.)
 
   🔴 **It is the only check on the desync machinery.** Those toggles are opt-out macros, so a broken
   one changes no shipped behavior and nothing goes red — two of them had already rotted to the point
@@ -344,9 +346,9 @@ Some modules are not warning-clean, and their tests suppress specifically:
 
 | Module | Warning | Why it is suppressed rather than fixed |
 |---|---|---|
-| `solution.c:462` | `-Wuse-after-free` | GCC false positive. A failed `realloc` leaves the original pointer valid, which is the guarded branch |
+| `solution.c:474` | `-Wuse-after-free` | GCC false positive. A failed `realloc` leaves the original pointer valid, which is the guarded branch |
 | `mslogic.c:356` | `-Wunused-value` | The `_assert` macro's comma expression, at four call sites |
-| `mslogic.c:2648` | `-Wunused-variable` | `value` in `resetdata()` |
+| `mslogic.c:2748` | `-Wunused-variable` | `value` in `resetdata()` |
 
 All are pre-existing and none is a defect. They are suppressed per-test rather than fixed in the
 source because **this is a fork tracking upstream and every cosmetic edit is a diff to carry
@@ -410,11 +412,22 @@ misreading in the parser is faithfully reproduced and never caught.
   to tell "never built it" from "built it and nothing changed" before drawing any conclusion.
 
   ⭐ The sweep paid for itself twice over. **Two toggles turned out not to compile at all**
-  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`) — see §8; all 32 build now. And two *pairs*
-  share a witness seed exactly (`RFF_DRAW_ONCE`/`RFF_CHIP_REARM` at 1109,
-  `TELEPORT_STALE_FG`/`TELEPORT_BROKEN_DYNAMIC` at 3624), which is a real signal rather than a
-  coincidence: each pair is the pair whose declarations were tangled together, and they touch the
-  same path.
+  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`) — see §8; all 32 build now. And **three**
+  *pairs* share a witness seed with byte-identical fix-on and fix-off digests:
+
+  | pair | seed |
+  |---|---|
+  | `RFF_DRAW_ONCE` / `RFF_CHIP_REARM` | 7572 |
+  | `TELEPORT_STALE_FG` / `TELEPORT_BROKEN_DYNAMIC` | 2294 |
+  | `KEEPSLOT_OCCUPANT` / `KEEPSLOT_BLOCK_OCCUPANT` | 487376 |
+
+  For the first two that is explainable: each is the pair whose declarations were tangled together,
+  and they touch the same path. ⚠ **The third is not explained, and nobody has looked** — this
+  passage said "two pairs" until an independent review counted three, and the reasoning built on
+  "two" never had to account for it. Identical digests mean the generator cannot tell the two
+  toggles apart, and `mslogic.c:234` gates `FIX_KEEPSLOT_OCCUPANT` in a way that suggests
+  `NO_FIX_KEEPSLOT_BLOCK_OCCUPANT` may be **subsumed** by it rather than independent. Worth an hour
+  before anyone trusts that matrix row as two separate witnesses.
 - **No WIDGET is tested**, still — the score table's column spans, the color picker, the tileset
   menu, the death counter are all verified by hand, because each needs a `QApplication` and a paint
   device and asserting on painted pixels is a much weaker test than it looks. **2 of `oshw-qt/`'s 8
@@ -459,28 +472,20 @@ powershell -ExecutionPolicy Bypass -File coverage.ps1 -CheckBaseline
 gcov, unioned across the C and C++ builds, **unit layer only** — the end-to-end tests drive an
 uninstrumented executable, so what they reach is not counted and these figures understate the suite.
 
-| File | Lines | Branches |
-|---|---|---|
-| `random.c` | 100.0% | **100.0%** |
-| `generic/dirinput.c` | 100.0% | **97.8%** |
-| `unslist.c` | 90.7% | **84.8%** |
-| `encoding.c` | 89.9% | **82.8%** |
-| `generic/in.c` | 55.7% | **50.9%** |
-| `lxlogic.c` | 55.4% | **46.3%** |
-| `fileio.c` | 49.6% | **40.0%** |
-| `solution.c` | 47.7% | **30.1%** |
-| `mslogic.c` | 44.8% | **33.3%** |
-| `res.c` | 41.2% | **41.0%** |
-| `play.c` | 26.6% | **33.8%** |
-| `series.c` | 19.3% | **24.4%** |
-| `tworld.c` | 2.9% | **4.1%** |
-| **overall** | 37.6% | **33.2%** |
+🔴 **THE NUMBERS LIVE IN [`docs/coverage-baseline.tsv`](docs/coverage-baseline.tsv), AND THERE IS NO
+COPY OF THEM HERE ON PURPOSE.** That file is generated by `coverage.ps1 -UpdateBaseline` and checked
+by `-CheckBaseline`; a table in this document is a hand-maintained duplicate of it, and duplicates
+drift. This one did: an independent review found it listing thirteen files when the baseline had
+sixteen, missing `settings.cpp` — which at 91.3% would have been the second-best-covered file in the
+tree — and quoting an overall figure two points stale, plus one file's branch percentage in a
+sentence about lines. **ADR 0006 makes `fork.h` the single definition of the build tag and CI
+enforces it; the same principle applies to facts, and this is where it was not being applied.**
 
-🔴 **THE OVERALL FIGURE FELL FROM 47.0% AND NOTHING REGRESSED — READ THE PER-FILE COLUMN.** This is
-the fourth time and the starkest: `tworld.c` is 1,338 instrumented lines and `test/tworld_test.c`
-aims at five functions, so it entered the denominator at 2.9% and pulled the total down nine points
-while adding coverage. Every other file is unchanged or better. `-CheckBaseline` compares files
-individually for exactly this reason, and the total is the least useful number on this page.
+🔴 **READ THE PER-FILE COLUMN, NOT THE TOTAL.** The overall figure has fallen twice while nothing
+regressed and coverage was *added*: a large, barely-tested file entering the denominator drags the
+total down. `tworld.c` is 1,338 instrumented lines against a test aimed at five functions.
+`-CheckBaseline` compares files individually for exactly that reason, and the total is the least
+useful number the tool prints.
 
 ⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
 has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented

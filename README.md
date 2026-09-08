@@ -1,7 +1,53 @@
-> **This is a personal fork** of [SicklySilverMoon/tworld](https://github.com/SicklySilverMoon/tworld)
-> (tag 2.3.1) with a pack-name window-title mod and optional desync-trace instrumentation.
-> See **[FORK.md](FORK.md)** for what's changed, build instructions, and the SuperCC-replay
-> reverse-engineering project this supports. The text below is upstream's original README.
+# Jeremy Christman's fork of Tile World 2
+
+A fork of [SicklySilverMoon/tworld](https://github.com/SicklySilverMoon/tworld) at tag **2.3.1**,
+GPLv2-or-later, published as `jc-N` builds that people download and play.
+**[Latest release →](https://github.com/JeremyChristman/tworld/releases/latest)** (Windows, portable
+zip — drop it into an existing Tile World installation.)
+
+**What it is for.** Tile World and SuperCC are the two emulators serious Chip's Challenge players
+use, and for years they disagreed: a solution recorded in one would desync in the other, often within
+seconds, on levels nobody could explain. Every disagreement is a bug in somebody's emulation of the
+MS ruleset. This fork closed them one at a time, by finding the exact rule each engine applied and
+making Tile World match the reference. **When the work started, 135 solutions replayed correctly in
+SuperCC and desynced here. That count has been zero since jc-28**, across a collection of 274 level
+sets and roughly 22,000 solutions, with no release ever costing a solution that replayed before.
+
+Since then the changes have been quality-of-life and correctness: a settings file of its own, a
+choosable background color, a death counter, a tileset picker, level-navigation wrapping, and six
+shipped memory-safety fixes in the level, solution and configuration parsers.
+
+Every engine fix is **on by default and individually revertible** at compile time (`-DNO_FIX_*`), so
+the old behavior is always one flag away.
+
+### Where to look
+
+| | |
+|---|---|
+| **[AGENTS.md](AGENTS.md)** | 🔴 **Start here** if you are changing anything — human or AI. Six rules, each one a mistake somebody already made. |
+| [CLAUDE.md](CLAUDE.md) | The long brief: commands, the traps that make a test *lie*, the testing layers, and the defect history with its transferable lessons. |
+| [FORK.md](FORK.md) | The engineering record — every change, why it exists, what broke first, what was measured. |
+| [CHANGELOG.md](CHANGELOG.md) | Per-release summary, newest first. |
+| [README.txt](README.txt) | The user-facing manual that ships inside the download. |
+| [docs/adr/](docs/adr/) | Twelve decisions and why, including the ones that look like bugs and are not. |
+| [SECURITY.md](SECURITY.md) | The attack surface — this program parses files strangers made. |
+
+### Building and testing
+
+Windows, MSYS2, from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build.ps1        # -> build-static\tworld2.exe
+powershell -ExecutionPolicy Bypass -File run-tests.ps1    # unit + end-to-end
+```
+
+CMake builds it on Linux too (`cmake -S . -B build -DOSHW=qt`). CI runs nine jobs per push, including
+AddressSanitizer, UndefinedBehaviorSanitizer, libFuzzer over eight targets, a golden-master engine
+snapshot over 903 levels, and a differential matrix over the engine's behavior toggles.
+
+---
+
+*The text below is upstream's original README, unchanged.*
 
 ---
 

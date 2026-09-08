@@ -20,10 +20,24 @@ or reviewed. The parsers live in:
 | `unslist.c` | the bundled unsolvable-level list — but see below |
 | `settings.cpp` | `tw_settings.ini` |
 
-⚠ **`unslist.c` is not actually reached in the shipped configuration.** Its loader runs only if the
-`unsolvablelist` resource names a file, and that is set neither in `res/rc` nor in the compiled-in
-defaults — so `res/unslist.txt` ships and is never read. Listed because the code is there and a
-distributor could enable it, not because a stock build parses it.
+⚠ **Corrected.** This document previously said `unslist.c` "is not actually reached in the shipped
+configuration". **That was wrong, and it was the third time this project wrote that claim down.**
+`unslist.c` is parsed by every stock build, on every series load. The chain:
+
+| | |
+|---|---|
+| `res/rc:6` | `UnsolvableList=unslist.txt` |
+| `res.c:309` | `readrcfile()` **lowercases the key** before comparing |
+| `res.c:94` | so it matches `rclist[]`'s `{ "unsolvablelist", FALSE }` |
+| `res.c:568` | → `loadtxtresource(RES_TXT_UNSLIST, loadunslistfromfile)` |
+| `series.c:404` | → `markunsolvablelevels(series)`, on every series load |
+
+🔴 **Why it keeps being got wrong, since knowing that is the useful part.** `res/rc` spells the key
+`UnsolvableList`; `rclist[]` spells it `unsolvablelist`; the comparison is `strcmp`. They match only
+because of the lowercasing at `res.c:309`. So grepping for the table's spelling finds nothing in
+`res/rc` and reads exactly like proof that the resource is never set. **Follow the call, not the
+grep.** `test/unslist_test.c` now covers the parser, and `test/res_test.c` pins the
+case-insensitivity so this cannot be rediscovered a fourth time.
 
 ⚠ **`.ccx` is parsed only when a main window exists.** `readextensions()` returns immediately in
 batch mode, so a headless run never touches one.

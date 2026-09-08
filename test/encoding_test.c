@@ -184,6 +184,91 @@ int main(void)
 	CHECK_MSG(errmsg_count >= 1, "the malformed level was refused silently");
     }
 
+    tw_case("🔴 an UPPER map layer running to the end of the record is REFUSED");
+    {
+	/* THE UPPER LAYER'S HALF OF THE SAME BOUND, and it had no case until an
+	 * independent review mutated it and nothing noticed. Removing the `+ 2`
+	 * at encoding.c:193 left the whole suite green -- AND the golden master
+	 * green too, across all 903 levels. Measured, not supposed.
+	 *
+	 * ⚠ THE COMMENT AT encoding.c:220 SAYS THIS BOUND IS CORRECT BY ACCIDENT:
+	 * the upper layer reserves two bytes because it is reserving the LOWER
+	 * layer's own length word, not because anyone was thinking about the
+	 * 0xFF escape reading data[++n] twice. A bound that is right for the
+	 * wrong reason is exactly the kind that a tidy-up "simplifies", so it
+	 * gets the same treatment its twin below already had.
+	 *
+	 * The record here ends immediately after an upper layer whose last byte
+	 * is 0xFF, so the decoder would read two bytes past the allocation. */
+	int	cell, touched;
+
+	n = 0;
+	put16(raw + n, 1);      n += 2;    /* level number */
+	put16(raw + n, 0);      n += 2;    /* time */
+	put16(raw + n, 0);      n += 2;    /* chips */
+	put16(raw + n, 1);      n += 2;    /* map detail */
+	put16(raw + n, 3);      n += 2;    /* upper layer: 3 bytes */
+	raw[n++] = FIX_FLOOR; raw[n++] = FIX_FLOOR; raw[n++] = 0xFF;
+	/* Record ends HERE -- levelsize is n. The bytes BEYOND it are still
+	 * inside raw[], and they are what the 0xFF escape would read: a count
+	 * and a tile id. Filling them with something conspicuous is what makes
+	 * the overread visible. */
+	raw[n]     = 40;		/* would be read as "repeat 40 times" */
+	raw[n + 1] = 0x03;		/* would be read as the tile id Water */
+
+	CHECK_MSG(expandraw(raw, n) == FALSE,
+		  "an upper layer ending in 0xFF with no trailing bytes was accepted;"
+		  " the decoder reads two bytes past it");
+
+	/* 🔴 THE REAL ORACLE, and the first version of this case did not have it.
+	 *
+	 * Asserting only that the record is REFUSED does not test this bound at
+	 * all: with the `+ 2` removed the record is still refused, just later and
+	 * for a different reason -- the lower layer's own guard catches it,
+	 * because `data` has by then advanced past the end. Both versions return
+	 * FALSE, so the check above passes either way. Verified by mutation: it
+	 * did.
+	 *
+	 * What actually differs is whether the run-length loop RAN before the
+	 * rejection. With the bound correct, the record is refused before the
+	 * loop and the map is never touched. With it removed, the loop decodes,
+	 * reads the two bytes past the record, and writes 40 Water tiles into a
+	 * map that should have stayed untouched.
+	 *
+	 * This is the jc-45 lesson in miniature: a behavioral test cannot catch a
+	 * memory-safety bound whose whole point is that the visible outcome does
+	 * not change. Find the side effect that only happens on the wrong path. */
+	touched = 0;
+	for (cell = 0 ; cell < CXGRID * CYGRID ; ++cell)
+	    if (teststate.map[cell].top.id != 0)
+		++touched;
+	CHECK_MSG(touched == 0,
+		  "the record was refused, but %d map cells were written first --"
+		  " the upper layer was decoded past the end of the record",
+		  touched);
+	CHECK_MSG(errmsg_count >= 1, "the malformed level was refused silently");
+    }
+
+    tw_case("...and an upper layer with exactly its two bytes of slack is accepted");
+    {
+	/* The other half, so a guard that simply rejects everything cannot pass
+	 * the case above. Two spare bytes is what a real record always has:
+	 * the lower layer's own length word sits immediately after the upper
+	 * layer's data. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = FIX_FLOOR; raw[n++] = FIX_FLOOR; raw[n++] = 0xFF;
+	put16(raw + n, 3);      n += 2;    /* the lower layer's length word */
+	raw[n++] = 0xFF; raw[n++] = 0xFF; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 0);      n += 2;    /* an empty optional-fields block */
+	CHECK_MSG(expandraw(raw, n) == TRUE,
+		  "a well-formed record whose upper layer ends in 0xFF was refused");
+    }
+
     tw_case("a lower map layer with two bytes to spare is still accepted");
     {
 	/* The other half. A guard that rejects everything would pass the case

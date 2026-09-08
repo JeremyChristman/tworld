@@ -34,7 +34,11 @@
 #endif
 
 extern char *savedir;
-extern char *appdir;   /* MOD (Jeremy): the program's own directory -- see sfname below */
+/* ⚠ NOT the program's own directory, whatever the name suggests. tworld.c:2146 sets appdir = root,
+ * and root is $TWORLDDIR, or ROOTDIR on a system build, or "." -- the WORKING directory. Nothing in
+ * this tree resolves the executable's own path: there is no GetModuleFileName, no
+ * QCoreApplication::applicationDirPath and no chdir. See sfname below. */
+extern char *appdir;
 
 using std::free;
 using std::getline;
@@ -94,8 +98,15 @@ namespace
     };
 }
 
-/* MOD (Jeremy): the settings file is "tw_settings.ini" NEXT TO THE PROGRAM, not "settings" inside
- * the save directory.
+/* MOD (Jeremy): the settings file is "tw_settings.ini" in the WORKING DIRECTORY, not "settings"
+ * inside the save directory.
+ *
+ * 🔴 "NEXT TO THE PROGRAM" IS WRONG AND THIS COMMENT USED TO SAY IT. Corrected after an independent
+ * review found the claim still here, in README.txt twice, and on the extern above -- after ADR 0007
+ * had already recorded that it was false and believed it fixed. It is true only in the sense that
+ * double-clicking the executable makes its folder the working directory; launch the game from
+ * anywhere else and it reads and writes a DIFFERENT settings file. See settingsdir() below and the
+ * note on appdir at the top of this file.
  *
  * Two reasons. It ships: the release zip carries a stock tw_settings.ini, so a downloader can see
  * and edit every setting without first having to run the game and hunt for a file with no
@@ -107,18 +118,24 @@ namespace
  * the README explains. The alternative -- reading the legacy file "just this once" -- means
  * carrying that path forever.
  *
- * ⚠ NOTE this puts the file next to the executable, so an installation in a directory the user
- * cannot write to (Program Files) cannot save settings AT ALL, and the failure is SILENT in the
- * shipped build: warn() goes to stderr, and the Windows executable is linked for the GUI subsystem
- * with no console attached, so nothing reaches the user. (Do not "fix" that by raising a dialog
- * from savesettings() -- it runs from an atexit handler during teardown.) The release is a
- * portable zip and README.txt says plainly where to put it; that is the mitigation. */
+ * ⚠ NOTE the file therefore lands wherever the game was LAUNCHED from, so a working directory the
+ * user cannot write to cannot save settings AT ALL, and the failure is SILENT in the shipped build:
+ * warn() goes to stderr, and the Windows executable is linked for the GUI subsystem with no console
+ * attached, so nothing reaches the user. (Do not "fix" that by raising a dialog from savesettings()
+ * -- it runs from an atexit handler during teardown.) The release is a portable zip and README.txt
+ * says plainly where to put it; that is the mitigation.
+ *
+ * ⚠ The old wording said "an installation in Program Files cannot save settings", which is a FALSE
+ * CONSEQUENCE of the false premise above: the install location is not what decides this. Shortcuts
+ * commonly set a working directory of their own, and a shortcut pointing into Program Files with a
+ * writable working directory saves fine. */
 char const * sfname = "tw_settings.ini";
 
 /* MOD (Jeremy): WHICH directory the settings file lives in.
  *
- * Beside the program for the portable Windows release -- that is the whole point, since the file
- * ships in the zip and has to be findable and editable.
+ * The working directory for the portable Windows release -- which for a double-clicked executable
+ * is its own folder, and that is the point: the file ships in the zip and has to be findable and
+ * editable next to the game a player just extracted.
  *
  * But NOT for a system-wide install. CMakeLists.txt defines ROOTDIR (to something like
  * <prefix>/share/tworld) for non-Windows release builds, and that directory is root-owned: putting
