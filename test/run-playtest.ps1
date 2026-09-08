@@ -38,8 +38,20 @@ verified by a person. Do not read a green run here as "the interface is fine".
 
 ⚠ IT NEEDS SOMETHING TO REPLAY. Solutions and level data are not in the
 repository (docs/adr/0005 -- CHIPS.DAT is copyrighted and .tws files are the
-maintainer's). By default it borrows them read-only from the collection; point
--Data somewhere else, or pass -NoSolutions to skip step 3 and say so loudly.
+maintainer's), so step 3 borrows them READ-ONLY from an installation elsewhere.
+Where from, first hit wins:
+
+    1. -Data <path>
+    2. $env:TWORLD_PLAYTEST_DATA
+    3. <your profile>\Dropbox\Games\Computer\Chip's Challenge
+
+🔴 IF NONE OF THOSE EXISTS, THE RUN FAILS. It does not skip. Replaying real
+solutions through the shipped binary is the most valuable thing here, and a
+release gate that quietly drops it and still exits 0 is worse than no gate --
+that branch used to do exactly that, and it fired on one of the maintainer's own
+two machines for months because the path was hard-coded to the other one's
+username. If you genuinely have nothing to replay, pass -NoSolutions: that is an
+explicit statement that the gate ran reduced, and it prints as one.
 #>
 
 [CmdletBinding()]
@@ -52,8 +64,9 @@ param(
     [string]$ExpectTag,
 
     # A Chip's Challenge installation to borrow sets\, data\ and save\ from,
-    # READ-ONLY. Never written to.
-    [string]$Data = "C:\Users\Jeremy\Dropbox\Games\Computer\Chip's Challenge",
+    # READ-ONLY. Never written to. Empty means "work it out" -- see the
+    # resolution below.
+    [string]$Data = "",
 
     # Sets to batch-verify. One MS and one Lynx by default, so both engines in
     # the shipped binary are exercised.
@@ -69,6 +82,39 @@ Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
+
+# ---- where to borrow level data and solutions from -------------------------
+#
+# 🔴 THIS USED TO BE A HARD-CODED PERSONAL PATH, and it was wrong twice over.
+#
+# An independent review named the obvious half: "C:\Users\Jeremy\..." as the
+# DEFAULT means nobody else can run the release gate without editing the script.
+# For a public repository whose CONTRIBUTING.md invites contributions, that is a
+# door with no handle on the outside.
+#
+# ⚠ The half nobody had noticed is that it was broken for the maintainer too.
+# This project is developed on two machines whose usernames differ -- one is
+# `Jeremy`, the other `jerem` -- so the literal path resolved on exactly one of
+# them, and the solution replay had been silently skipping on the other. The
+# skip printed a yellow line and the run still exited 0, so it never showed up
+# as a failure. Deriving it from the profile directory fixes both problems with
+# the same change.
+#
+# Resolution order, first hit wins:
+#   1. -Data, if given.
+#   2. $env:TWORLD_PLAYTEST_DATA, so a contributor can point at their own
+#      installation once instead of on every invocation.
+#   3. The conventional location under this user's profile.
+if (-not $Data) {
+    if ($env:TWORLD_PLAYTEST_DATA) {
+        $Data = $env:TWORLD_PLAYTEST_DATA
+    } else {
+        $profileDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+        if ($profileDir) {
+            $Data = Join-Path $profileDir "Dropbox/Games/Computer/Chip's Challenge"
+        }
+    }
+}
 
 $checks = 0
 $failures = @()
@@ -195,23 +241,57 @@ try {
           ($r.StdOut -and $r.StdOut -match [regex]::Escape($ExpectTag)) `
           ("stdout was: " + ($r.StdOut -replace "`r?`n", " "))
 
+    # ---- give the scratch install something to open --------------------------
+    #
+    # Copied in, never referenced in place: a -b run writes save\history and
+    # rewrites tw_settings.ini in its working directory even with -r, and
+    # pointing -L at a directory makes the program GENERATE .dac files there.
+    # Neither is acceptable against somebody's real collection.
+    #
+    # 🔴 THE FALLBACK IS WHAT MAKES THIS SCRIPT RUNNABLE BY ANYONE. Solutions
+    # are the maintainer's and are not in the repository -- but LEVEL DATA is:
+    # data\ carries CCLP1-5, CCLXP2 and intro, and sets\ carries the .dac files
+    # that name them (docs/adr/0005 covers what may be committed). So a
+    # contributor with no personal collection still gets the GUI half, the
+    # command-line half and the jc-52 regression; only the solution replay needs
+    # something this repository cannot ship.
+    $dataSource = if (Test-Path $Data) { $Data } else { $root }
+    foreach ($sub in @("sets", "data", "res", "save")) {
+        $src = Join-Path $dataSource $sub
+        if (Test-Path $src) {
+            Copy-Item -Path $src -Destination $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not (Test-Path (Join-Path $scratch "save"))) {
+        New-Item -ItemType Directory -Path (Join-Path $scratch "save") | Out-Null
+    }
+    Check "the scratch install has level data to open" `
+          (Test-Path (Join-Path $scratch "data")) `
+          ("neither {0} nor the repository provided a data directory" -f $Data)
+
     # ---- replay real solutions ----------------------------------------------
     if ($NoSolutions) {
+        # An EXPLICIT opt-out, which is a different thing from the branch below.
+        # Somebody typed -NoSolutions, so they know the release gate is running
+        # reduced and said so on the command line.
         Write-Host "  --    SKIPPED: solution replay (-NoSolutions)" -ForegroundColor Yellow
     } elseif (-not (Test-Path $Data)) {
-        Write-Host ("  --    SKIPPED: solution replay -- no collection at {0}" -f $Data) -ForegroundColor Yellow
+        # 🔴 NOT A SKIP. A FAILURE.
+        #
+        # This branch used to print a yellow line and let the run exit 0 -- the
+        # same shape as the GUI half's silent skip, and it fired for anyone whose
+        # collection was not at the hard-coded path, INCLUDING the maintainer on
+        # one of his two machines. Replaying real solutions through the shipped
+        # binary is the single most valuable thing this script does; losing it to
+        # a mistyped path and still reporting success is exactly the failure
+        # RELEASING.md's own warning is about.
+        #
+        # Passing -NoSolutions is how you say you meant it.
+        Check "a collection to replay solutions from" $false `
+              ("no installation at {0}. Point -Data at one, set TWORLD_PLAYTEST_DATA," -f $Data +
+               " or pass -NoSolutions to run the gate reduced and on purpose.")
     } else {
-        # Copied in, never referenced in place: a -b run writes save\history and
-        # rewrites tw_settings.ini in its working directory even with -r, and
-        # pointing -L at a directory makes the program GENERATE .dac files there.
-        # Neither is acceptable against somebody's real collection.
-        foreach ($sub in @("sets", "data", "res", "save")) {
-            $src = Join-Path $Data $sub
-            if (Test-Path $src) {
-                Copy-Item -Path $src -Destination $scratch -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-
+        # The collection was copied into the scratch install above.
         foreach ($set in $Sets) {
             if (-not (Test-Path (Join-Path $scratch "sets\$set"))) {
                 Write-Host ("  --    SKIPPED: {0} is not in the collection" -f $set) -ForegroundColor Yellow
@@ -261,9 +341,37 @@ public class TWPT {
   public struct RECT { public int L, T, R, B; }
 }
 "@
+        # ⚠ DO NOT ASSUME THE MAINTAINER'S SET NAMING. -Sets defaults to
+        # "CCLP1.dat-ms.dac", which is the name createallmissingseries()
+        # generates in his collection; the repository's own sets\ ships
+        # "CCLP1-MS.dac". Naming the missing one and shrugging left the game on
+        # the level PICKER, so "a level is loaded" failed for anyone running
+        # against the repository -- a real failure reported for a fake reason.
+        # Take the requested set if it is there, otherwise whatever is.
         $guiSet = $Sets[0]
+        if (-not (Test-Path (Join-Path $scratch "sets/$guiSet"))) {
+            # ⚠ PREFER intro-ms.dac, AND NOT ALPHABETICALLY. Measured: opening
+            # CCLP1 leaves the title a bare "Tile World", because a set with a
+            # .ccx opens on its PROLOGUE and the level is behind it -- so the
+            # "a level is loaded" oracle reads a screen with no level on it.
+            # intro-ms.dac is upstream's, always present, and opens straight
+            # onto KEYS AND CHIPS. cc-*.dac are excluded outright: they name
+            # CHIPS.dat, which is copyrighted and is not in this repository.
+            $candidates = @("intro-ms.dac", "intro-lynx.dac")
+            $guiSet = $null
+            foreach ($c in $candidates) {
+                if (Test-Path (Join-Path $scratch "sets/$c")) { $guiSet = $c; break }
+            }
+            if (-not $guiSet) {
+                $anySet = Get-ChildItem -Path (Join-Path $scratch "sets") -Filter "*.dac" -File `
+                                        -ErrorAction SilentlyContinue |
+                          Where-Object { $_.Name -notlike "cc-*" } |
+                          Sort-Object Name | Select-Object -First 1
+                if ($anySet) { $guiSet = $anySet.Name }
+            }
+        }
         $guiArgs = @("-S", (Join-Path $scratch "save"), "-L", "sets", "-D", "data", "-R", "res")
-        if (Test-Path (Join-Path $scratch "sets\$guiSet")) { $guiArgs += $guiSet }
+        if (Test-Path (Join-Path $scratch "sets/$guiSet")) { $guiArgs += $guiSet }
 
         # 🔴 THE PID COMES FROM -PassThru AND NOTHING IS EVER KILLED BY NAME.
         # The maintainer may well have his own Tile World open; killing by

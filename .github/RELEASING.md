@@ -76,6 +76,17 @@ Two mechanical guards back this up:
    path-qualified command line jc-52 fixed, and a GUI launch that opens a level, plays a few moves
    and screenshots it. It takes no arguments — the expected tag comes from `fork.h`.
 
+   ⚠ **The solution replay needs a collection, and its absence is a FAILURE rather than a skip.**
+   The script looks for one at `-Data`, then `$env:TWORLD_PLAYTEST_DATA`, then
+   `<your profile>\Dropbox\Games\Computer\Chip's Challenge`. If none exists it fails and says so.
+   Passing `-NoSolutions` runs the gate deliberately reduced — everything except the replay, using
+   the repository's own `data\` and `sets\` — which is what a contributor without the maintainer's
+   `.tws` files should do. **A release must not be cut from a `-NoSolutions` run.**
+
+   🔴 That path used to be hard-coded to one machine's username, so the replay had been silently
+   skipping on the maintainer's *other* machine while the run still exited 0. A gate that drops its
+   most valuable check and reports success is worse than no gate.
+
    🔴 **THIS USED TO BE A HAND EXERCISE AND IT WAS GOT WRONG.** A release was once "playtested" by
    launching the PREVIOUS build's install, because a path was mistyped; the output looked identical
    to a good run. The script's first two checks exist precisely for that: it refuses a zip whose
