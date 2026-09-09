@@ -85,7 +85,7 @@ under-counts — an audit read that as two unguarded tests. Both floors are exac
 UndefinedBehaviorSanitizer. Eleven seconds, and it is the only local layer that can see a
 memory-safety guard being deleted — reverting jc-50 leaves every other layer green.
 
-⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 21,119.
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 95% of the 22,734.
 Mutation kill rate is the number that means something; see `CLAUDE.md` §5.
 
 `CLAUDE.md` §5 lists what is deliberately **not** covered — the Qt **widgets**, and **14 of the 32

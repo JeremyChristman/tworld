@@ -258,9 +258,15 @@ static void gen_level(fixlevel *lv)
 
     /* 🔴 THE FOCUS PROFILE -- BUILT RIGHT NEXT TO CHIP, AND SELECTED BY THE SEED.
      *
-     * Designed stacks took the search from 1 witness to 13. The remaining 19
-     * toggles resist for a sharper reason: they need an arrangement AND Chip
-     * positioned to drive it this turn. "A block resting on a teleport" is not
+     * Designed stacks took the search from 1 witness to 13. The 19 that STILL
+     * RESISTED AT THAT POINT did so for a sharper reason: they need an
+     * arrangement AND Chip positioned to drive it this turn.
+     *
+     * ⚠ "19" is a number from the middle of that story, not a current count.
+     * The profile below took the total to 18 witnesses, so 14 remain today --
+     * and `test/nofix/nofix-matrix.tsv` is the authority for that figure, not
+     * this comment. An audit read this sentence as a present-tense claim,
+     * which is fair: it was written as one. "A block resting on a teleport" is not
      * enough -- Chip has to be standing next to that block, facing it, with
      * somewhere for it to go. Scattering the furniture randomly across 81 cells
      * makes that conjunction rare even when every piece is present.

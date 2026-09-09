@@ -187,6 +187,46 @@ uint32_t TW_PixelAt(TW_Surface const *s, int x, int y)
     return *tw_pixelptr(s, x, y);
 }
 
+/* --- the blit recorder ---------------------------------------------------- *
+ *
+ * MOD (Jeremy, jc-58). _displaymapview() is half this file and had NO coverage:
+ * an audit mutated the viewport geometry 75 times and 57 survived. The reason
+ * it had none is that "did it draw the right thing" sounds like it needs a
+ * rendering oracle nobody wants to write.
+ *
+ * It does not. Every tile reaches the screen through exactly one call --
+ * TW_BlitSurface(src, srcrect, geng.screen, dstrect) -- so recording the
+ * DESTINATION RECTANGLES is a complete account of what was drawn and where,
+ * with no pixels involved. That turns the geometry into arithmetic a test can
+ * assert on: which cells, at which screen offsets, in which order.
+ *
+ * Off by default so the existing cases, which blit constantly while building
+ * the tile table, are unaffected. */
+#define	BLITLOG_MAX	4096
+static TW_Rect	blitlog[BLITLOG_MAX];
+static int	blitcount = 0;
+static int	blitrecording = 0;
+static int	blitoverflow = 0;
+
+static void blitlog_start(void)
+{
+    blitcount = 0;
+    blitoverflow = 0;
+    blitrecording = 1;
+}
+
+static void blitlog_stop(void) { blitrecording = 0; }
+
+/* Was a tile drawn with its top-left corner exactly here? */
+static int blitlog_has(int x, int y)
+{
+    int i;
+    for (i = 0 ; i < blitcount ; ++i)
+	if (blitlog[i].x == x && blitlog[i].y == y)
+	    return TRUE;
+    return FALSE;
+}
+
 int TW_BlitSurface(TW_Surface *src, TW_Rect *srcrect,
 		   TW_Surface *dst, TW_Rect *dstrect)
 {
@@ -195,7 +235,13 @@ int TW_BlitSurface(TW_Surface *src, TW_Rect *srcrect,
      * than crashed on, so the case that provokes it says something useful. */
     CHECK_MSG(src != NULL, "blit from a NULL surface");
     CHECK_MSG(dst != NULL, "blit to a NULL surface");
-    (void)srcrect; (void)dstrect;
+    if (blitrecording && dstrect) {
+	if (blitcount < BLITLOG_MAX)
+	    blitlog[blitcount++] = *dstrect;
+	else
+	    blitoverflow = 1;
+    }
+    (void)srcrect;
     return 0;
 }
 
@@ -551,6 +597,238 @@ static void test_loadedstate(void)
     }
 }
 
+/* --- _displaymapview(): the viewport geometry ----------------------------- *
+ *
+ * MOD (Jeremy, jc-58). THE OTHER HALF OF THIS FILE, and until now the untested
+ * half. An audit put the whole tree's worst mutation score here -- 24%, with 57
+ * of 75 mutations surviving -- and it was right about where: the 3,270 checks
+ * above come from three loops over the tile table, and none of them reaches the
+ * map-drawing code at all.
+ *
+ * What is asserted is the DESTINATION of every blit, via the recorder above.
+ * That is enough to pin the view-position clamping, the four loop bounds, the
+ * screen-origin arithmetic and the creature pass, without a single pixel.
+ *
+ * ⚠ TWO GEOMETRY MUTATIONS STILL SURVIVE THESE CASES, AND BOTH ARE EQUIVALENT
+ * MUTANTS RATHER THAN GAPS. Recorded so the next person does not spend an
+ * afternoon on them:
+ *
+ *   rmap = ... + NXTILES + 1   an extra column IS walked, but every tile in it
+ *                              lands outside displayloc and drawclippedtile()
+ *                              returns before blitting (w <= 0). Wasted work,
+ *                              no visible or memory effect; `pos` stays inside
+ *                              the map because rmap is still <= CXGRID.
+ *   y >= CYGRID -> y > CYGRID  y == CYGRID is unreachable. The far clamp holds
+ *                              tmap to CYGRID - NYTILES = 23, so bmap is at
+ *                              most 32 and the loop condition y < bmap already
+ *                              stops at 31. The two forms cannot disagree.
+ *
+ * The first is a performance nit; the second is only safe BECAUSE of the clamp
+ * two cases below assert. Delete that clamp and this bound starts mattering --
+ * which is the actual relationship worth knowing. */
+
+static gamestate	viewstate;
+static TW_Surface      *viewscreen;
+
+/* ⚠ NOT NULL. _displaymapview() walks `for (cr = state->creatures ; cr->id ; ++cr)`
+ * with no null test, so an "empty" list has to be a real one-element array whose
+ * single entry is the terminator. Setting the pointer to NULL segfaults on the
+ * first read, which is how the first version of this file reported
+ * "NO RESULT REPORTED (crashed, or exited before tw_end)". */
+static creature		nocreatures[1];
+
+/* Stand up a 32x32 map with the view centered where asked, draw it, and leave
+ * the blits in blitlog[]. Returns the display rectangle used. */
+static TW_Rect drawview(int xviewpos, int yviewpos)
+{
+    TW_Rect	displayloc;
+    int		i;
+
+    memset(&viewstate, 0, sizeof viewstate);
+    for (i = 0 ; i < CXGRID * CYGRID ; ++i) {
+	viewstate.map[i].top.id = Wall;
+	viewstate.map[i].bot.id = Empty;
+    }
+    viewstate.xviewpos = (short)xviewpos;
+    viewstate.yviewpos = (short)yviewpos;
+    viewstate.currenttime = 0;
+    viewstate.statusflags = SF_NOANIMATION;
+    memset(nocreatures, 0, sizeof nocreatures);
+    viewstate.creatures = nocreatures;   /* one entry, id == 0: the terminator */
+
+    displayloc.x = 0;
+    displayloc.y = 0;
+    displayloc.w = NXTILES * geng.wtile;
+    displayloc.h = NYTILES * geng.htile;
+
+    blitlog_start();
+    _displaymapview(&viewstate, displayloc);
+    blitlog_stop();
+    return displayloc;
+}
+
+static void test_mapview(void)
+{
+    TW_Rect	displayloc;
+    creature	crlist[4];
+
+    /* A known-good tileset, so geng.wtile/htile are real and getcellimage()
+     * has something to return. 9 tiles across at 48px = a 432px view. */
+    CHECK_INT(loadgeometry(48 * 13, 48 * 16), TRUE);
+    viewscreen = tw_make(NXTILES * geng.wtile, NYTILES * geng.htile);
+    CHECK_MSG(viewscreen != NULL, "could not make a destination surface");
+    geng.screen = viewscreen;
+
+    tw_case("🔴 the view at the origin draws exactly the top-left 9x9 window");
+    {
+	int x, y, extra = 0;
+
+	displayloc = drawview(0, 0);
+	/* Every cell of the window, at its exact screen offset. */
+	for (y = 0 ; y < NYTILES ; ++y)
+	    for (x = 0 ; x < NXTILES ; ++x)
+		CHECK_MSG(blitlog_has(x * geng.wtile, y * geng.htile),
+			  "cell (%d,%d) was not drawn at (%d,%d)",
+			  x, y, x * geng.wtile, y * geng.htile);
+	/* And nothing outside it. A loop bound that runs one row too far is
+	 * invisible to the assertions above; this is what catches it. */
+	{
+	    int i;
+	    for (i = 0 ; i < blitcount ; ++i)
+		if (blitlog[i].x < 0 || blitlog[i].y < 0
+			|| blitlog[i].x >= NXTILES * geng.wtile
+			|| blitlog[i].y >= NYTILES * geng.htile)
+		    ++extra;
+	}
+	CHECK_MSG(extra == 0,
+		  "%d tile(s) were drawn outside the %dx%d display rectangle",
+		  extra, displayloc.w, displayloc.h);
+	CHECK_MSG(!blitoverflow, "the blit recorder overflowed; raise BLITLOG_MAX");
+	CHECK_INT(blitcount, NXTILES * NYTILES);
+    }
+
+    tw_case("🔴 a NEGATIVE view position clamps to the origin, it does not wrap");
+    {
+	/* xviewpos/yviewpos are shorts and the arithmetic subtracts half a
+	 * screen before clamping, so the intermediate really does go negative
+	 * for any view near the left or top edge -- this is the ordinary case,
+	 * not a corner one. Without the clamp, lmap/tmap go negative and the
+	 * inner `x < 0` tests are all that stop a read at map[-k]. */
+	drawview(0, 0);
+	CHECK_INT(blitcount, NXTILES * NYTILES);
+	CHECK_MSG(blitlog_has(0, 0),
+		  "the top-left cell was not drawn from a clamped view");
+	CHECK_MSG(geng.mapvieworigin == 0,
+		  "mapvieworigin is %d, not 0, for a view clamped to the origin",
+		  geng.mapvieworigin);
+    }
+
+    tw_case("🔴 a view past the far edge clamps to the last full window");
+    {
+	/* The other clamp: (CXGRID - NXTILES) * 4. Deleting it walks the draw
+	 * loop off the right/bottom of the map, where only the inner
+	 * `x >= CXGRID` / `y >= CYGRID` tests stand between it and map[1024+].
+	 * viewpos is in half-tiles, so 2*4*CXGRID is far past the edge. */
+	drawview(CXGRID * 8, CYGRID * 8);
+	CHECK_INT(blitcount, NXTILES * NYTILES);
+	/* The window's top-left cell is now (CXGRID-NXTILES, CYGRID-NYTILES)
+	 * = (23,23), and it is drawn at screen origin minus the scroll. */
+	CHECK_MSG(geng.mapvieworigin
+			== (CYGRID - NYTILES) * 4 * CXGRID * 4 + (CXGRID - NXTILES) * 4,
+		  "mapvieworigin is %d for a view clamped to the far corner",
+		  geng.mapvieworigin);
+    }
+
+    tw_case("the drawn window MOVES with the view position");
+    {
+	/* A rejection test that never sees the view move would pass with the
+	 * whole scroll calculation deleted. Two different positions must
+	 * produce two different origins. */
+	int first, second;
+
+	drawview(0, 0);
+	first = geng.mapvieworigin;
+	drawview(CXGRID * 4, CYGRID * 4);
+	second = geng.mapvieworigin;
+	CHECK_MSG(first != second,
+		  "the view origin did not move between two different view"
+		  " positions (both %d) -- the scroll arithmetic is dead", first);
+    }
+
+    tw_case("🔴 a creature whose position is off the map is NOT dereferenced");
+    {
+	/* THE jc-57 GUARD, which had no test and could not have had one before
+	 * the recorder existed.
+	 *
+	 * state->map[cr->pos] is read in the pedanticmode branch, and the only
+	 * bounds check in that loop came AFTER it and tested x and y against
+	 * the VIEWPORT rather than the array. POS_INVALID is CXGRID*(CYGRID+1)
+	 * -- exactly one past the end of map[] -- and it is what readpos()
+	 * yields for the malformed creature coordinates that jc-45 and jc-50
+	 * were both about.
+	 *
+	 * ⚠ THE ORACLE IS THE SANITIZE LAYER, AND THAT IS WORTH SAYING OUT
+	 * LOUD. There is no behavioral difference to assert: without the guard
+	 * the out-of-range creature is read and then skipped by the viewport
+	 * test anyway, so it draws nothing either way. What changes is whether
+	 * a read happens one past a 1,056-entry array. run-tests.ps1 -Sanitize
+	 * is what turns that into a failure; this case's job is to EXECUTE it,
+	 * because a sanitizer sees only what a test actually runs. */
+	memset(crlist, 0, sizeof crlist);
+	crlist[0].id = Ball;
+	crlist[0].pos = POS_INVALID;      /* one past the end of map[] */
+	crlist[0].hidden = FALSE;
+	crlist[1].id = 0;                 /* terminator */
+
+	pedanticmode = 1;
+	memset(&viewstate, 0, sizeof viewstate);
+	viewstate.currenttime = 0;
+	viewstate.statusflags = SF_NOANIMATION;
+	viewstate.creatures = crlist;
+	displayloc.x = 0; displayloc.y = 0;
+	displayloc.w = NXTILES * geng.wtile;
+	displayloc.h = NYTILES * geng.htile;
+	blitlog_start();
+	_displaymapview(&viewstate, displayloc);
+	blitlog_stop();
+	pedanticmode = 0;
+
+	/* The map cells still draw; the creature must not. */
+	CHECK_INT(blitcount, NXTILES * NYTILES);
+    }
+
+    tw_case("...and a creature INSIDE the view is still drawn");
+    {
+	/* The control. A guard that skipped every creature would satisfy the
+	 * case above and make the game draw an empty board -- which is a far
+	 * louder bug, but nothing here would have caught it. */
+	memset(crlist, 0, sizeof crlist);
+	crlist[0].id = Ball;
+	crlist[0].pos = (short)(4 + CXGRID * 4);   /* well inside the window */
+	crlist[0].hidden = FALSE;
+	crlist[1].id = 0;
+
+	memset(&viewstate, 0, sizeof viewstate);
+	viewstate.currenttime = 0;
+	viewstate.statusflags = SF_NOANIMATION;
+	viewstate.creatures = crlist;
+	displayloc.x = 0; displayloc.y = 0;
+	displayloc.w = NXTILES * geng.wtile;
+	displayloc.h = NYTILES * geng.htile;
+	blitlog_start();
+	_displaymapview(&viewstate, displayloc);
+	blitlog_stop();
+
+	CHECK_MSG(blitcount == NXTILES * NYTILES + 1,
+		  "expected %d map tiles plus one creature, got %d blits",
+		  NXTILES * NYTILES, blitcount);
+	CHECK_MSG(blitlog_has(4 * geng.wtile, 4 * geng.htile),
+		  "the creature at (4,4) was not drawn there");
+    }
+
+    geng.screen = NULL;
+}
+
 int main(void)
 {
     tw_begin("tile_test.c");
@@ -559,6 +837,7 @@ int main(void)
     test_dispatch();
     test_tileidmap();
     test_loadedstate();
+    test_mapview();
 
     freetileset();
 
@@ -566,6 +845,6 @@ int main(void)
     /* Exact, not a round number with slack: every case here is deterministic
      * and platform-independent -- the large counts come from loops over the
      * 128-entry tile table, which is a compile-time constant. */
-    tw_expect_atleast(3270);
+    tw_expect_atleast(4885);
     return tw_end();
 }

@@ -1367,6 +1367,71 @@ exactly what's mine:
    defect than the one being guarded against, it does not crash either, and only the positive case
    catches it.
 
+40. **A rendering oracle with no pixels in it, and the end of the audit list**
+   (`test/tile_test.c`, `generic/tile.c`, `verify-docs.ps1`, `.github/workflows/ci.yml`).
+
+   `_displaymapview()` is half of `generic/tile.c` and had **no coverage at all** — the worst
+   mutation score in the tree, 57 of 75 surviving. The reason is worth naming, because it is the
+   reason most drawing code goes untested: "did it draw the right thing" sounds like it needs a
+   reference image, and nobody wants to maintain one.
+
+   🔴 **IT DOES NOT NEED PIXELS.** Every tile reaches the screen through exactly one call —
+   `TW_BlitSurface(src, srcrect, geng.screen, dstrect)` — so **recording the destination rectangles
+   is a complete account of what was drawn and where.** The test's surface layer was already a real
+   in-memory implementation; adding a four-line recorder to the blit stub turns the entire viewport
+   into arithmetic that a test can assert on: which cells, at which screen offsets, how many.
+
+   Six cases: the window at the origin (every cell at its exact offset, *and* nothing outside the
+   display rectangle — a loop bound that runs one row too far is invisible to the first assertion
+   alone), the clamp at each end, that the view actually MOVES with the view position, and the
+   creature pass from both sides.
+
+   **Result: branch coverage 22.5% → 39.1%, lines 29.3% → 42.9%**, and four of six geometry
+   mutations now die.
+
+   ⭐ **The two survivors are equivalent mutants, and the second one is interesting.** An extra
+   viewport column (`rmap + 1`) is walked but every tile in it lands outside `displayloc` and
+   `drawclippedtile()` returns before blitting — wasted work, no observable effect. And
+   `y >= CYGRID` → `y > CYGRID` cannot matter because `y == CYGRID` is unreachable: the far clamp
+   holds `tmap` to `CYGRID - NYTILES` = 23, so `bmap` is at most 32 and `y < bmap` already stops at
+   31. **That bound is safe only BECAUSE of a clamp two cases below assert.** Delete the clamp and
+   the bound starts mattering. Recorded in the test rather than left for someone to rediscover.
+
+   ⚠ **And the jc-57 `cr->pos` guard's oracle is the sanitize layer, which is said out loud.** There
+   is no behavioral difference to assert: without the guard the out-of-range creature is read and
+   then skipped by the viewport test anyway, so nothing visible changes. The case exists to EXECUTE
+   the read, because a sanitizer sees only what a test runs. It also un-breaks
+   `coverage.ps1 -CheckBaseline`, which jc-57 left red by adding a guard with nothing exercising it —
+   a small, exact illustration of why defensive code without a test is not free.
+
+   **`res.c` and `series.c`: the score was not the story.** The audit put them at 33% and 55%, the
+   worst outside `tile.c`, and framed both as untrusted-input parsers left uncovered. Checked one
+   guard at a time, every guard on the untrusted path already dies — `istilesetname()`'s separator,
+   colon, control-character, `..` and reserved-name checks, and `readconfigfile()`'s path-separator,
+   reserved-filename and `lastlevel` range checks. What drags the numbers down is the other half:
+   `res.c`'s resource loaders, which need a real file environment and parse no attacker-controlled
+   structure, and `series.c`'s five hundred lines of enumeration compiled in beside a test aimed at
+   two functions. **Tests written to move those percentages would cover the least dangerous code in
+   each file.** The measurement went into `CLAUDE.md` §5 instead of the tests.
+
+   🔴 **AND THE C++ cppcheck PASS ADDED IN jc-57 WAS ANALYZING NOTHING.** Without Qt's macros
+   configured it hit `unknown macro: slots` in `TWMainWnd.h` and **stopped**, so the nine `oshw-qt`
+   files it existed for were never examined — and the log looked clean. That is the same
+   reduced-run-reporting-as-a-full-one shape jc-57 fixed in the playtest gate, reintroduced two files
+   away in the same release, by the same hand. `--library=qt` and the moc defines fix it.
+
+   Its one genuine finding is triaged rather than carried: `messages.cpp:84` assigns a prefix of a
+   string to itself via `substr`. ⚠ It is **suppressed with the reason, not fixed, because the fix
+   cppcheck suggests is wrong** — `resize(n)` pads with NUL bytes where `substr(0, n)` returns the
+   whole string, and `maxMessageSize + 1` is routinely longer than the line, so the drop-in
+   replacement would start appending nulls to most messages.
+
+   Two smaller ones from the same list: `verify-docs.ps1` now scans `docs/*.lock`, `docs/*.tsv` and
+   the CI workflows **by class** rather than by the one filename an audit happened to look at (still
+   not `*.ps1` — the scripts contain the very regexes it matches with, tried and reverted); and
+   `test/nofix/nofix.c`'s "the remaining 19 toggles" now reads as the mid-narrative figure it always
+   was rather than a present-tense count.
+
 
 ## Testing
 

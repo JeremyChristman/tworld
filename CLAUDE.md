@@ -220,12 +220,12 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **18 unit runs, 21,119 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
+Current state: **18 unit runs, 22,734 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 21,119 AS A MEASURE OF REACH. Three files are 94% of it.**
-`random_test.c` alone is **15,534** — 73.6%, because it asserts a handful of properties a couple of
-thousand times each — then `tile_test.c` 3,270 and `solution_test.c` 1,207. That leaves about
+🔴 **DO NOT READ 22,734 AS A MEASURE OF REACH. Three files are 95% of it.**
+`random_test.c` alone is **15,534** — 68%, because it asserts a handful of properties a couple of
+thousand times each — then `tile_test.c` 4,885 and `solution_test.c` 1,207. That leaves about
 **1,100 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
@@ -536,6 +536,24 @@ lines. `mslogic_test.c` and `lxlogic_test.c` each replay their fuzz corpus throu
 so **every reproducer a fuzzer finds becomes permanent coverage of whatever path it happened to
 reach.** That is a second, unadvertised return on the corpus discipline in
 [`docs/adr/0011`](docs/adr/0011-a-fuzz-finding-is-not-fixed-until-it-is-committed.md).
+
+🔴 **MEASURE THE HALF THAT MATTERS BEFORE ACTING ON A FILE'S SCORE.** An audit reported `res.c` at a
+33% mutation kill rate and `series.c` at 55%, the two worst outside `generic/tile.c`, and framed both
+as untrusted-input parsers left uncovered. Checked one guard at a time, that framing is wrong — every
+guard on the untrusted path dies:
+
+| guard | result |
+|---|---|
+| `res.c` `istilesetname()`: separators, colon, control chars, `..`, reserved names | all killed |
+| `series.c` `readconfigfile()`: path separators, reserved filename, `lastlevel` range | all killed |
+
+What drags those numbers down is the *other* half: `res.c`'s loaders (`loadimages`, `loadcolors`,
+`loadfont`, `loadsounds`) need a real resource-file environment and parse no attacker-controlled
+structure — their failure mode is a visible "cannot load" — and `series.c` is compiled into a test
+aimed at two of its functions, so five hundred lines of series enumeration count against it. **Neither
+number is evidence of an exposed parser, and writing tests to move them would buy coverage of the
+least dangerous code in each file.** Recorded so the next reader spends the effort where the last
+measurement says it pays.
 
 Two of these deserve explanation rather than embarrassment. **`series.c` at 19.3%** and **`fileio.c`
 at 40.1%** are each compiled into a test aimed at a couple of functions — `readleveldata()`,

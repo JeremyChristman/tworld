@@ -23,6 +23,57 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Added — a rendering oracle, and the end of jc-57's audit list
+
+`_displaymapview()` is half of `generic/tile.c` and had **no coverage at all** — the audit's worst
+file, 57 of 75 mutations surviving. The reason it had none is that "did it draw the right thing"
+sounds like it needs a reference image.
+
+🔴 **It does not.** Every tile reaches the screen through one call, so **recording the destination
+rectangle of each blit is a complete account of what was drawn and where**, with no pixels involved.
+That turns the viewport into arithmetic a test can assert on. Six cases now pin the view-position
+clamping at both ends, the loop bounds, the screen-origin scroll and the creature pass.
+
+- **`generic/tile.c` branch coverage 22.5% → 39.1%**, lines 29.3% → 42.9%. Overall 39.9% → 41.1%.
+- Four of six geometry mutations now die. ⚠ The two survivors are **equivalent mutants** and are
+  written up as such: an extra viewport column is always clipped before it blits, and `y == CYGRID`
+  is unreachable because the far clamp already holds `tmap` to 23. The second is safe *only because*
+  of a clamp another case asserts — which is the relationship worth knowing.
+- The jc-57 `cr->pos` guard now has a case. ⚠ Its oracle is the **sanitize layer**, stated plainly:
+  without the guard the creature is read out of bounds and then skipped by the viewport test anyway,
+  so there is no behavioral difference to assert. The case's job is to *execute* it.
+- That also un-breaks `coverage.ps1 -CheckBaseline`, which jc-57 left red by adding that guard with
+  nothing exercising it.
+
+### Measured — `res.c` and `series.c` did not need what the score implied
+
+The audit put `res.c` at a 33% kill rate and `series.c` at 55%, framing both as untrusted-input
+parsers left uncovered. Checked guard by guard, **every guard on the untrusted path already dies**:
+`istilesetname()`'s separator, colon, control-character, `..` and reserved-name checks, and
+`readconfigfile()`'s path-separator, reserved-filename and `lastlevel` range checks.
+
+What drags the numbers down is the other half — `res.c`'s resource loaders, which need a real file
+environment and parse no attacker-controlled structure, and `series.c`'s five hundred lines of series
+enumeration compiled in alongside a test aimed at two functions. **Writing tests to move those
+percentages would buy coverage of the least dangerous code in each file.** The measurement is
+recorded in `CLAUDE.md` §5 instead, so the next reader starts from it.
+
+### Fixed — three smaller things from the same list
+
+- **The C++ cppcheck pass added in jc-57 was analyzing nothing.** Without Qt's macros configured,
+  cppcheck hit `unknown macro: slots` in `TWMainWnd.h` and **stopped**, so the nine `oshw-qt` files
+  it was added for were never examined — and it looked like a clean result. That is the same
+  reduced-run-reporting-as-full shape jc-57 fixed in the playtest gate, reintroduced two files away.
+  `--library=qt` plus the moc defines now get it through.
+- Its one real finding is triaged rather than left: `messages.cpp:84`'s `substr` self-assignment is
+  suppressed **with the reason**, because the fix cppcheck suggests is wrong — `resize()` pads with
+  nulls where `substr(0, n)` returns the whole string, so the drop-in replacement would corrupt most
+  messages.
+- `verify-docs.ps1` now scans `docs/*.lock`, `docs/*.tsv` and the CI workflows **by class**. jc-57
+  added `toolchain.lock` by name, which fixes the one file an audit happened to look at and nothing
+  else. Still not `*.ps1`, deliberately — the scripts contain the regexes this checker matches with.
+- `test/nofix/nofix.c`'s "the remaining 19 toggles" now reads as the historical figure it is.
+
 ### Added — the last two untested memory-safety bounds in the `.dat` parser
 
 Follow-on from jc-57's audit. Both were on the "still undone" list, both survived the unit suite

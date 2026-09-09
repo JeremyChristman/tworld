@@ -31,3 +31,22 @@ uninitvar:series.c:698
 # suite suppresses the matching -Wunused-value for the same macro.
 incorrectStringBooleanError:mslogic.c
 incorrectStringBooleanError:lxlogic.c
+
+# messages.cpp:84 truncates an over-long message with
+#     line = line.substr(0, maxMessageSize + 1);
+# and cppcheck is right that this allocates a new string to assign a prefix of
+# the same string back to itself. It is a real, tiny inefficiency, on a path
+# that runs once per over-long message at load.
+#
+# 🔴 IT IS SUPPRESSED RATHER THAN "FIXED" BECAUSE THE SUGGESTED FIX IS WRONG.
+# The message says "use resize() or pop_back() instead", and resize() is NOT
+# equivalent here: substr(0, n) with n > size() returns the whole string, while
+# resize(n) with n > size() PADS IT WITH NUL BYTES. maxMessageSize + 1 is
+# routinely larger than the line, so the drop-in replacement would silently
+# start appending nulls to most messages. The behavior-preserving form needs a
+# length test first, and that is not worth a diff against upstream for one
+# avoided allocation.
+#
+# ⚠ Introduced to the report by jc-57's C++ pass -- this file had never been
+# analyzed before, which is the point of that pass existing.
+uselessCallsSubstr:messages.cpp

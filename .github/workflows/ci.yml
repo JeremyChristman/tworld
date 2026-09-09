@@ -380,12 +380,27 @@ jobs:
           # red on a diagnostic nobody has triaged is how a job gets ignored.
           # Read this section, fix what is real, and only then consider gating.
           # --language=c++ because $common carries --std=c99.
+          #
+          # 🔴 THE Qt MACROS ARE NOT OPTIONAL. Without them this pass reported
+          #     oshw-qt/TWMainWnd.h:75: error: There is an unknown macro here
+          #     somewhere. ... If slots is a macro then please configure it.
+          # and cppcheck STOPS ANALYZING that translation unit -- so the first
+          # run of this pass, added in jc-57, silently examined none of the nine
+          # oshw-qt files it was added for. It looked like a clean result. That
+          # is the same "reduced run reporting as a full one" shape jc-57 fixed
+          # in the playtest gate, reintroduced two files away, by me.
+          #
+          # --library=qt teaches cppcheck Qt's ownership and container
+          # semantics; the -D flags are what get it past the moc keywords.
           echo ""
           echo "===== C++ report only (settings/score/messages + oshw-qt) ====="
           cppcheck --enable=warning,performance,portability --inline-suppr $supp \
                    --language=c++ --std=c++11 --platform=win64 -DWIN32 -D__GNUC__ -I . \
+                   --library=qt \
+                   -DQ_OBJECT= -Dslots= -Dsignals=public \
+                   -DQ_SLOTS= -DQ_SIGNALS=public -DQ_DECL_OVERRIDE=override \
                    --suppress=missingInclude --suppress=missingIncludeSystem \
-                   --suppress=unmatchedSuppression \
+                   --suppress=unmatchedSuppression --suppress=unknownMacro \
                    *.cpp oshw-qt/*.cpp 2>&1 || true
 
           # PASS 2, THE GATE. 🔴 TWO PASSES, AND THE REASON IS A TRAP WORTH

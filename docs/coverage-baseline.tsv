@@ -1,19 +1,19 @@
 # Coverage baseline, unit layer only. Regenerate with coverage.ps1 -UpdateBaseline.
 # A FLOOR, not a grade. Raising a number here is progress; lowering one needs a reason.
 file	lines	linesHit	branches	branchesHit
-encoding.c	139	125	87	72
+encoding.c	139	127	87	75
 fileio.c	242	120	150	60
 generic/dirinput.c	33	33	45	44
 generic/in.c	167	93	167	85
-generic/tile.c	607	178	285	64
+generic/tile.c	609	261	289	113
 lxlogic.c	1073	594	1008	467
-mslogic.c	1654	743	1494	500
+mslogic.c	1654	743	1494	503
 play.c	297	79	130	44
 random.c	43	43	8	8
 res.c	199	82	178	73
 score.cpp	229	177	134	56
 series.c	571	110	311	76
-settings.cpp	196	179	314	202
+settings.cpp	202	185	320	207
 solution.c	444	212	309	93
-tworld.c	1338	39	954	39
+tworld.c	1352	63	968	64
 unslist.c	118	107	92	78

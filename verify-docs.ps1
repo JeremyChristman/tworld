@@ -121,14 +121,20 @@ $docFiles += Get-ChildItem -LiteralPath $repo -Filter "README.txt" -File
 # that the bump be done carefully -- the worst possible place for a wrong number
 # and the one place nothing was looking.
 #
-# ⚠ .lock and .tsv only. Extending this to *.ps1 was tried and reverted: the
-# scripts contain the very regexes this file matches with, plus flag values and
-# byte counts, and matching prose patterns against code is how a checker starts
-# crying wolf. Scripts get their numbers reviewed as code.
-foreach ($extra in @("docs/toolchain.lock")) {
-    $p = Join-Path $repo $extra
-    if (Test-Path $p) { $docFiles += Get-Item $p }
+# ⚠ BY CLASS, NOT BY NAME. The first version of this listed
+# `docs/toolchain.lock` literally, which fixes the one file an audit happened to
+# look at and nothing else -- the same shape of near-miss as patterns that match
+# one phrasing. Anything under docs\ that carries prose is in scope now, plus
+# the CI workflows, which are full of present-tense claims about what runs.
+#
+# ⚠ STILL NOT *.ps1, and that is deliberate. The scripts contain the very
+# regexes this file matches with, plus flag values and byte counts; matching
+# prose patterns against code is how a checker starts crying wolf. Scripts get
+# their numbers reviewed as code. Tried, reverted, recorded.
+foreach ($pattern in @("*.lock", "*.tsv")) {
+    $docFiles += Get-ChildItem -LiteralPath (Join-Path $repo "docs") -Filter $pattern -File -ErrorAction SilentlyContinue
 }
+$docFiles += Get-ChildItem -LiteralPath (Join-Path $repo ".github/workflows") -Filter "*.yml" -File -ErrorAction SilentlyContinue
 $docFiles = @($docFiles | Where-Object { $_ })
 
 $sourceFiles = @()
