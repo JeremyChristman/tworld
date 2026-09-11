@@ -49,6 +49,8 @@ powershell -ExecutionPolicy Bypass -File package.ps1                  # -> dist\
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File verify-docs.ps1              # the docs still agree with the code
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit layer
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -SelfTest         # prove the census harness is honest (~1 min)
+powershell -ExecutionPolicy Bypass -File mutate.ps1                   # mutation census, unit layer (SLOW, ~30 min)
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1          # golden-master engine snapshot
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1 -Update  # REWRITE the baseline (deliberate)
 powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1           # NO_FIX_* differential matrix

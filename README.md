@@ -29,7 +29,7 @@ the old behavior is always one flag away.
 | [FORK.md](FORK.md) | The engineering record — every change, why it exists, what broke first, what was measured. |
 | [CHANGELOG.md](CHANGELOG.md) | Per-release summary, newest first. |
 | [README.txt](README.txt) | The user-facing manual that ships inside the download. |
-| [docs/adr/](docs/adr/) | Twelve decisions and why, including the ones that look like bugs and are not. |
+| [docs/adr/](docs/adr/) | Thirteen decisions and why, including the ones that look like bugs and are not. |
 | [SECURITY.md](SECURITY.md) | The attack surface — this program parses files strangers made. |
 
 ### Building and testing

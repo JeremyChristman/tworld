@@ -36,6 +36,8 @@ powershell -ExecutionPolicy Bypass -File package.ps1                # -> dist\Ti
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1         # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1        # engine snapshot; run after ANY engine edit
 powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1         # NO_FIX_* toggles; run after engine edits
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -SelfTest       # prove the census harness is honest (~1 min)
+powershell -ExecutionPolicy Bypass -File mutate.ps1                 # mutation census; SLOW (~30 min), not a layer
 ```
 
 Machine-readable results: `run-tests.ps1 -ResultsPath test-results` writes JUnit XML and JSON. Exit
@@ -86,7 +88,12 @@ UndefinedBehaviorSanitizer. Eleven seconds, and it is the only local layer that 
 memory-safety guard being deleted — reverting jc-50 leaves every other layer green.
 
 ⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 95% of the 22,734.
-Mutation kill rate is the number that means something; see `CLAUDE.md` §5.
+Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
+than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
+The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.
+**Run `mutate.ps1 -SelfTest` before believing any census** — it plants four mutants whose verdicts
+are known in advance and refuses to measure if it gets one wrong. See `CLAUDE.md` §5 and
+[`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
 
 `CLAUDE.md` §5 lists what is deliberately **not** covered — the Qt **widgets**, and **14 of the 32
 `NO_FIX_*` toggles**. Both are measured numbers rather than impressions: the differential matrix

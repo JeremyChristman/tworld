@@ -23,6 +23,44 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Added — `mutate.ps1`: the kill rate is now measured, not asserted
+
+`AGENTS.md` has said for some time that "mutation kill rate is the number that means something."
+It was not a number anyone here could produce. The only measurement ever taken was an outside
+audit's 233 hand-written mutations on 2026-09-08 — unreproducible, chosen by a person, and from a
+harness that disclosed its own bug (14 of 190 rows reported as survivors with no tests run).
+
+`mutate.ps1` breaks each source on purpose and counts how often the suite notices. **1,267 ROR
+mutants across the sixteen sources the tests compile**, in about half an hour.
+
+🔴 **Every bug this kind of harness can have flatters the suite**, which is the opposite of the
+audit's bug — that one invented survivors, made the suite look worse, and somebody investigated.
+Nobody investigates a kill. So it is built to refuse a number rather than produce a flattering one:
+compile failures are INVALID and never kills, mutants build with `-Wno-error` so a `-Wtype-limits`
+casualty cannot shrink the denominator, timeouts are their own bucket, every kill is re-run once
+before it is believed, and SURVIVED requires every covering test present, passed, and at exactly the
+baseline check count.
+
+- **Only preprocessed lines are mutated**, from `gcc -E` linemarkers. `mslogic.c` is 4,969 lines of
+  which **2,181 reach the compiler**; mutants in the inactive arms of its 32 `NO_FIX_*` toggles are
+  survivors by construction and would have invented test gaps in the fork's most important file.
+- **The source-to-test map is derived, not written.** The hand-written one was already wrong — it
+  omitted `lxlogic.c`, `tworld.c`, `generic/in.c`, `play.c` and `score.cpp`, 36% of the mutable
+  surface.
+- **`-SelfTest` plants four mutants whose verdicts are known in advance** — must-kill,
+  must-not-compile, must-survive-because-it-is-not-compiled, must-hang — and refuses to census if
+  any comes back wrong. Run it before believing any figure.
+- ⚠ **The first real run proved the debris guard was not paranoia.** A `settings.cpp` mutant broke
+  `settings_test.c`'s cleanup and left `tw_settings_test_dir\tw_settings.ini` in the tree at mutant
+  950. Unnoticed, every later mutant would have run against a polluted tree and whichever tests
+  assert their scratch directory was created would have been scored as kills for the wrong reason.
+  Debris is now cleaned up, recorded in its own column, and only a tracked file being modified or
+  deleted is fatal.
+- 🔴 **Not comparable to the audit's 45%, and nothing may quote "45% → X%".** A mechanical census's
+  blended rate is a function of the operator mix; enabling a second operator moves the headline with
+  nothing about the suite changing. Read the per-file column, as with coverage. See
+  [`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
+
 ### Added — a rendering oracle, and the end of jc-57's audit list
 
 `_displaymapview()` is half of `generic/tile.c` and had **no coverage at all** — the audit's worst
