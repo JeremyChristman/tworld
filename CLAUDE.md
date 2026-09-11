@@ -612,8 +612,29 @@ padded and nobody should act on it. `mutate.ps1 -Escalate <mutants.tsv>` re-runs
 answers a different question than a boundary mutation asks. Its value on the class it was added for
 is on the record: jc-50 was invisible to every other local layer.
 
-🔴 **The seven it caught are worth reading individually — they are guards nothing pins.** Each is a
-bound the plain suite runs straight through without noticing:
+⭐ **THE SURVIVOR LIST IS TWO DIFFERENT PROBLEMS, AND `mutate.ps1 -Split <mutants.tsv>` SEPARATES
+THEM.** "Nothing noticed this mutation" has two causes with different fixes and very different costs,
+and joining the survivors against gcov's per-line map tells them apart:
+
+| bucket | meaning | the fix | count |
+|---|---|---|---|
+| **REACHED** | a test runs the line and does not assert enough to notice | usually a few lines in a test that already exists | **370 (39%)** |
+| **UNREACHED** | no test runs the line at all | a new case that gets there first; no assertion can help | **573 (60%)** |
+| **NO-RECORD** | gcov has no record for the line | see below — **not** a synonym for unreached | **6** |
+
+**Spend on REACHED first.** The test already gets there; it just does not look. `mslogic.c` has 148
+of them and `lxlogic.c` 96 — between them 66% of the cheap queue.
+
+🔴 **NO-RECORD IS A THIRD DIAGNOSIS AND MUST NEVER BE FOLDED INTO UNREACHED.** Two things produce it.
+One is file-scope data — gcov emits no line record for an initializer, so a mutation inside
+`movelaws[]`, the table this fork's headline defect indexed out of bounds, would be filed under
+"nothing runs it, deprioritize". The other is what all six actually are here: **constant-folded
+code.** `mslogic.c:2251` is `if (FALSE && …)` and `:3452` is `if (TRUE || …)`, both upstream
+short-circuits, so the compiler deletes the rest of the condition and **any mutation inside it is
+provably an equivalent mutant.** That is the equivalent-mutant registry, derived instead of asserted.
+
+🔴 **The seven the sanitizer caught are worth reading individually — they are guards nothing pins.**
+Each is a bound the plain suite runs straight through without noticing:
 
 | site | mutation | what it opens |
 |---|---|---|

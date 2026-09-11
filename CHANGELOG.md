@@ -23,6 +23,32 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Added — `-Split`: the survivor list is two problems, not one
+
+"Nothing noticed this mutation" has two causes with different fixes and very different costs, and
+until now they were one undifferentiated list of 949. `mutate.ps1 -Split` joins the survivors against
+gcov's per-line map (`coverage.ps1 -LineMapPath`, so there is one gcov implementation, not two):
+
+| bucket | meaning | the fix | count |
+|---|---|---|---|
+| **REACHED** | a test runs the line and does not assert enough to notice | a few lines in a test that already exists | **370 (39%)** |
+| **UNREACHED** | no test runs the line at all | a new case that gets there first | **573 (60%)** |
+| **NO-RECORD** | gcov has no record for the line | see below | **6** |
+
+**Spend on REACHED first** — the test already gets there, it just does not look. `mslogic.c` has 148
+and `lxlogic.c` 96, two thirds of the cheap queue between them.
+
+⭐ **NO-RECORD turned out to be the equivalent-mutant registry, derived instead of asserted.** ADR
+0013 planned a hand-maintained `mutants-equivalent.tsv` and deferred it. It is not needed: gcov emits
+no line record for code the compiler folded away, and `mslogic.c:2251` (`if (FALSE && …)`) and
+`:3452` (`if (TRUE || …)`) are upstream short-circuits — so every mutation inside those conditions is
+*provably* equivalent. Six found mechanically, with no list for anyone to keep current.
+
+🔴 **NO-RECORD must never be folded into UNREACHED**, because it has a second cause: gcov emits
+nothing for file-scope initializers either. Treating it as "unreached" would file a mutation inside
+`movelaws[]` — the table this fork's headline defect indexed out of bounds — under "nothing runs it,
+deprioritize".
+
 ### Added — `-Escalate`: the survivor list is a real work queue, and now we know it
 
 The open question about a unit-layer kill rate is whether the other five layers quietly catch what it

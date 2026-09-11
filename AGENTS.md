@@ -39,6 +39,7 @@ powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1         # NO_FIX_* t
 powershell -ExecutionPolicy Bypass -File mutate.ps1 -SelfTest       # prove the census harness is honest (~1 min)
 powershell -ExecutionPolicy Bypass -File mutate.ps1                 # mutation census; SLOW (~30 min), not a layer
 powershell -ExecutionPolicy Bypass -File mutate.ps1 -Escalate <tsv> # re-run survivors under -Sanitize; measures the yield
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -Split <tsv>    # sort survivors: test reaches the line, or not
 ```
 
 Machine-readable results: `run-tests.ps1 -ResultsPath test-results` writes JUnit XML and JSON. Exit
@@ -85,15 +86,20 @@ you add cases; **never lower it to make a run pass.** ⚠ `input_test.c` and `di
 under-counts — an audit read that as two unguarded tests. Both floors are exact.
 
 🔴 **And run the sixth layer: `run-tests.ps1` includes `-Sanitize`**, the same cases under
-UndefinedBehaviorSanitizer. Eleven seconds, and it is the only local layer that can see a
-memory-safety guard being deleted — reverting jc-50 leaves every other layer green.
+UndefinedBehaviorSanitizer. Eleven seconds, and it sees memory-safety guards the plain pass cannot.
+⚠ The old line here said "reverting jc-50 leaves every other layer green" — **measured 2026-09-11,
+that is no longer true**: jc-57's direct cases for `movelaw_block()` and `movelaw_creature()` now
+fail the plain pass with real assertions. Escalating the whole 2026-09-11 census through `-Sanitize`
+found it catches **7 of 949 plain-pass survivors, 0.7%** — small, and not a reason to skip it.
 
 ⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 95% of the 22,734.
 Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
 than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
 The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.
-**Run `mutate.ps1 -SelfTest` before believing any census** — it plants four mutants whose verdicts
-are known in advance and refuses to measure if it gets one wrong. See `CLAUDE.md` §5 and
+**Run `mutate.ps1 -SelfTest` before believing any census** — it plants five mutants whose verdicts
+are known in advance and refuses to measure if it gets one wrong. `-Split` then sorts the survivors
+into the 39% a test already reaches (cheap: add an assertion) and the 60% nothing reaches (needs a
+new case). See `CLAUDE.md` §5 and
 [`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
 
 `CLAUDE.md` §5 lists what is deliberately **not** covered — the Qt **widgets**, and **14 of the 32

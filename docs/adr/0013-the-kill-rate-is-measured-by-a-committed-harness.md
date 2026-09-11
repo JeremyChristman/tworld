@@ -109,7 +109,14 @@ defect this fork has shipped and fixed — jc-44, jc-45, jc-50, jc-51 — was an
 - **Survivors whose check count moved are the actionable ones.** A mutant where every test passes
   but the suite's check count *changed* means the tests reached that code and declined to assert on
   it. That costs one integer comparison and gets its own column.
-- The four mutants previously proven equivalent are reported as ordinary survivors for now. A
-  registry that excuses them is a lever that flatters, and four rows do not yet justify one; when it
-  exists it must abort if a row resolves to anything other than exactly one live site, and the raw
-  rate must stay the headline.
+- **A survivor list is two problems, and `-Split` separates them** by joining the survivors against
+  gcov's per-line map: **REACHED** (370, 39%) means a test runs the line and does not assert — the
+  cheap fix, usually a few lines in an existing test; **UNREACHED** (573, 60%) means nothing runs it,
+  where no assertion can help. Spend on REACHED first.
+- **Equivalent mutants are derived, not registered.** The plan was a hand-maintained
+  `mutants-equivalent.tsv`. `-Split`'s third bucket does better: gcov emits no line record for code
+  the compiler folded away, and `mslogic.c:2251` (`if (FALSE && …)`) and `:3452` (`if (TRUE || …)`)
+  are upstream short-circuits, so every mutation inside those conditions is provably equivalent. Six
+  found mechanically, with no list for anyone to keep current. ⚠ NO-RECORD has a second cause —
+  file-scope data, where gcov also emits nothing — so it must never be treated as a synonym for
+  unreached; that would file `movelaws[]` under "nothing runs it".

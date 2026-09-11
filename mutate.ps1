@@ -130,6 +130,11 @@ package.ps1.
                  recorded as SURVIVED, this time under run-tests.ps1 -Sanitize, and
                  report how many of them that layer catches. Those are not test
                  gaps; what is left over is. Writes escalated.tsv.
+  -Split <tsv>     take an earlier census's mutants.tsv and sort the mutants it
+                 recorded as SURVIVED by whether any test EXECUTES the line.
+                 REACHED means a test runs it and does not assert; UNREACHED means
+                 nothing runs it. Different fixes, different costs. Runs
+                 coverage.ps1 for the map; compiles and runs no mutants.
   -SelfTest      run the canaries and stop, without censusing.
   -KeepScratch   do not delete the scratch tree on the way out (for debugging).
 #>
@@ -143,6 +148,10 @@ param(
     # SURVIVED, under the sanitize layer, and reports how many of them that layer
     # catches. See the -Escalate note in the header.
     [string]$Escalate,
+    # Path to a mutants.tsv. Sorts the mutants it recorded as SURVIVED by whether
+    # any test EXECUTES the line, which decides what the fix is. Runs coverage.ps1
+    # to get the map; no mutants are compiled or run.
+    [string]$Split,
     [string]$ResultsPath,
     [switch]$UpdateBaseline,
     [switch]$SelfTest,
@@ -758,6 +767,10 @@ try {
     # baseline has to be taken there too. The counts happen to be identical today
     # (22,734 either way), but assuming that is how a harness starts lying.
     $useSanitize = [bool]$Escalate
+    # -Split compiles and runs no mutants at all -- it is a join between an existing
+    # census and an existing coverage map -- so the gate that exists to stop a red
+    # tree being scored has nothing to protect and is skipped.
+    if (-not $Split) {
     Write-Host ("--- baseline gate (the pristine tree must be green, twice{0}) ---" -f $(if ($useSanitize) { ", under -Sanitize" } else { "" }))
     $baseline = @{}
     $cost = @{}
@@ -788,6 +801,7 @@ try {
     }
     $pristineManifest = Get-TreeManifest $scratch
     $pristineDirs = Get-TreeDirs $scratch
+    }
 
     # --- enumerate ----------------------------------------------------------
     Write-Host ""
@@ -811,6 +825,108 @@ try {
         $rng = New-Object Random $Seed
         $mutants = [Collections.ArrayList]@($mutants | Sort-Object { $rng.Next() } | Select-Object -First $Sample)
         Write-Host ("  sampled down to {0} (seed {1})" -f $mutants.Count, $Seed)
+    }
+
+    # --- split ---------------------------------------------------------------
+    # Sorts an earlier census's survivors by whether any test EXECUTES the line.
+    #
+    # WHY THIS IS WORTH A MODE. A survivor is "a mutation nothing noticed", which
+    # sounds like one problem and is two, with different fixes and very different
+    # costs:
+    #
+    #   REACHED  - a test runs the line and does not assert enough to notice the
+    #              change. The fix is usually a few lines in a test that already
+    #              exists. These are the cheap ones.
+    #   UNREACHED- no test runs the line at all. No assertion can help; the fix is
+    #              a new case that gets there first.
+    #
+    # 🔴 AND A THIRD BUCKET THAT MUST NOT BE FOLDED INTO "UNREACHED". gcov emits no
+    # line record for a file-scope initializer, so a mutation inside movelaws[] --
+    # the table this fork's headline defect indexed out of bounds -- has NO RECORD
+    # rather than a zero count. Calling that unreached would quietly file the most
+    # dangerous code in the tree under "nothing runs it, deprioritize".
+    if ($Split) {
+        if (-not (Test-Path -LiteralPath $Split)) { throw "-Split: no such file: $Split" }
+        $prior = @(Import-Csv -LiteralPath $Split -Delimiter "`t")
+        $priorSurv = @($prior | Where-Object { $_.verdict -eq "SURVIVED" })
+        if ($priorSurv.Count -eq 0) { throw "-Split: $Split records no SURVIVED mutants" }
+
+        $index = @{}
+        foreach ($m in $mutants) { $index["$($m.file)|$($m.line)|$($m.col)|$($m.from)|$($m.to)"] = $m }
+        $todo = New-Object Collections.ArrayList
+        $missing = 0
+        foreach ($row in $priorSurv) {
+            $key = "$($row.file)|$($row.line)|$($row.col)|$($row.from)|$($row.to)"
+            if ($index.ContainsKey($key)) { [void]$todo.Add($index[$key]) } else { $missing++ }
+        }
+        if ($missing -gt 0) {
+            throw "-Split: $missing of $($priorSurv.Count) recorded survivors do not match a mutant enumerated from the current source. The tree has moved under that TSV."
+        }
+
+        Write-Host ""
+        Write-Host "--- building the per-line execution map (coverage.ps1, a few minutes) ---"
+        $map = Join-Path $runDir "linemap.tsv"
+        $cov = Join-Path $repoRoot "coverage.ps1"
+        # ⚠ gcov must run with the repository root as the working directory, or it
+        # reports "Cannot open source file generic/dirinput.c" and coverage.ps1
+        # throws. coverage.ps1 documents this; honor it from here too.
+        Push-Location $repoRoot
+        try {
+            & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $cov -LineMapPath $map | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "coverage.ps1 failed (exit $LASTEXITCODE); cannot split without a line map" }
+        } finally { Pop-Location }
+        if (-not (Test-Path -LiteralPath $map)) { throw "coverage.ps1 wrote no line map at $map" }
+
+        # ⚠ STRIP THE COMMENT BLOCK BEFORE PARSING, DO NOT FILTER AFTER. The map
+        # leads with four # lines, and Import-Csv takes the FIRST line of a file as
+        # its header -- so it read the comment as the header, produced one garbage
+        # row, and the split reported all 949 survivors as NO-RECORD without
+        # anything looking wrong. Filtering afterwards cannot fix a header that was
+        # already mis-taken.
+        $hit = @{}
+        $mapRows = @(Get-Content -LiteralPath $map | Where-Object { $_ -notmatch '^\s*#' }) |
+                   ConvertFrom-Csv -Delimiter "`t"
+        foreach ($row in $mapRows) { $hit["$($row.file):$($row.line)"] = ($row.hit -eq "1") }
+        if ($hit.Count -lt 100) { throw "the line map parsed to only $($hit.Count) records; refusing to split against it" }
+        Write-Host ("  {0} line records" -f $hit.Count)
+
+        $splitTsv = Join-Path $ResultsPath "survivors-split.tsv"
+        [IO.File]::WriteAllText($splitTsv, "file`tline`tcol`toperator`tfrom`tto`treach`r`n", $utf8NoBom)
+        $tallyS = @{}
+        foreach ($m in $todo) {
+            $key = "$($m.file):$($m.line)"
+            $reach = if (-not $hit.ContainsKey($key)) { "NO-RECORD" }
+                     elseif ($hit[$key]) { "REACHED" } else { "UNREACHED" }
+            if (-not $tallyS.ContainsKey($m.file)) { $tallyS[$m.file] = @{} }
+            if (-not $tallyS[$m.file].ContainsKey($reach)) { $tallyS[$m.file][$reach] = 0 }
+            $tallyS[$m.file][$reach]++
+            [IO.File]::AppendAllText($splitTsv, ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`r`n" -f
+                $m.file, $m.line, $m.col, $m.operator, $m.from, $m.to, $reach), $utf8NoBom)
+        }
+
+        Write-Host ""
+        Write-Host "########## survivors, split by whether a test reaches the line ##########" -ForegroundColor Cyan
+        Write-Host "  REACHED   a test runs it and does not assert -- usually a few lines in an existing test"
+        Write-Host "  UNREACHED no test runs it -- needs a new case that gets there first"
+        Write-Host "  NO-RECORD gcov has no line record (file-scope data). NOT a synonym for unreached."
+        Write-Host ""
+        Write-Host ("  {0,-22} {1,10} {2,10} {3,10} {4,9}" -f "file", "survivors", "REACHED", "UNREACHED", "NO-REC")
+        $tR = 0; $tU = 0; $tN = 0
+        foreach ($f in ($tallyS.Keys | Sort-Object)) {
+            $t = $tallyS[$f]
+            $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
+            $r = & $g "REACHED"; $u = & $g "UNREACHED"; $nr = & $g "NO-RECORD"
+            $tR += $r; $tU += $u; $tN += $nr
+            Write-Host ("  {0,-22} {1,10} {2,10} {3,10} {4,9}" -f $f, ($r + $u + $nr), $r, $u, $nr)
+        }
+        $tot = $tR + $tU + $tN
+        Write-Host ""
+        Write-Host ("  {0} survivors: {1} REACHED ({2:P0}), {3} UNREACHED ({4:P0}), {5} NO-RECORD." -f
+            $tot, $tR, $(if ($tot) { $tR / $tot } else { 0 }), $tU, $(if ($tot) { $tU / $tot } else { 0 }), $tN)
+        Write-Host "  Start with REACHED: the test already gets there, it just does not look."
+        Write-Host ""
+        Write-Host "  per-mutant detail: $splitTsv"
+        return
     }
 
     # --- self-test ----------------------------------------------------------
