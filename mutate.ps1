@@ -35,12 +35,19 @@ one, and every guard below exists because of a specific way it could lie.
 WHAT THIS MEASURES, AND WHAT IT DOES NOT
 
 The UNIT layer only, compiled the ordinary way. Five more layers exist
-(sanitize, e2e, qt, golden, nofix) and a mutant reported SURVIVED here may well
-be caught by one of them -- in particular, the memory-safety mutants this fork
-cares most about are exactly the ones the plain pass cannot see, which is the
-whole reason run-tests.ps1 grew a -Sanitize mode. Escalating survivors through
-the sanitizer is the next thing to build here; until it exists, read SURVIVED as
-"the unit layer did not notice", not as "nothing would have".
+(sanitize, e2e, qt, golden, nofix) and a mutant reported SURVIVED here may in
+principle be caught by one of them.
+
+⭐ **FOR THE SANITIZE LAYER THAT IS NOW MEASURED RATHER THAN ASSUMED, AND THE
+ANSWER IS 0.7%.** `-Escalate` re-ran all 949 plain-pass survivors of the
+2026-09-11 census under `-Sanitize`; it caught **seven**. So the survivor list is
+NOT meaningfully padded, and SURVIVED can be read as a real gap rather than
+hedged. That was worth knowing before anyone spent a week writing tests for it.
+
+⚠ Do not read 0.7% as "the sanitizer is not worth running". It judges only what a
+test actually EXECUTES, and it answers a different question than a boundary
+mutation asks. Its value on the defect class it was added for is on the record --
+this fork's jc-50 bug was invisible to every other local layer.
 
 🔴 THE NUMBER THIS PRINTS IS NOT COMPARABLE TO THE 2026-09-08 AUDIT'S 45%.
 That figure came from 233 mutations a person chose by hand, aimed at guards. This
@@ -93,13 +100,16 @@ its own, so macro bodies are never mutated even though they compile at every
 expansion site.
 
 -SelfTest RUNS FIRST AND IS NOT OPTIONAL BEFORE BELIEVING A CENSUS. It plants
-four mutants whose verdicts are known in advance -- one that must be killed, one
+five mutants whose verdicts are known in advance -- one that must be killed, one
 that must not compile, one that must survive because it is on a line the compiler
-never sees, and one that must hang -- and refuses to run the census if any of them
-comes back with the wrong answer. Those four between them prove the mutation was
-really applied, the tests really ran, INVALID is not scoring as KILLED, the
-compiled-line filter works, and the timeout path (which is otherwise untested code
-that a multi-hour run bets on) actually recovers.
+never sees, one that must hang, and one that must pass the plain suite and die
+under the sanitizer -- and refuses to run if any of them comes back with the wrong
+answer. Between them they prove the mutation was really applied, the tests really
+ran, INVALID is not scoring as KILLED, the compiled-line filter works, the timeout
+and process-tree-kill path (otherwise untested code that a long run bets on)
+recovers, and the sanitize oracle actually fires. That last one is what makes
+-Escalate mean anything: without it, a yield of zero would be indistinguishable
+from a sanitize pass that never ran.
 
 COST. Roughly 1,270 ROR mutants across the sixteen sources the tests compile, at
 about one to eight seconds each depending on how many tests cover the file and
@@ -116,6 +126,10 @@ package.ps1.
                  filtered or dirty-tree run, for the same reason run-tests.ps1
                  refuses to write docs\test-counts.tsv on a -Filter run: a partial
                  count reads exactly as authoritative as a complete one.
+  -Escalate <tsv>  take an earlier census's mutants.tsv, re-run only the mutants it
+                 recorded as SURVIVED, this time under run-tests.ps1 -Sanitize, and
+                 report how many of them that layer catches. Those are not test
+                 gaps; what is left over is. Writes escalated.tsv.
   -SelfTest      run the canaries and stop, without censusing.
   -KeepScratch   do not delete the scratch tree on the way out (for debugging).
 #>
@@ -125,6 +139,10 @@ param(
     [string[]]$Operator = @("ROR"),
     [int]$Sample = 0,
     [int]$Seed = 20260911,
+    # Path to a mutants.tsv from an earlier census. Re-runs only the mutants that
+    # SURVIVED, under the sanitize layer, and reports how many of them that layer
+    # catches. See the -Escalate note in the header.
+    [string]$Escalate,
     [string]$ResultsPath,
     [switch]$UpdateBaseline,
     [switch]$SelfTest,
@@ -591,7 +609,7 @@ $script:summaryRe = '^\s*(?:!|\s)?\s*(\S+_test\.c)\s+(c\+\+|c)\s+([\d,]+) checks
 # path fails, reads as a compile failure, and every remaining mutant in a
 # multi-hour census is scored off a stale file lock. taskkill /T takes the tree.
 # By PID from -PassThru, never by process name.
-function Invoke-UnitTests([string]$scratch, [string]$filter, [string]$outDir, [int]$timeoutSec) {
+function Invoke-UnitTests([string]$scratch, [string]$filter, [string]$outDir, [int]$timeoutSec, [bool]$sanitize = $false) {
     $runner = Join-Path $scratch "test\run-tests.ps1"
     $stdout = Join-Path $outDir "run.out"
     $stderr = Join-Path $outDir "run.err"
@@ -605,6 +623,10 @@ function Invoke-UnitTests([string]$scratch, [string]$filter, [string]$outDir, [i
         "-OutDir", "`"$outDir`"",
         "-ExtraFlags", "-Wno-error"
     )
+    # The sanitize pass appends -w -O1 AFTER -Werror and after -ExtraFlags, so the
+    # -Wno-error above is redundant here and harmless. Kept unconditional so the two
+    # passes differ in exactly one argument.
+    if ($sanitize) { $argList += "-Sanitize" }
     $p = Start-Process -FilePath "powershell.exe" -ArgumentList $argList `
                        -WorkingDirectory $scratch -NoNewWindow -PassThru `
                        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -732,14 +754,18 @@ try {
     # and the second run is also what measures per-test cost so covering tests can
     # be tried cheapest-first.
     Write-Host ""
-    Write-Host "--- baseline gate (the pristine tree must be green, twice) ---"
+    # In escalate mode every verdict is taken under the sanitize layer, so the
+    # baseline has to be taken there too. The counts happen to be identical today
+    # (22,734 either way), but assuming that is how a harness starts lying.
+    $useSanitize = [bool]$Escalate
+    Write-Host ("--- baseline gate (the pristine tree must be green, twice{0}) ---" -f $(if ($useSanitize) { ", under -Sanitize" } else { "" }))
     $baseline = @{}
     $cost = @{}
     for ($pass = 1; $pass -le 2; $pass++) {
         $allTests = Get-ChildItem -Path (Join-Path $scratch "test") -Filter "*_test.c" | Sort-Object Name
         foreach ($t in $allTests) {
             $s = [Diagnostics.Stopwatch]::StartNew()
-            $r = Invoke-UnitTests $scratch $t.BaseName $outDir $RunTimeoutSec
+            $r = Invoke-UnitTests $scratch $t.BaseName $outDir $RunTimeoutSec $useSanitize
             $s.Stop()
             $mine = @($r.rows | Where-Object { $_.test -eq "$($t.BaseName).c" })
             if ($mine.Count -eq 0) { throw "baseline pass $pass : $($t.BaseName) produced no summary row" }
@@ -852,6 +878,27 @@ try {
     $canaries += @{ name = "must-timeout"; file = "random.c"; expect = "TIMEOUT"; only = "random_test"
                     text = $rndText.Replace($lcg, 'for (;;) { } return 0;') }
 
+    # 5. MUST SURVIVE THE PLAIN PASS AND DIE UNDER THE SANITIZER. This is the canary
+    #    that makes -Escalate mean anything: without it, a yield of zero is
+    #    indistinguishable from a sanitize pass that never ran.
+    #
+    #    ⚠ IT IS SYNTHETIC ON PURPOSE, AND THAT IS THE SECOND-BEST OUTCOME. The
+    #    right canary would have been reverting jc-50 -- this fork's own headline
+    #    defect, movelaws[] indexed by a cell's bottom layer -- which CLAUDE.md
+    #    records as leaving every local layer green except -Sanitize. Measured
+    #    2026-09-11, that is no longer true of EITHER site: jc-57 added direct cases
+    #    for movelaw_block() and movelaw_creature(), and the plain pass now fails
+    #    both reverts with real assertions ("movelaw_block(MOVELAWCOUNT): expected 0,
+    #    got 101"). The gap closed, so the canary had to be built rather than found.
+    #
+    #    A volatile write forces the multiply to happen at -O1; the result is read by
+    #    nobody, so the plain pass sees 7,767 unchanged checks while UBSan traps on
+    #    the signed overflow.
+    $canaries += @{ name = "needs-sanitizer"; file = "random.c"; expect = "SURVIVED"
+                    expectSanitized = "KILLED"; only = "random_test"
+                    text = $rndText.Replace($lcg,
+                        "{ static volatile int sink; int q = (int)value | 1; sink = q * 2147483647; }`n    $lcg") }
+
     foreach ($c in $canaries) {
         $path = Join-Path $scratch $c.file
         $pristine = $pristineText[$c.file]
@@ -862,21 +909,52 @@ try {
             $verdict = "SURVIVED"
             $note = ""
             $timeout = if ($c.expect -eq "TIMEOUT") { 30 } else { $RunTimeoutSec }
-            $canaryTests = if ($c.only) { @($c.only) } else { $compiled.covering[$c.file] }
+            # 🔴 @() AROUND THE WHOLE `if`, and this is the THIRD time this exact
+            # PowerShell rule has bitten in this file. An `if` used as an expression
+            # UNROLLS a one-element array to a scalar, so this was the string
+            # "random_test" rather than a list containing it -- and $canaryTests[0]
+            # then indexed the string and asked the runner for a test named "r".
+            # foreach over a scalar string iterates once with the whole value, so
+            # every canary that only looped kept working and only the indexing
+            # exposed it. Same rule that sent -DTWPLUSPLUS to gcc one letter at a
+            # time; see Get-CompiledMap.
+            $canaryTests = @(if ($c.only) { @($c.only) } else { $compiled.covering[$c.file] })
+            # The canaries run in whichever layer this invocation is about to measure
+            # in, so they prove THAT layer's plumbing -- except the needs-sanitizer
+            # canary, whose whole claim is about the plain pass and which therefore
+            # always takes its first reading there.
+            $mainSanitize = if ($c.expectSanitized) { $false } else { $useSanitize }
             foreach ($testName in $canaryTests) {
-                $r = Invoke-UnitTests $scratch $testName $outDir $timeout
+                $r = Invoke-UnitTests $scratch $testName $outDir $timeout $mainSanitize
                 if ($r.timedOut) { $verdict = "TIMEOUT"; $note = "$testName"; break }
                 $v = Get-TestVerdict $r.rows $baseline[$testName] $testName
                 if ($v.verdict -eq "KILLED" -or $v.verdict -eq "INVALID" -or $v.verdict -eq "ERROR") {
                     $verdict = $v.verdict; $note = $v.note; break
                 }
             }
+            # A canary that declares expectSanitized is asserting the DIFFERENCE
+            # between the two layers, so it has to run both. Checking only the
+            # sanitize half would pass just as happily if the plain half were also
+            # failing, which is the thing it exists to rule out.
+            $sanVerdict = ""
+            if ($c.expectSanitized) {
+                $rs = Invoke-UnitTests $scratch $canaryTests[0] $outDir $RunTimeoutSec $true
+                if ($rs.timedOut) { $sanVerdict = "TIMEOUT" }
+                else {
+                    $vs = Get-TestVerdict $rs.rows $baseline[$canaryTests[0]] $canaryTests[0]
+                    $sanVerdict = if ($vs.verdict -eq "PASSED") { "SURVIVED" } else { $vs.verdict }
+                    if ($vs.note) { $note = "sanitize: $($vs.note)" }
+                }
+            }
         } finally {
             [IO.File]::WriteAllText($path, $pristine, $utf8NoBom)
         }
         $ok = ($verdict -eq $c.expect)
+        if ($c.expectSanitized) { $ok = $ok -and ($sanVerdict -eq $c.expectSanitized) }
         $color = if ($ok) { "Green" } else { "Red" }
-        Write-Host ("  {0,-16} expected {1,-9} got {2,-9} {3}" -f $c.name, $c.expect, $verdict, $note) -ForegroundColor $color
+        $shown = if ($c.expectSanitized) { "$verdict/$sanVerdict" } else { $verdict }
+        $want = if ($c.expectSanitized) { "$($c.expect)/$($c.expectSanitized)" } else { $c.expect }
+        Write-Host ("  {0,-16} expected {1,-18} got {2,-18} {3}" -f $c.name, $want, $shown, $note) -ForegroundColor $color
         if (-not $ok) {
             throw "self-test FAILED on the $($c.name) canary. The census is not run: a harness that gets this wrong reports a number nobody can check."
         }
@@ -886,6 +964,125 @@ try {
     if ($SelfTest) {
         Write-Host ""
         Write-Host "-SelfTest given; stopping before the census."
+        return
+    }
+
+    # --- escalation ---------------------------------------------------------
+    # Re-runs the mutants an earlier census recorded as SURVIVED, this time under
+    # the sanitize layer, and reports how many of them it catches.
+    #
+    # WHY THIS EXISTS. SURVIVED from the plain pass means only "the plain pass did
+    # not notice". The mutants this fork cares most about are memory-safety bounds,
+    # and the plain pass structurally cannot see a bad read that does not happen to
+    # change a value a test asserts on. Left unescalated, the survivor list -- which
+    # is the work queue for every test anyone writes next -- is padded with mutants
+    # a layer we already run on every push would have caught.
+    if ($Escalate) {
+        if (-not (Test-Path -LiteralPath $Escalate)) { throw "-Escalate: no such file: $Escalate" }
+        $prior = @(Import-Csv -LiteralPath $Escalate -Delimiter "`t")
+        $priorSurv = @($prior | Where-Object { $_.verdict -eq "SURVIVED" })
+        if ($priorSurv.Count -eq 0) { throw "-Escalate: $Escalate records no SURVIVED mutants" }
+
+        # Matched against a FRESH enumeration rather than trusting the recorded
+        # offsets. If the source has moved under the TSV, the identities stop
+        # matching and that is something to stop on, not to silently skip: an
+        # escalation run against stale coordinates would mutate the wrong tokens and
+        # report a yield for mutants that no longer exist.
+        $index = @{}
+        foreach ($m in $mutants) { $index["$($m.file)|$($m.line)|$($m.col)|$($m.from)|$($m.to)"] = $m }
+        $todo = New-Object Collections.ArrayList
+        $missing = 0
+        foreach ($row in $priorSurv) {
+            $key = "$($row.file)|$($row.line)|$($row.col)|$($row.from)|$($row.to)"
+            if ($index.ContainsKey($key)) { [void]$todo.Add($index[$key]) } else { $missing++ }
+        }
+        if ($missing -gt 0) {
+            throw "-Escalate: $missing of $($priorSurv.Count) recorded survivors do not match a mutant enumerated from the current source. The tree has moved under that TSV; re-run the census instead."
+        }
+
+        Write-Host ""
+        Write-Host ("--- escalating {0} survivors through the sanitize layer ---" -f $todo.Count)
+        $esc = Join-Path $ResultsPath "escalated.tsv"
+        [IO.File]::WriteAllText($esc, "file`tline`tcol`toperator`tfrom`tto`tsanitizeVerdict`tkiller`tnote`r`n", $utf8NoBom)
+        $caught = @{}
+        $escTally = @{}
+        $done = 0
+        $started = Get-Date
+
+        foreach ($m in $todo) {
+            $done++
+            $path = Join-Path $scratch $m.file
+            $pristine = $pristineText[$m.file]
+            $mutated = New-MutatedText $pristine $m
+            if ($mutated -eq $pristine) { throw "escalation: mutant $($m.file):$($m.line) produced identical text" }
+            [IO.File]::WriteAllText($path, $mutated, $utf8NoBom)
+
+            $verdict = "SURVIVED"; $note = ""; $killer = ""
+            $order = @($compiled.covering[$m.file] | Sort-Object { $cost[$_] })
+            try {
+                foreach ($testName in $order) {
+                    $r = Invoke-UnitTests $scratch $testName $outDir $RunTimeoutSec $true
+                    if ($r.timedOut) { $verdict = "TIMEOUT"; $note = $testName; break }
+                    $v = Get-TestVerdict $r.rows $baseline[$testName] $testName
+                    if ($v.verdict -eq "KILLED") {
+                        # Same re-run discipline as the census: a flake is a false
+                        # kill and the bias only points one way.
+                        $again = Invoke-UnitTests $scratch $testName $outDir $RunTimeoutSec $true
+                        $v2 = Get-TestVerdict $again.rows $baseline[$testName] $testName
+                        if ($v2.verdict -ne "KILLED") { $verdict = "FLAKY"; $note = "$($v.note) then $($v2.verdict)" }
+                        else { $verdict = "KILLED"; $killer = $testName; $note = $v.note }
+                        break
+                    }
+                    if ($v.verdict -eq "INVALID" -or $v.verdict -eq "ERROR") { $verdict = $v.verdict; $note = $v.note; break }
+                }
+            } finally {
+                [IO.File]::WriteAllText($path, $pristine, $utf8NoBom)
+            }
+
+            $problems = @(Compare-TreeManifest $pristineManifest $scratch $pristineDirs)
+            if ($problems.Count -gt 0) {
+                $fatal = @($problems | Where-Object { $_.kind -eq "fatal" })
+                if ($fatal.Count -gt 0) {
+                    throw "the scratch tree changed while escalating $($m.file):$($m.line) -- $(($fatal | ForEach-Object { "$($_.what): $($_.path)" }) -join '; ')."
+                }
+                Remove-Debris $scratch $problems
+                $still = @(Compare-TreeManifest $pristineManifest $scratch $pristineDirs)
+                if ($still.Count -gt 0) { throw "could not restore the scratch tree after $($m.file):$($m.line)." }
+            }
+
+            if (-not $escTally.ContainsKey($m.file)) { $escTally[$m.file] = @{} }
+            if (-not $escTally[$m.file].ContainsKey($verdict)) { $escTally[$m.file][$verdict] = 0 }
+            $escTally[$m.file][$verdict]++
+            [IO.File]::AppendAllText($esc, ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}`t{8}`r`n" -f
+                $m.file, $m.line, $m.col, $m.operator, $m.from, $m.to, $verdict, $killer, $note), $utf8NoBom)
+
+            if ($done % 25 -eq 0 -or $done -eq $todo.Count) {
+                $rate = ((Get-Date) - $started).TotalSeconds / $done
+                $left = [TimeSpan]::FromSeconds($rate * ($todo.Count - $done))
+                Write-Host ("  {0,5}/{1}  {2,-9} {3}:{4}  (~{5:hh\:mm\:ss} left)" -f
+                    $done, $todo.Count, $verdict, $m.file, $m.line, $left)
+            }
+        }
+
+        Write-Host ""
+        Write-Host "########## sanitizer yield over plain-pass survivors ##########" -ForegroundColor Cyan
+        Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f "file", "escalated", "caught", "still", "yield")
+        $tc = 0; $ts = 0
+        foreach ($f in ($escTally.Keys | Sort-Object)) {
+            $t = $escTally[$f]
+            $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
+            $k = & $g "KILLED"; $s = & $g "SURVIVED"
+            $tc += $k; $ts += $s
+            $n = $k + $s
+            $y = if ($n -gt 0) { "{0:P0}" -f ($k / $n) } else { "n/a" }
+            Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f $f, $n, $k, $s, $y)
+        }
+        Write-Host ""
+        Write-Host ("  {0} of {1} plain-pass survivors are caught by the sanitize layer ({2:P1})." -f
+            $tc, ($tc + $ts), $(if (($tc + $ts) -gt 0) { $tc / ($tc + $ts) } else { 0 }))
+        Write-Host "  Those are NOT test gaps. The remaining survivors are the real work queue."
+        Write-Host ""
+        Write-Host "  per-mutant detail: $esc"
         return
     }
 

@@ -602,10 +602,27 @@ because it sits on a line the compiler never sees, and one that must hang — an
 any comes back wrong. Between them they prove the mutation really reached disk, the tests really ran,
 INVALID is not scoring as KILLED, and the timeout and process-tree-kill path recovers.
 
-⚠ **SURVIVED means "the unit layer did not notice", not "nothing would have."** Five other layers
-exist, and the memory-safety mutants this fork cares most about are precisely the ones the plain pass
-cannot see — reverting jc-50 leaves every local layer green except `-Sanitize`. Escalating survivors
-through the sanitizer is the next thing to build here.
+⭐ **SURVIVED IS A REAL GAP, AND THAT IS MEASURED RATHER THAN ASSUMED.** The obvious worry about a
+unit-layer kill rate is that the other five layers catch what it misses, so the survivor list is
+padded and nobody should act on it. `mutate.ps1 -Escalate <mutants.tsv>` re-runs every survivor under
+`-Sanitize` and settles it: of the 2026-09-11 census's **949 survivors, the sanitize layer caught 7
+— 0.7%.** Read SURVIVED as a gap. Do not hedge it.
+
+⚠ **That is not a verdict on the sanitizer.** It judges only what a test actually *executes*, and it
+answers a different question than a boundary mutation asks. Its value on the class it was added for
+is on the record: jc-50 was invisible to every other local layer.
+
+🔴 **The seven it caught are worth reading individually — they are guards nothing pins.** Each is a
+bound the plain suite runs straight through without noticing:
+
+| site | mutation | what it opens |
+|---|---|---|
+| `res.c:251`, `res.c:258` | `ruleset >= Ruleset_Count` → `>` | lets `ruleset == Ruleset_Count` reach `tilesetkey[ruleset]`, one past the array — the jc-45/jc-50 shape exactly |
+| `generic/tile.c:1191` | `n < sizeof tileptr / sizeof *tileptr` → `<=` | one past the tile-pointer table |
+| `generic/tile.c:1194` | `m < 16` → `<=` | one past a 16-entry row |
+| `generic/in.c:367` | `n < TWK_LAST` → `<=` | one past the key table |
+| `lxlogic.c:1994` | `putwall() != -1` → `==` | inverts the wall-placement failure test |
+| `fileio.c:470` | `dest != dir` → `==` | inverts a path comparison (caught by assertion, not UB) |
 
 ⚠ **`settings.cpp` reports 22 INVALID, and they are generator noise, not a codebase fact.** `<` and
 `>` inside a C++ template argument list are not relational operators, so `map<string, string>`

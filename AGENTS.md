@@ -38,6 +38,7 @@ powershell -ExecutionPolicy Bypass -File test\run-golden.ps1        # engine sna
 powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1         # NO_FIX_* toggles; run after engine edits
 powershell -ExecutionPolicy Bypass -File mutate.ps1 -SelfTest       # prove the census harness is honest (~1 min)
 powershell -ExecutionPolicy Bypass -File mutate.ps1                 # mutation census; SLOW (~30 min), not a layer
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -Escalate <tsv> # re-run survivors under -Sanitize; measures the yield
 ```
 
 Machine-readable results: `run-tests.ps1 -ResultsPath test-results` writes JUnit XML and JSON. Exit

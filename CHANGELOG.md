@@ -23,6 +23,32 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Added — `-Escalate`: the survivor list is a real work queue, and now we know it
+
+The open question about a unit-layer kill rate is whether the other five layers quietly catch what it
+misses — in which case the survivor list is padded and nobody should spend a week on it.
+`mutate.ps1 -Escalate` re-runs every recorded survivor under `-Sanitize` and answers it.
+
+**Of the census's 949 survivors, the sanitize layer caught 7 — 0.7%.** SURVIVED is a real gap. The
+hedge that was in `CLAUDE.md` §5 and ADR 0013 is replaced by that number.
+
+⚠ **Not a verdict on the sanitizer.** It judges only what a test actually *executes*, and it answers
+a different question than a boundary mutation asks. Its worth on the class it exists for is on the
+record: jc-50 was invisible to every other local layer.
+
+🔴 **The seven it caught are guards nothing pins**, and are now listed individually in `CLAUDE.md`
+§5. `res.c:251` and `res.c:258` are the jc-45/jc-50 shape exactly — relaxing `ruleset >=
+Ruleset_Count` to `>` lets `ruleset == Ruleset_Count` reach `tilesetkey[ruleset]`, one past the
+array, and the plain suite runs straight through it.
+
+⚠ **The canary for this had to be built rather than found, which is itself a result.** The intended
+one was reverting jc-50, recorded here as leaving every local layer green except `-Sanitize`. That is
+no longer true of either site: jc-57's direct cases for `movelaw_block()` and `movelaw_creature()`
+now fail the plain pass with real assertions (`movelaw_block(MOVELAWCOUNT): expected 0, got 101`).
+The gap closed. `-SelfTest` now carries five canaries, the fifth a synthetic UB that must pass the
+plain suite and trap under UBSan — without it a yield of zero is indistinguishable from a sanitize
+pass that never ran.
+
 ### Added — `mutate.ps1`: the kill rate is now measured, not asserted
 
 `AGENTS.md` has said for some time that "mutation kill rate is the number that means something."

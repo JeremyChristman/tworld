@@ -93,10 +93,19 @@ defect this fork has shipped and fixed — jc-44, jc-45, jc-50, jc-51 — was an
   an hour trains people to ignore it.
 - **A `#define` body is never mutated**, because it produces no preprocessed output of its own even
   though it compiles at every expansion site. Stated rather than silent.
-- **The unit layer is the only oracle.** Five other layers exist, and the memory-safety mutants this
-  fork cares most about are precisely the ones the plain pass cannot see — which is why
-  `run-tests.ps1` grew `-Sanitize`. Until survivors are escalated through the sanitizer, SURVIVED
-  means "the unit layer did not notice", not "nothing would have".
+- **SURVIVED is a real gap, measured.** The obvious objection to a unit-layer kill rate is that the
+  other five layers catch what it misses, making the survivor list padded and not worth acting on.
+  `-Escalate` settles it by re-running every survivor under `-Sanitize`: of the first census's **949
+  survivors it caught 7, or 0.7%**. The list is the work queue as written. ⚠ That is not a verdict
+  on the sanitizer — it judges only what a test executes, and answers a different question than a
+  boundary mutation asks; jc-50 was invisible to every other local layer. The seven it did catch are
+  guards nothing pins, and are listed in `CLAUDE.md` §5.
+- **A canary that has to be built rather than found is itself a result.** The intended
+  sanitizer-only canary was reverting jc-50, which `CLAUDE.md` recorded as leaving every local layer
+  green except `-Sanitize`. Measured 2026-09-11, that is no longer true of either site: jc-57's
+  direct cases for `movelaw_block()` and `movelaw_creature()` now fail the plain pass with real
+  assertions. The canary is therefore synthetic — a volatile signed overflow in `nextvalue()` — and
+  says so in the code.
 - **Survivors whose check count moved are the actionable ones.** A mutant where every test passes
   but the suite's check count *changed* means the tests reached that code and declined to assert on
   it. That costs one integer comparison and gets its own column.
