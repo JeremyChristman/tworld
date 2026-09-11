@@ -511,6 +511,63 @@ int main(void)
 		      "lower-layer run-length data wrote %d cell(s) past the map",
 		      overrun);
 	}
+	/* 🔴 AND THE DECODER MUST SAY IT STOPPED. The `pos < CXGRID * CYGRID` in
+	 * this loop's FOR header does not guard the writes -- the inner
+	 * `while (i-- && pos < ...)` does -- so relaxing it to `<=` writes
+	 * nothing extra and the overrun check above cannot see it. What it does
+	 * is let the loop keep consuming input after the map is full, so `n`
+	 * reaches `size` and the "extra bytes" warning never fires. The count of
+	 * cells is the wrong oracle for this bound; the warning is the right one.
+	 * Measured: this mutant outlived the overrun check by itself. */
+    }
+
+    tw_case("🔴 a full map stops the lower layer ENTERING another run");
+    {
+	/* THE FOR-HEADER'S `pos` BOUND, WHICH THE OVERRUN CHECK CANNOT SEE.
+	 *
+	 * `for (n = pos = 0 ; n < size && pos < CXGRID * CYGRID ; ++n)` does not
+	 * guard the writes -- the inner `while (i-- && pos < ...)` does -- so
+	 * relaxing it to `<=` writes nothing extra and every "did it overrun the
+	 * map" assertion stays green. Measured: it outlived the whole suite.
+	 *
+	 * ⚠ AND THE OBVIOUS FIXTURE CANNOT SEE IT EITHER. Five runs of 255 is
+	 * exactly fifteen bytes, so `n` reaches `size` on its own and the loop
+	 * would have ended anyway -- both forms agree. The bound only decides
+	 * anything when an iteration would be ENTERED with the map already full,
+	 * which needs a byte left over after the map fills. Hence the sixteenth
+	 * byte below, and hence the oracle being the warning: the real bound
+	 * leaves that byte unread and reports it, `<=` swallows it in silence.
+	 */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 16);     n += 2;		/* upper layer fills exactly */
+	for (i = 0 ; i < 4 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR;
+	}
+	for (i = 0 ; i < 4 ; ++i)
+	    raw[n++] = FIX_FLOOR;
+	put16(raw + n, 16);     n += 2;		/* lower layer: 15 + 1 spare */
+	for (i = 0 ; i < 5 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_GRAVEL;
+	}
+	raw[n++] = FIX_WALL;			/* the byte past a full map   */
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(warn_count >= 1,
+		  "the lower layer read its trailing byte instead of stopping at"
+		  " a full map, so the extra data was never reported");
+	{
+	    int overrun = 0;
+	    for (i = CXGRID * CYGRID ; i < POS_INVALID ; ++i)
+		if (teststate.map[i].bot.id != 0)
+		    ++overrun;
+	    CHECK_MSG(overrun == 0,
+		      "lower-layer data wrote %d cell(s) into the row-32 area",
+		      overrun);
+	}
     }
 
     tw_case("an undefined tile code becomes a wall, and is reported");
@@ -704,6 +761,22 @@ int main(void)
 	      "an out-of-table code must map to Wall, not to whatever is past the array");
     CHECK_MSG(fileidtotileid(0x7F) == Wall,
 	      "an out-of-table code must map to Wall, not to whatever is past the array");
+    /* 🔴 0x70 EXACTLY -- the first id past fileids[], and the ONLY value that
+     * tells `>= count` apart from `> count`. Both codes above are comfortably
+     * outside the table, so the two forms agree on them and an off-by-one here
+     * survived the whole suite. Measured: a mutation census killed nothing in
+     * this function until this line existed.
+     *
+     * ⚠ The readpos case immediately below already says this in as many words
+     * ("every x above is either comfortably inside or comfortably outside"),
+     * and the lesson was not applied twenty lines up. A lesson written down
+     * once is not a lesson applied -- grep for the rest of the class. */
+    CHECK_MSG(fileidtotileid(0x70) == Wall,
+	      "id 0x70 is one past fileids[] and must map to Wall, not to the"
+	      " first bytes of whatever the linker put after the table");
+    CHECK_MSG(fileidtotileid(0x6F) != Wall,
+	      "0x6F is the LAST id inside fileids[]; if this is Wall the table"
+	      " shrank and the bound above is being tested against the wrong edge");
 
     tw_case("readpos keeps row 32 distinct from an invalid coordinate");
     {
@@ -728,6 +801,226 @@ int main(void)
 	CHECK_MSG(ROW32POS(0) != POS_INVALID,
 		  "a legitimate (0,32) wiring and the invalid marker collide --"
 		  " this is exactly the jc-2 defect");
+    }
+
+    tw_case("🔴 each map layer decodes exactly its declared bytes, not one more");
+    {
+	/* THE OVERSHOOT THAT LANDS IN THE MAP.
+	 *
+	 * Both run-length loops are `for (n = pos = 0 ; n < size && pos < ...)`.
+	 * Relax either `n < size` to `n <= size` and the layer decodes ONE extra
+	 * byte -- which is the low half of the NEXT length word, a value an
+	 * attacker picks -- and writes it into the first cell past the layer.
+	 *
+	 * ⚠ WHY THE EXISTING RUN-LENGTH CASES CANNOT SEE THIS. They assert on
+	 * cells the layer legitimately fills. The overshoot lands on the cell
+	 * immediately AFTER, which nothing looked at: measured, both loops kept
+	 * their mutants alive through the whole suite. The oracle has to be the
+	 * first untouched cell, not the last touched one.
+	 *
+	 * Both following words are 3, whose low byte 0x03 is Water -- a tile
+	 * neither layer here ever writes, so it cannot be confused with one.
+	 */
+	n = 0;
+	put16(raw + n, 1);      n += 2;		/* level number		*/
+	put16(raw + n, 0);      n += 2;		/* time			*/
+	put16(raw + n, 0);      n += 2;		/* chips		*/
+	put16(raw + n, 1);      n += 2;		/* map detail		*/
+	put16(raw + n, 3);      n += 2;		/* upper layer: 3 bytes	*/
+	raw[n++] = 0xFF; raw[n++] = 10; raw[n++] = FIX_WALL;
+	put16(raw + n, 3);      n += 2;		/* lower layer: 3 bytes	*/
+	raw[n++] = 0xFF; raw[n++] = 20; raw[n++] = FIX_GRAVEL;
+	put16(raw + n, 3);      n += 2;		/* metadata: 3 bytes	*/
+	raw[n++] = 7; raw[n++] = 1; raw[n++] = 'x';	/* a hint field	*/
+	CHECK_INT(expandraw(raw, n), TRUE);
+
+	CHECK_INT(teststate.map[9].top.id, Wall);
+	CHECK_MSG(teststate.map[10].top.id != Water,
+		  "the upper layer read one byte past its declared size: cell 10"
+		  " holds the low half of the lower layer's length word");
+	CHECK_MSG(teststate.map[10].top.id == Nothing,
+		  "cell 10 lies past the upper layer and must still hold the"
+		  " zero expandmsdatlevel memsets, not a decoded tile");
+
+	CHECK_INT(teststate.map[19].bot.id, Gravel);
+	CHECK_MSG(teststate.map[20].bot.id != Water,
+		  "the lower layer read one byte past its declared size: cell 20"
+		  " holds the low half of the metadata length word");
+	CHECK_MSG(teststate.map[20].bot.id == Nothing,
+		  "cell 20 lies past the lower layer and must still hold the"
+		  " zero expandmsdatlevel memsets, not a decoded tile");
+    }
+
+    tw_case("🔴 the trap, cloner and creature lists stop exactly at their count");
+    {
+	/* Three `for (i = 0 ; i < state->Xcount ; ++i)` loops fill fixed arrays
+	 * from a length-delimited field. Relax any of them to `<=` and the loop
+	 * reads one entry past the field -- bytes belonging to the NEXT field --
+	 * and writes it into the array past the count the rest of the engine
+	 * will trust.
+	 *
+	 * ⚠ THE ORACLE IS THE ENTRY PAST THE COUNT, POISONED FIRST. Asserting
+	 * the count is right cannot see this: the count is assigned before the
+	 * loop and the mutation does not change it. Asserting entry [0] cannot
+	 * see it either. Only the slot the loop must NOT touch can.
+	 */
+	teststate.traps[1].from = -12345;
+	teststate.traps[1].to = -12345;
+	teststate.cloners[1].from = -12345;
+	teststate.cloners[1].to = -12345;
+	teststate.crlist[1] = -12345;
+
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;		/* upper layer		*/
+	raw[n++] = 0xFF; raw[n++] = 10; raw[n++] = FIX_WALL;
+	put16(raw + n, 3);      n += 2;		/* lower layer		*/
+	raw[n++] = 0xFF; raw[n++] = 20; raw[n++] = FIX_GRAVEL;
+	put16(raw + n, 26);     n += 2;		/* metadata: 26 bytes	*/
+	/* field 4: one trap, (1,1) -> (2,2). Ten bytes per entry, x at +0,
+	 * y at +2 for the button and +4/+6 for the trap. */
+	raw[n++] = 4; raw[n++] = 10;
+	raw[n++] = 1; raw[n++] = 0; raw[n++] = 1; raw[n++] = 0;
+	raw[n++] = 2; raw[n++] = 0; raw[n++] = 2; raw[n++] = 0;
+	raw[n++] = 0; raw[n++] = 0;
+	/* field 5: one cloner, (3,3) -> (4,4). Eight bytes per entry. */
+	raw[n++] = 5; raw[n++] = 8;
+	raw[n++] = 3; raw[n++] = 0; raw[n++] = 3; raw[n++] = 0;
+	raw[n++] = 4; raw[n++] = 0; raw[n++] = 4; raw[n++] = 0;
+	/* field 10: one creature, (5,5). Two bytes per entry. */
+	raw[n++] = 10; raw[n++] = 2;
+	raw[n++] = 5; raw[n++] = 5;
+	CHECK_INT(expandraw(raw, n), TRUE);
+
+	CHECK_INT(teststate.trapcount, 1);
+	CHECK_INT(teststate.clonercount, 1);
+	CHECK_INT(teststate.crlistcount, 1);
+
+	CHECK_MSG(teststate.traps[1].from == -12345
+		  && teststate.traps[1].to == -12345,
+		  "the trap loop ran one entry past trapcount and overwrote the"
+		  " slot after the list with bytes from the next field");
+	CHECK_MSG(teststate.cloners[1].from == -12345
+		  && teststate.cloners[1].to == -12345,
+		  "the cloner loop ran one entry past clonercount");
+	CHECK_MSG(teststate.crlist[1] == -12345,
+		  "the creature-list loop ran one entry past crlistcount");
+    }
+
+    tw_case("🔴 an upper layer with EXACTLY two bytes of slack is accepted");
+    {
+	/* `if (data + size + 2 > dataend)` reserves the lower layer's own length
+	 * word. The only record that separates `>` from `>=` is the one where
+	 * the upper layer plus that word ends the file EXACTLY.
+	 *
+	 * ⚠ THE VERDICT CANNOT BE THE ORACLE: both forms end in badlevel, because
+	 * a record with no lower layer is refused a few lines further down
+	 * either way. What differs is how far it gets first -- the real bound
+	 * decodes the upper layer, and that decode warns about the cells it could
+	 * not fill. `>=` refuses before reaching it and warns about nothing. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;		/* upper layer: 3 bytes	*/
+	raw[n++] = 0xFF; raw[n++] = 10; raw[n++] = FIX_WALL;
+	put16(raw + n, 0);      n += 2;		/* lower length word, then EOF */
+	CHECK_INT(expandraw(raw, n), FALSE);
+	CHECK_MSG(warn_count >= 1,
+		  "the upper layer was never decoded: its bounds check refused a"
+		  " record that ends exactly at the lower layer's length word");
+	CHECK_INT(teststate.map[0].top.id, Wall);
+    }
+
+    tw_case("🔴 a trailing two-byte field header with no payload is not parsed");
+    {
+	/* `while (data + 2 < dataend)` needs more than a bare header to call
+	 * something a field. Relax it to `<=` and two trailing bytes are read as
+	 * a field of size zero.
+	 *
+	 * ⚠ BOTH LAYERS FILL THE MAP EXACTLY HERE -- four runs of 255 plus four
+	 * singles is 1,024 -- so the decoder warns about nothing and the warning
+	 * count is a clean oracle. With a short layer the "missing bytes"
+	 * warnings would swamp the one this case is looking for. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 16);     n += 2;		/* upper layer: 16 bytes	*/
+	for (i = 0 ; i < 4 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR;
+	}
+	for (i = 0 ; i < 4 ; ++i)
+	    raw[n++] = FIX_FLOOR;		/* 4 * 255 + 4 == 1024		*/
+	put16(raw + n, 16);     n += 2;		/* lower layer: 16 bytes	*/
+	for (i = 0 ; i < 4 ; ++i) {
+	    raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR;
+	}
+	for (i = 0 ; i < 4 ; ++i)
+	    raw[n++] = FIX_FLOOR;
+	put16(raw + n, 2);      n += 2;		/* metadata: 2 bytes		*/
+	raw[n++] = 2; raw[n++] = 0;		/* a field-2 header, no payload	*/
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_INT(teststate.map[1023].top.id, Empty);
+	CHECK_MSG(warn_count == 0,
+		  "two trailing bytes were parsed as a zero-length field; a field"
+		  " header with no payload behind it is not a field");
+    }
+
+    /* ⚠ ONE MUTANT IN THIS FILE IS EQUIVALENT AND NOBODY SHOULD SPEND AN
+     * AFTERNOON ON IT. `if (data + size > dataend) size = dataend - data;` in the
+     * optional-field clamp reads `>=` identically: at data + size == dataend the
+     * relaxed form runs the assignment, and the assignment stores exactly the
+     * size it already had. No input can tell the two apart. */
+
+    tw_case("a field 2 of exactly two bytes sets the chip count");
+    {
+	/* `if (size < 2) warn else chipsneeded = readword(data)`. Two is the
+	 * only size that tells `< 2` from `<= 2`, and getting it wrong silently
+	 * ignores a well-formed field rather than failing. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 5);      n += 2;		/* header says 5 chips	*/
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 10; raw[n++] = FIX_WALL;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 20; raw[n++] = FIX_GRAVEL;
+	put16(raw + n, 4);      n += 2;		/* metadata: 4 bytes	*/
+	raw[n++] = 2; raw[n++] = 2;		/* field 2, exactly 2 bytes */
+	put16(raw + n, 77);     n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.chipsneeded == 77,
+		  "a two-byte field 2 was ignored as too short, leaving the"
+		  " header's chip count in place");
+    }
+
+    tw_case("a ten-byte record is exactly a header, and is not refused for size");
+    {
+	/* `if (setup->levelsize < 10)` is the minimum-header check, and ten is
+	 * the only length that separates `< 10` from `<= 10`. Both forms reject
+	 * this record -- there is no map behind the header -- so the verdict
+	 * cannot be the oracle. What differs is WHERE it is rejected: the real
+	 * bound reads the header first, so chipsneeded is assigned; `<= 10`
+	 * refuses before that and leaves it alone. */
+	teststate.chipsneeded = -999;
+	n = 0;
+	put16(raw + n, 1);      n += 2;		/* level number		*/
+	put16(raw + n, 0);      n += 2;		/* time			*/
+	put16(raw + n, 77);     n += 2;		/* chips needed		*/
+	put16(raw + n, 1);      n += 2;		/* map detail		*/
+	put16(raw + n, 0);      n += 2;		/* upper layer: 0 bytes	*/
+	CHECK_INT(n, 10);
+	CHECK_INT(expandraw(raw, n), FALSE);
+	CHECK_MSG(teststate.chipsneeded == 77,
+		  "a ten-byte record was refused by the minimum-length check"
+		  " before its header was read; the bound is off by one");
     }
 
     return tw_end();

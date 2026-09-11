@@ -739,6 +739,19 @@ static void test_mapview(void)
 		  geng.mapvieworigin);
     }
 
+    /* ⚠ FOUR MUTANTS IN THE CLAMP BLOCK ARE EQUIVALENT. DO NOT SPEND AN
+     * AFTERNOON ON THEM. All four clamps have the shape
+     *
+     *     if (xdisppos < 0)                     xdisppos = 0;
+     *     if (xdisppos > (CXGRID - NXTILES) * 4) xdisppos = (CXGRID-NXTILES)*4;
+     *
+     * so relaxing `<` to `<=` or `>` to `>=` only adds the boundary value
+     * itself -- where the assignment stores exactly what the variable already
+     * holds. No view position can tell the two forms apart, and the cases above
+     * are not missing anything. The clamps themselves ARE tested: deleting one
+     * outright, rather than loosening it by one, walks the draw loop off the map
+     * and both cases above fail. */
+
     tw_case("the drawn window MOVES with the view position");
     {
 	/* A rejection test that never sees the view move would pass with the

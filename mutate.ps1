@@ -152,6 +152,11 @@ param(
     # any test EXECUTES the line, which decides what the fix is. Runs coverage.ps1
     # to get the map; no mutants are compiled or run.
     [string]$Split,
+    # Path to a mutants.tsv. Re-runs the mutants it recorded as SURVIVED against the
+    # CURRENT tree, ordinary pass, and reports how many now die. This is the loop for
+    # closing a survivor queue: add assertions, recheck, see what died. Combine with
+    # -Module to recheck one file in seconds instead of censusing everything.
+    [string]$Recheck,
     [string]$ResultsPath,
     [switch]$UpdateBaseline,
     [switch]$SelfTest,
@@ -1093,11 +1098,21 @@ try {
     # change a value a test asserts on. Left unescalated, the survivor list -- which
     # is the work queue for every test anyone writes next -- is padded with mutants
     # a layer we already run on every push would have caught.
-    if ($Escalate) {
-        if (-not (Test-Path -LiteralPath $Escalate)) { throw "-Escalate: no such file: $Escalate" }
-        $prior = @(Import-Csv -LiteralPath $Escalate -Delimiter "`t")
+    if ($Escalate -or $Recheck) {
+        # Two modes, one loop. -Escalate re-runs the survivors under the sanitize
+        # layer to ask "would a layer we already run have caught this?". -Recheck
+        # re-runs them on the ordinary pass to ask "does it die NOW?", which is the
+        # loop for closing a survivor queue: add assertions, recheck, see what died.
+        # Identical machinery one flag apart, so the two cannot drift.
+        $srcTsv = if ($Escalate) { $Escalate } else { $Recheck }
+        $underSanitize = [bool]$Escalate
+        if (-not (Test-Path -LiteralPath $srcTsv)) { throw "no such file: $srcTsv" }
+        $prior = @(Import-Csv -LiteralPath $srcTsv -Delimiter "`t")
         $priorSurv = @($prior | Where-Object { $_.verdict -eq "SURVIVED" })
-        if ($priorSurv.Count -eq 0) { throw "-Escalate: $Escalate records no SURVIVED mutants" }
+        if ($priorSurv.Count -eq 0) { throw "$srcTsv records no SURVIVED mutants" }
+        # -Module narrows $sources before enumeration, so a recheck of one file only
+        # considers rows the enumeration still contains.
+        if ($Module) { $priorSurv = @($priorSurv | Where-Object { $sources -contains $_.file }) }
 
         # Matched against a FRESH enumeration rather than trusting the recorded
         # offsets. If the source has moved under the TSV, the identities stop
@@ -1117,9 +1132,9 @@ try {
         }
 
         Write-Host ""
-        Write-Host ("--- escalating {0} survivors through the sanitize layer ---" -f $todo.Count)
-        $esc = Join-Path $ResultsPath "escalated.tsv"
-        [IO.File]::WriteAllText($esc, "file`tline`tcol`toperator`tfrom`tto`tsanitizeVerdict`tkiller`tnote`r`n", $utf8NoBom)
+        Write-Host ("--- {0} {1} recorded survivors, {2} ---" -f $(if ($underSanitize) { "escalating" } else { "rechecking" }), $todo.Count, $(if ($underSanitize) { "sanitize layer" } else { "ordinary pass" }))
+        $esc = Join-Path $ResultsPath $(if ($underSanitize) { "escalated.tsv" } else { "rechecked.tsv" })
+        [IO.File]::WriteAllText($esc, ("file`tline`tcol`toperator`tfrom`tto`t" + $(if ($underSanitize) { "sanitizeVerdict" } else { "verdict" }) + "`tkiller`tnote`r`n"), $utf8NoBom)
         $caught = @{}
         $escTally = @{}
         $done = 0
@@ -1137,13 +1152,13 @@ try {
             $order = @($compiled.covering[$m.file] | Sort-Object { $cost[$_] })
             try {
                 foreach ($testName in $order) {
-                    $r = Invoke-UnitTests $scratch $testName $outDir $RunTimeoutSec $true
+                    $r = Invoke-UnitTests $scratch $testName $outDir $RunTimeoutSec $underSanitize
                     if ($r.timedOut) { $verdict = "TIMEOUT"; $note = $testName; break }
                     $v = Get-TestVerdict $r.rows $baseline[$testName] $testName
                     if ($v.verdict -eq "KILLED") {
                         # Same re-run discipline as the census: a flake is a false
                         # kill and the bias only points one way.
-                        $again = Invoke-UnitTests $scratch $testName $outDir $RunTimeoutSec $true
+                        $again = Invoke-UnitTests $scratch $testName $outDir $RunTimeoutSec $underSanitize
                         $v2 = Get-TestVerdict $again.rows $baseline[$testName] $testName
                         if ($v2.verdict -ne "KILLED") { $verdict = "FLAKY"; $note = "$($v.note) then $($v2.verdict)" }
                         else { $verdict = "KILLED"; $killer = $testName; $note = $v.note }
@@ -1181,8 +1196,8 @@ try {
         }
 
         Write-Host ""
-        Write-Host "########## sanitizer yield over plain-pass survivors ##########" -ForegroundColor Cyan
-        Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f "file", "escalated", "caught", "still", "yield")
+        Write-Host $(if ($underSanitize) { "########## sanitizer yield over plain-pass survivors ##########" } else { "########## recheck: which recorded survivors die now ##########" }) -ForegroundColor Cyan
+        Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f "file", "rerun", "died", "still", "rate")
         $tc = 0; $ts = 0
         foreach ($f in ($escTally.Keys | Sort-Object)) {
             $t = $escTally[$f]
@@ -1194,9 +1209,9 @@ try {
             Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f $f, $n, $k, $s, $y)
         }
         Write-Host ""
-        Write-Host ("  {0} of {1} plain-pass survivors are caught by the sanitize layer ({2:P1})." -f
+        Write-Host ("  {0} of {1} recorded survivors now die ({2:P1})." -f
             $tc, ($tc + $ts), $(if (($tc + $ts) -gt 0) { $tc / ($tc + $ts) } else { 0 }))
-        Write-Host "  Those are NOT test gaps. The remaining survivors are the real work queue."
+        Write-Host $(if ($underSanitize) { "  Those are NOT test gaps. The remaining survivors are the real work queue." } else { "  The rest are still open." })
         Write-Host ""
         Write-Host "  per-mutant detail: $esc"
         return
