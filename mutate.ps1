@@ -211,6 +211,22 @@ function New-ScratchTree([string]$root) {
     } finally { Pop-Location }
     if (-not $tracked -or $tracked.Count -eq 0) { throw "git ls-files returned nothing" }
 
+    # ⚠ A TEST FILE THAT IS NOT TRACKED IS NOT IN THIS TREE, AND THE CENSUS WILL
+    # NOT KNOW IT EXISTS. The scratch tree is built from `git ls-files`, so a test
+    # you just wrote and have not `git add`ed is invisible: the source-to-test map
+    # will not list it, its assertions will not run, and a -Recheck of the
+    # survivors it was written to kill comes back 0% with nothing looking wrong.
+    # Measured the first time test\fileio_test.c was written. This direction is
+    # the SAFE one -- a missing test makes the suite look weaker, not stronger --
+    # so it warns rather than refusing, but it warns loudly.
+    Push-Location $root
+    try { $untracked = @(& git ls-files --others --exclude-standard -- "test/*_test.c" "test/*_test.cpp") }
+    finally { Pop-Location }
+    if ($untracked.Count -gt 0) {
+        Write-Warning ("{0} test file(s) are UNTRACKED and will be invisible to this run: {1}. git add them first." -f
+            $untracked.Count, ($untracked -join ", "))
+    }
+
     $runId = (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + $PID
     $scratch = Join-Path ([IO.Path]::GetTempPath()) "tworld-mutate\$runId\tree"
     New-Item -ItemType Directory -Force -Path $scratch | Out-Null
