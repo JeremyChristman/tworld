@@ -574,6 +574,45 @@ lines into the denominator at 8%. That is exactly why the per-file column is the
 test is supposed to move the numbers, and gating every push on a stale figure trains people to ignore
 a red X. `-CheckBaseline` exists for a release to assert the documented numbers are still true.
 
+### Mutation — what the suite actually *catches*
+
+```powershell
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -SelfTest   # ~1 min; do this first
+powershell -ExecutionPolicy Bypass -File mutate.ps1             # ~30 min
+```
+
+Coverage says a line was executed. **Mutation says whether anything would have noticed if the line
+were wrong**, which is the question the check count and the coverage percentages both dodge.
+`mutate.ps1` breaks each source on purpose — 1,267 single-token edits over the sixteen sources the
+tests compile — and counts how often the suite fails. See
+[`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md) for why this is
+a committed harness rather than an audit.
+
+🔴 **THE NUMBERS LIVE IN [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), AND THERE IS NO
+COPY OF THEM HERE**, for exactly the reason the coverage table above is not duplicated either.
+
+🔴 **NOTHING MAY QUOTE "45% → X%".** The 2026-09-08 audit's 45% was 233 mutations a person chose by
+hand, aimed at guards. This is a mechanical census, and its blended rate is a function of the
+operator mix — turning on a second operator moves the headline without one thing about the suite
+changing. The two numbers measure different quantities. Read the per-file column.
+
+⚠ **`-SelfTest` is not optional before believing a census.** It plants four mutants whose verdicts
+are known in advance — one that must be killed, one that must not compile, one that must survive
+because it sits on a line the compiler never sees, and one that must hang — and refuses to measure if
+any comes back wrong. Between them they prove the mutation really reached disk, the tests really ran,
+INVALID is not scoring as KILLED, and the timeout and process-tree-kill path recovers.
+
+⚠ **SURVIVED means "the unit layer did not notice", not "nothing would have."** Five other layers
+exist, and the memory-safety mutants this fork cares most about are precisely the ones the plain pass
+cannot see — reverting jc-50 leaves every local layer green except `-Sanitize`. Escalating survivors
+through the sanitizer is the next thing to build here.
+
+⚠ **`settings.cpp` reports 22 INVALID, and they are generator noise, not a codebase fact.** `<` and
+`>` inside a C++ template argument list are not relational operators, so `map<string, string>`
+becomes `map<=string, string>` and does not compile. INVALID is excluded from the denominator, so the
+rates are still computed over real mutants — but a per-file INVALID rate this far above the global
+one is the signature to look at before trusting a file's row.
+
 ---
 
 ## 6. `tw_settings.ini`

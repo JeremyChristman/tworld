@@ -1,0 +1,22 @@
+# Mutation census, unit layer only. Regenerate with mutate.ps1 -UpdateBaseline.
+# NOT comparable to the 2026-09-08 hand-run audit: that was 233 hand-chosen
+# mutations, this is a mechanical census whose blended rate moves with the
+# operator mix. Read the per-file rows.
+# commit: 92db26c6fa6c08cd9e2e4927b6eeb1c66cb7646f
+file	operators	killed	survived	invalid	timeout	flaky	error
+encoding.c	ROR	16	12	0	0	0	0
+fileio.c	ROR	15	26	0	0	0	0
+generic/dirinput.c	ROR	4	1	0	0	0	0
+generic/in.c	ROR	18	28	0	0	0	0
+generic/tile.c	ROR	21	68	0	0	0	0
+lxlogic.c	ROR	55	163	0	0	0	0
+mslogic.c	ROR	52	327	0	1	0	0
+play.c	ROR	8	20	0	0	0	0
+random.c	ROR	2	1	0	0	0	0
+res.c	ROR	13	20	0	0	0	0
+score.cpp	ROR	5	12	0	0	0	0
+series.c	ROR	12	56	0	0	0	0
+settings.cpp	ROR	25	6	22	3	0	0
+solution.c	ROR	13	36	0	0	0	0
+tworld.c	ROR	12	167	0	0	0	0
+unslist.c	ROR	21	6	0	0	0	0
