@@ -317,7 +317,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(254);
+    tw_expect_atleast(260);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1118,6 +1118,79 @@ int main(void)
 	/* And the array really is a row longer than the grid, which is what
 	 * makes 1024 an in-bounds index rather than an overrun. */
 	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a block BURIED under a creature cannot be pushed");
+    {
+	/* FIX_CHIP_ONTO_BURIED_BLOCK (`mslogic.c:281`), unguarded until now.
+	 *
+	 * floorat() deliberately looks PAST a creature, so a monster standing on
+	 * a block reports floor == Block_Static and Chip falls into the push
+	 * branch -- Tile World shoved a block it could not even see. SuperCC
+	 * judges the move on the background, where creatures are transparent and
+	 * every entry term fails, so pushing is never reached.
+	 *
+	 * ⚠ A MONSTER ON PLAIN FLOOR MUST STILL ADMIT CHIP, and the second half
+	 * of this case is not decoration: the fix refuses ONLY the buried-block
+	 * case, and a version that refused every creature cell would break
+	 * ordinary collisions everywhere while this case still passed.
+	 *
+	 * Measured on Jacques#513 "Error": a Teeth over a Block with water beyond
+	 * it. Tile World pushed the block into the water and walked Chip in.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 6, 6, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 7, 6, 0x56);		/* a Teeth tile ...         */
+	fix_setbot(&lv, 7, 6, FIX_BLOCK);	/* ... standing on a block  */
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 6 && chipy() == 6,
+		  "Chip moved to (%d,%d). A block buried under a creature cannot"
+		  " be pushed, so the move east must be refused outright",
+		  chipx(), chipy());
+	CHECK_MSG(teststate.map[8 + CXGRID * 6].bot.id != Block_Static
+		  && teststate.map[8 + CXGRID * 6].top.id != Block_Static,
+		  "the buried block was shoved east to (8,6) -- this is the"
+		  " Jacques#513 divergence");
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a Chip tile BURIED under a monster is not where Chip starts");
+    {
+	/* FIX_CHIP_START_FOREGROUND (`mslogic.c:4525`), unguarded until now.
+	 *
+	 * SuperCC's io/LevelFactory.findMSPlayer scans the FOREGROUND backwards
+	 * and falls back to position 0 if it finds no Chip tile; it never looks
+	 * at the bottom layer. Tile World used to take Chip's start from a Chip
+	 * tile buried under a monster-list creature, which starts him INSIDE that
+	 * creature and ends the game on tick 1. DaveB2#3 "Where am I?" is exactly
+	 * that level -- its only Chip tile is buried at (22,14) under a Teeth,
+	 * SuperCC plays it for 204 ticks, Tile World did not survive one.
+	 *
+	 * ⚠ THE LEVEL MUST HAVE NO FOREGROUND CHIP AT ALL. With one anywhere,
+	 * both forms find it and agree, and the case proves nothing. Hence no
+	 * border and no Chip tile on top of anything: the only Chip in this level
+	 * is the buried one, so the two forms disagree about the answer.
+	 */
+	int	buried;
+
+	fix_init(&lv);
+	fix_settop(&lv, 22, 14, 0x57);		/* a Teeth, facing east     */
+	fix_setbot(&lv, 22, 14, FIX_CHIP_SOUTH);	/* Chip, buried under it */
+	fix_addcreature(&lv, 22, 14);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	buried = 22 + CXGRID * 14;
+	CHECK_MSG(chippos() != buried,
+		  "Chip was started on the buried Chip tile at (22,14), inside a"
+		  " Teeth. The foreground is the only layer that decides where he"
+		  " starts");
+	CHECK_MSG(chippos() == 0,
+		  "with no foreground Chip anywhere, Chip falls back to position"
+		  " 0; he is at %d (%d,%d)", chippos(), chipx(), chipy());
     }
 
     /* ================================================================== */

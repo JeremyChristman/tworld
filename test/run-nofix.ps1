@@ -205,12 +205,13 @@ try {
     # ---- check mode ----
     if (-not (Test-Path $matrixPath)) { throw "no matrix at $matrixPath" }
     $pass = 0; $fail = 0; $blank = 0; $checked = 0
+    $blankNames = New-Object Collections.ArrayList
     foreach ($line in Get-Content $matrixPath) {
         if ($line.StartsWith("#") -or $line.Trim() -eq "") { continue }
         $f = $line -split "`t"
         if ($f.Count -lt 6) { continue }
         $t = $f[0]
-        if ($f[1] -eq "-") { $blank++; continue }
+        if ($f[1] -eq "-") { $blank++; [void]$blankNames.Add($f[0]); continue }
         $checked++
 
         $exe = Join-Path $work "$t.exe"
@@ -245,6 +246,63 @@ try {
     Write-Host ("NO_FIX_* differential matrix: {0} passed, {1} failed, of {2} witness(es)" -f $pass, $fail, $checked)
     Write-Host ("{0} toggle(s) have no witness and were not checked -- see test\nofix\nofix.c" -f $blank)
     if ($checked -eq 0) { throw "no witnesses in the matrix at all -- refusing to report success" }
+
+    # 🔴 THE SECOND ORACLE: a witness-less toggle may still be guarded by a NAMED
+    # UNIT CASE, and this is what stops that guard rotting away unnoticed.
+    #
+    # A blind audit disabled FIX_CHIP_PICKUP_ON_BLOCK -- a shipped engine fix --
+    # and every one of the six layers stayed green, golden's 1,806 digests
+    # included. Only run-corpus.ps1 caught it, over a private collection on one
+    # machine that no CI job runs. Fourteen of the thirty-two toggles were in that
+    # state.
+    #
+    # The fuzz search cannot close them: nofix.c derives a PROFILE from each seed
+    # and builds one interaction east of Chip, so a fix whose situation no profile
+    # constructs is unreachable at ANY seed budget. Hand-built fixtures in
+    # mslogic_test.c close them instead -- but a fixture only guards a fix while
+    # it still fails with the fix disabled, and nothing was checking that.
+    #
+    # So: for every toggle with no witness, build the unit test with -D<toggle>
+    # and require it to FAIL. A toggle that is neither witnessed nor caught here
+    # is reported as unguarded, by name, every run.
+    $unitSrc = Join-Path $PSScriptRoot "mslogic_test.c"
+    $stub = Join-Path $PSScriptRoot "stub"
+    $unitGuarded = 0
+    $unitOpen = @()
+    Write-Host ""
+    Write-Host "--- witness-less toggles: is a unit case guarding them? ---"
+    foreach ($t in $blankNames) {
+        $exe = Join-Path ([IO.Path]::GetTempPath()) ("nofixunit-" + $t + ".exe")
+        $unitLog = Join-Path $work "unit.log"
+        # ⚠ SAME TRAP AS Build-Variant, AND I WALKED INTO IT. A disabled fix makes
+        # the unit binary print an engine assertion to stderr, and on PowerShell
+        # 5.1 under ErrorActionPreference = "Stop" that becomes a TERMINATING
+        # error even though a nonzero exit is exactly the result being measured.
+        # The file's own header says this; lowering the preference across the
+        # native calls is the only thing that works.
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & $Cc -std=gnu11 -w -I $stub "-D$t" -x c -o $exe $unitSrc 2>&1 | Out-File -FilePath $unitLog -Encoding ascii
+        $built = ($LASTEXITCODE -eq 0)
+        $rc = 0
+        if ($built) {
+            & $exe 2>&1 | Out-File -FilePath $unitLog -Encoding ascii
+            $rc = $LASTEXITCODE
+        }
+        $ErrorActionPreference = $prev
+        if (-not $built) { $unitOpen += "$t (did not compile)"; continue }
+        Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
+        if ($rc -ne 0) { Write-Host ("  ok    {0} is caught by a unit case" -f $t); $unitGuarded++ }
+        else { $unitOpen += $t }
+    }
+    Write-Host ("  {0} of {1} witness-less toggles are guarded by a named unit case" -f $unitGuarded, $blankNames.Count)
+    if ($unitOpen.Count -gt 0) {
+        Write-Host "  UNGUARDED -- breaking these is invisible to every layer:" -ForegroundColor Yellow
+        foreach ($t in $unitOpen) { Write-Host ("    {0}" -f $t) -ForegroundColor Yellow }
+        Write-Host "  See test\nofix\nofix-matrix.tsv for which of these need harness"
+        Write-Host "  capability rather than a fixture."
+    }
+
     if ($fail -gt 0) { exit 1 }
     exit 0
 }

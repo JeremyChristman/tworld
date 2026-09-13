@@ -29,6 +29,19 @@
 #                            case the fix guards. Closing it needs a deliberate,
 #                            commented escape hatch in the fixture builder.
 #
+#   NO_FIX_TRAP_SHUT_BEHIND  ⚠ ATTEMPTED AND WITHDRAWN, 2026-09-13. Its effect
+#                            lasts ONE TICK: stepping off a brown button into
+#                            that button's own trap clears CS_RELEASED, and the
+#                            only fixture that separates the two forms needs a
+#                            SECOND button held down at that instant -- which
+#                            then re-opens the trap on the next tick and re-sets
+#                            the flag before any assertion can read it. Swept
+#                            tick counts 5,6,7,8,9,12 with the fix on and off:
+#                            no count distinguishes them. Both the gameplay
+#                            outcome (Chip reaches x=14 either way) and the flag
+#                            converge. Guarding this needs a hook that observes
+#                            INSIDE a tick, not a longer fixture.
+#
 # The other blank rows ARE search failures and are worth a profile: nofix.c lays
 # out one specific interaction per seed (see NOFIX_PROFILES), and a fix whose
 # situation no profile builds will not be found however long the search runs.
