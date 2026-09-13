@@ -59,6 +59,7 @@
  * telling you a fixture helper has no test behind it.
  */
 
+#include	<stdarg.h>
 #include	"tw_test.h"
 #include	"tw_fixture.h"
 #include	"tw_corpus.h"
@@ -92,7 +93,23 @@ void errmsg_(char const *prefix, char const *fmt, ...)
 {
     (void)prefix; (void)fmt; ++errmsg_count;
 }
-void die_(char const *fmt, ...) { (void)fmt; exit(1); }
+/* 🔴 PRINT THE MESSAGE. This used to be `(void)fmt; exit(1);`, and an engine
+ * _assert firing therefore killed the run with no output at all -- the runner
+ * reported "no-result" and there was nothing to read. Measured: disabling
+ * FIX_CHIP_PICKUP_ON_BLOCK trips an assertion inside the engine, and finding out
+ * WHICH one took a hand-compiled binary and a guess. mslogic.c's _assert expands
+ * to `((test) || (die(...), 0))` and die() formats the file and line, so the
+ * information exists and was being thrown away one stub short of the reader. */
+void die_(char const *fmt, ...)
+{
+    va_list args;
+    fprintf(stderr, "ENGINE ASSERTION: ");
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fputc('\n', stderr);
+    exit(1);
+}
 
 /* --- the harness ------------------------------------------------------ */
 
@@ -300,7 +317,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(247);
+    tw_expect_atleast(254);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1101,6 +1118,65 @@ int main(void)
 	/* And the array really is a row longer than the grid, which is what
 	 * makes 1024 an in-bounds index rather than an overrun. */
 	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a key resting on a BLOCK is collected, and the block is not shoved");
+    {
+	/* FIX_CHIP_PICKUP_ON_BLOCK (`mslogic.c:1831`), and until now it was one
+	 * of fourteen shipped engine fixes with NO automated guard of any kind.
+	 *
+	 * 🔴 AN ADVERSARIAL AUDIT DISABLED THIS EXACT FIX AND ALL SIX LAYERS
+	 * STAYED GREEN -- unit, sanitize, e2e, qt, golden and nofix, with the
+	 * golden master's 1,806 digests over 903 levels unmoved. Only
+	 * test\run-corpus.ps1, over a private collection that exists on one
+	 * computer and is wired into no CI job, noticed: TCCLP #147 stopped
+	 * replaying. Reproduced here before this case was written.
+	 *
+	 * ⚠ WHY THE FUZZ MATRIX CANNOT FIND IT. nofix.c derives a PROFILE from
+	 * each seed that lays out one interaction in the three cells east of
+	 * Chip, and none of the twelve profiles places a key UNDER a block. The
+	 * conjunction the fix needs -- key on top, Block_Static beneath, Chip
+	 * adjacent and facing it -- is not in the generator's vocabulary, so the
+	 * blank row in nofix-matrix.tsv was never going to fill however long the
+	 * search ran. A named case expresses in four lines what a million seeds
+	 * could not reach.
+	 *
+	 * THE RULE. Block_Static is the ONLY background tile for which a pickup
+	 * changes the answer: SuperCC admits the move on the pickup and never
+	 * consults the block, so the block stays put and is revealed when Chip
+	 * steps off. Without the fix Tile World shoves it. Measured on TCCLP #147
+	 * "Testing Lab", whose row 9 is keys on blocks.
+	 */
+	int	dest, beyond;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, 0x64);		/* a blue key ...           */
+	fix_setbot(&lv, 6, 5, FIX_BLOCK);	/* ... resting on a block   */
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	dest = 6 + CXGRID * 5;
+	beyond = 7 + CXGRID * 5;
+	CHECK_INT(teststate.map[dest].top.id, Key_Blue);
+	CHECK_INT(teststate.map[dest].bot.id, Block_Static);
+
+	runticks(4, CmdEast);
+
+	CHECK_MSG(chipx() == 6 && chipy() == 5,
+		  "Chip did not step onto the key: he is at (%d,%d)",
+		  chipx(), chipy());
+	CHECK_MSG(possession(Key_Blue) == 1,
+		  "Chip walked onto a key resting on a block and did not collect"
+		  " it; he holds %d blue keys", possession(Key_Blue));
+	CHECK_MSG(teststate.map[beyond].top.id != Block_Static,
+		  "the block under the key was SHOVED east to (7,5) instead of"
+		  " being left alone -- this is the TCCLP #147 divergence, and"
+		  " the whole point of the fix");
+	CHECK_MSG(teststate.map[dest].bot.id == Block_Static,
+		  "the block should still be under Chip, revealed when he steps"
+		  " off; the cell now holds %d", teststate.map[dest].bot.id);
     }
 
     /* ================================================================== */
