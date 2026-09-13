@@ -1104,6 +1104,80 @@ int main(void)
     }
 
     /* ================================================================== */
+    tw_case("🔴 icewallturn's full truth table, all four corners");
+    {
+	/* Four nested ternaries, eight comparisons, and not one of them pinned:
+	 * every existing case that touches ice uses a straight ice tile, where
+	 * icewallturn() returns its argument unchanged and all eight mutations
+	 * agree. A corner that deflects the wrong way sends a creature -- or
+	 * Chip -- off in a direction the level was not built for, which is a
+	 * silent desync rather than a crash.
+	 *
+	 * ⚠ THE UNCHANGED DIRECTIONS ARE THE HALF THAT CATCHES THESE. Each
+	 * corner deflects two of the four directions and passes the other two
+	 * through. Inverting `dir == SOUTH` to `!=` leaves the deflected case
+	 * looking right and breaks the PASS-THROUGH, so a table that only
+	 * checked the turns would go on agreeing. All four directions, all four
+	 * corners.
+	 */
+	CHECK_INT(icewallturn(IceWall_Northeast, SOUTH), EAST);
+	CHECK_INT(icewallturn(IceWall_Northeast, WEST), NORTH);
+	CHECK_INT(icewallturn(IceWall_Northeast, NORTH), NORTH);
+	CHECK_INT(icewallturn(IceWall_Northeast, EAST), EAST);
+
+	CHECK_INT(icewallturn(IceWall_Southwest, NORTH), WEST);
+	CHECK_INT(icewallturn(IceWall_Southwest, EAST), SOUTH);
+	CHECK_INT(icewallturn(IceWall_Southwest, SOUTH), SOUTH);
+	CHECK_INT(icewallturn(IceWall_Southwest, WEST), WEST);
+
+	CHECK_INT(icewallturn(IceWall_Northwest, SOUTH), WEST);
+	CHECK_INT(icewallturn(IceWall_Northwest, EAST), NORTH);
+	CHECK_INT(icewallturn(IceWall_Northwest, NORTH), NORTH);
+	CHECK_INT(icewallturn(IceWall_Northwest, WEST), WEST);
+
+	CHECK_INT(icewallturn(IceWall_Southeast, NORTH), EAST);
+	CHECK_INT(icewallturn(IceWall_Southeast, WEST), SOUTH);
+	CHECK_INT(icewallturn(IceWall_Southeast, SOUTH), SOUTH);
+	CHECK_INT(icewallturn(IceWall_Southeast, EAST), EAST);
+
+	/* A tile that is not a corner at all passes everything through. */
+	CHECK_INT(icewallturn(Ice, NORTH), NORTH);
+	CHECK_INT(icewallturn(Empty, EAST), EAST);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 istrapbuttondown's position bounds, from both sides");
+    {
+	/* `pos >= 0 && pos < CXGRID * CYGRID && cellat(pos)->top.id !=
+	 * Button_Brown`. The two bounds are what stop a trap wiring that points
+	 * off the map from dereferencing it, and both survived: every trap in
+	 * the suite is wired to a sensible cell, so 0 and CXGRID * CYGRID -- the
+	 * only two values that separate `>=` from `>` and `<` from `<=` -- were
+	 * never asked.
+	 *
+	 * The function answers "is the button at this position covered", so a
+	 * plain floor reads TRUE and an exposed brown button reads FALSE. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 0, 0, FIX_FLOOR);	/* position 0, not a wall */
+	fix_settop(&lv, 7, 7, FIX_BUTTON_BROWN);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	CHECK_MSG(istrapbuttondown(0),
+		  "position 0 was refused as out of range; it is the top-left"
+		  " cell of the map");
+	CHECK_MSG(!istrapbuttondown(-1), "position -1 was accepted");
+	CHECK_MSG(!istrapbuttondown(CXGRID * CYGRID),
+		  "position CXGRID * CYGRID was accepted -- that is the row-32"
+		  " cloner area, not a cell a trap can be wired to");
+	CHECK_MSG(istrapbuttondown(30 + CXGRID * 30),
+		  "an ordinary floor cell was refused");
+	CHECK_MSG(!istrapbuttondown(7 + CXGRID * 7),
+		  "an EXPOSED brown button reads as held down");
+    }
+
+    /* ================================================================== */
     tw_case("🔴 a Glider crosses Water and a Fireball crosses Fire, unharmed");
     {
 	/* endmovement()'s hazard rules for MONSTERS -- the branch that is
