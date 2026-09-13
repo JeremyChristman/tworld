@@ -644,6 +644,214 @@ int main(void)
 	}
     }
 
+    tw_case("🔴 applyicewallturn's full truth table, all four corners");
+    {
+	/* The Lynx engine's own copy of the ice-corner deflection -- four
+	 * switch arms, eight comparisons. Every case in this file that touches
+	 * ice uses a STRAIGHT ice tile, where the function leaves the direction
+	 * alone and all eight mutations agree, so the corners were never asked.
+	 *
+	 * ⚠ THE PASS-THROUGH DIRECTIONS ARE THE HALF THAT CATCHES THESE. Each
+	 * corner deflects two of the four directions and passes the other two
+	 * through; inverting `dir == SOUTH` to `!=` leaves the deflected case
+	 * looking right and breaks the pass-through. All four directions on all
+	 * four corners, or the table proves less than it appears to.
+	 *
+	 * floorat() is the map's TOP layer, and in Lynx a creature does not sit
+	 * on it, so the tile can simply be placed and the creature moved onto
+	 * the position by hand. */
+	creature   *cr;
+	int		ne, sw, nw, se;
+
+	openroom(&lv);
+	fix_settop(&lv, 10, 10, 0x1D);		/* NE ice slide */
+	fix_settop(&lv, 11, 10, 0x1B);		/* SW */
+	fix_settop(&lv, 12, 10, 0x1C);		/* NW */
+	fix_settop(&lv, 13, 10, 0x1A);		/* SE */
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	ne = 10 + CXGRID * 10;
+	sw = 11 + CXGRID * 10;
+	nw = 12 + CXGRID * 10;
+	se = 13 + CXGRID * 10;
+	cr = creaturelist();
+
+	cr->pos = ne;
+	cr->dir = SOUTH; applyicewallturn(cr); CHECK_INT(cr->dir, EAST);
+	cr->dir = WEST;  applyicewallturn(cr); CHECK_INT(cr->dir, NORTH);
+	cr->dir = NORTH; applyicewallturn(cr); CHECK_INT(cr->dir, NORTH);
+	cr->dir = EAST;  applyicewallturn(cr); CHECK_INT(cr->dir, EAST);
+
+	cr->pos = sw;
+	cr->dir = NORTH; applyicewallturn(cr); CHECK_INT(cr->dir, WEST);
+	cr->dir = EAST;  applyicewallturn(cr); CHECK_INT(cr->dir, SOUTH);
+	cr->dir = SOUTH; applyicewallturn(cr); CHECK_INT(cr->dir, SOUTH);
+	cr->dir = WEST;  applyicewallturn(cr); CHECK_INT(cr->dir, WEST);
+
+	cr->pos = nw;
+	cr->dir = SOUTH; applyicewallturn(cr); CHECK_INT(cr->dir, WEST);
+	cr->dir = EAST;  applyicewallturn(cr); CHECK_INT(cr->dir, NORTH);
+	cr->dir = NORTH; applyicewallturn(cr); CHECK_INT(cr->dir, NORTH);
+	cr->dir = WEST;  applyicewallturn(cr); CHECK_INT(cr->dir, WEST);
+
+	cr->pos = se;
+	cr->dir = NORTH; applyicewallturn(cr); CHECK_INT(cr->dir, EAST);
+	cr->dir = WEST;  applyicewallturn(cr); CHECK_INT(cr->dir, SOUTH);
+	cr->dir = SOUTH; applyicewallturn(cr); CHECK_INT(cr->dir, SOUTH);
+	cr->dir = EAST;  applyicewallturn(cr); CHECK_INT(cr->dir, EAST);
+    }
+
+    tw_case("🔴 getforcedmove: whose boots matter, and a creature with no direction");
+    {
+	/* Three decisions, all of the form `cr->id == Chip && <something>`, and
+	 * all three alive. They are what stops a MONSTER being exempted from ice
+	 * or a force floor because CHIP happens to be carrying the boots -- the
+	 * inventory is Chip's, and `possession()` answers the same for whoever
+	 * asks.
+	 *
+	 * ⚠ CHIP MUST ACTUALLY HAVE THE BOOTS or the mutation is invisible. With
+	 * an empty inventory the `&& possession(...)` half is false either way
+	 * and both forms agree, which is exactly why the whole suite walked past
+	 * these: nothing here had ever put boots on Chip and a monster on ice at
+	 * the same time.
+	 *
+	 * getforcedmove() returns FALSE outright at currenttime() == 0, so a
+	 * tick has to run first. */
+	creature   *cr;
+	int		icepos, slidepos;
+
+	openroom(&lv);
+	fix_settop(&lv, 10, 10, FIX_ICE);
+	fix_settop(&lv, 12, 10, FIX_SLIDE_EAST);
+	CHECK_INT(startlevel(&lv), TRUE);
+	runticks(4, NIL);
+
+	icepos = 10 + CXGRID * 10;
+	slidepos = 12 + CXGRID * 10;
+	cr = creaturelist();
+
+	/* Preconditions, asserted rather than assumed: a fixture that failed to
+	 * place the floor, or a clock still at zero, makes every check below
+	 * pass for the wrong reason. */
+	CHECK_MSG(currenttime() != 0,
+		  "the clock is still at 0, where getforcedmove returns FALSE"
+		  " before looking at anything");
+	CHECK_MSG(isice(floorat(icepos)),
+		  "the ice tile was not placed: floorat is %d", floorat(icepos));
+	CHECK_MSG(isslide(floorat(slidepos)),
+		  "the force floor was not placed: floorat is %d",
+		  floorat(slidepos));
+
+	/* A monster on ice is forced, and Chip's ice boots are not its boots. */
+	possession(Boots_Ice) = 1;
+	cr->id = Bug;
+	cr->pos = icepos;
+	cr->dir = EAST;
+	cr->state = 0;
+	CHECK_MSG(getforcedmove(cr),
+		  "a monster on ice was not forced to move -- Chip's ice boots"
+		  " exempted it");
+	CHECK_INT(getfdir(cr), EAST);
+
+	/* They do exempt Chip. */
+	cr->id = Chip;
+	cr->pos = icepos;
+	cr->dir = EAST;
+	cr->state = 0;
+	CHECK_MSG(!getforcedmove(cr),
+		  "Chip was forced across ice while wearing ice boots");
+	possession(Boots_Ice) = 0;
+
+	/* A creature with no direction has nothing to be forced along. */
+	cr->id = Bug;
+	cr->pos = icepos;
+	cr->dir = NIL;
+	cr->state = 0;
+	CHECK_MSG(!getforcedmove(cr),
+		  "a creature with NO direction was forced to move on ice");
+
+	/* And the same shape again on a force floor, with slide boots. */
+	possession(Boots_Slide) = 1;
+	cr->id = Bug;
+	cr->pos = slidepos;
+	cr->dir = NIL;
+	cr->state = 0;
+	CHECK_MSG(getforcedmove(cr),
+		  "a monster on a force floor was not forced -- Chip's slide"
+		  " boots are not its boots");
+	possession(Boots_Slide) = 0;
+    }
+
+    tw_case("🔴 removecreature: the claim, and the half-step rollback");
+    {
+	/* Two decisions inside removecreature(), neither pinned.
+	 *
+	 *   `if (cr->id != Chip) removeclaim(cr->pos);`
+	 *       Chip does not hold a claim on his cell, so releasing one for him
+	 *       -- and NOT releasing one for a monster -- both leave the
+	 *       occupancy map wrong for the rest of the level.
+	 *
+	 *   `if (cr->moving == 8) { cr->pos -= delta[cr->dir]; cr->moving = 0; }`
+	 *       A creature killed exactly on the boundary of a step has already
+	 *       been credited with the destination cell and must be rolled back
+	 *       to where it came from. Eight is the only value that separates
+	 *       `==` from `!=`, and a creature killed mid-step (moving 4) must
+	 *       NOT be moved.
+	 */
+	creature   *cr;
+	int		p;
+
+	openroom(&lv);
+	CHECK_INT(startlevel(&lv), TRUE);
+	cr = creaturelist();
+	p = 12 + CXGRID * 12;
+
+	/* A monster releases its claim. */
+	cr->id = Bug;
+	cr->pos = p;
+	cr->dir = EAST;
+	cr->moving = 0;
+	claimlocation(p);
+	CHECK_MSG(islocationclaimed(p), "the fixture failed to set the claim");
+	removecreature(cr, Water_Splash);
+	CHECK_MSG(!islocationclaimed(p),
+		  "a monster was removed without releasing its claim on the cell");
+
+	/* Chip does not. */
+	cr->id = Chip;
+	cr->pos = p;
+	cr->dir = EAST;
+	cr->moving = 0;
+	claimlocation(p);
+	removecreature(cr, Water_Splash);
+	CHECK_MSG(islocationclaimed(p),
+		  "removing Chip released a claim on his cell; Chip does not hold"
+		  " one, so this clears somebody else's");
+	removeclaim(p);
+
+	/* A creature caught exactly at the end of a step is rolled back. */
+	cr->id = Bug;
+	cr->pos = p;
+	cr->dir = EAST;
+	cr->moving = 8;
+	removecreature(cr, Water_Splash);
+	CHECK_MSG(cr->pos == p - delta[EAST],
+		  "a creature removed at moving == 8 was left at %d, wanted %d"
+		  " (one step back the way it came)", cr->pos, p - delta[EAST]);
+	CHECK_INT(cr->moving, 0);
+
+	/* One caught mid-step is not. */
+	cr->id = Bug;
+	cr->pos = p;
+	cr->dir = EAST;
+	cr->moving = 4;
+	removecreature(cr, Water_Splash);
+	CHECK_MSG(cr->pos == p,
+		  "a creature removed mid-step (moving == 4) was moved to %d;"
+		  " only a completed step is rolled back", cr->pos);
+	CHECK_INT(cr->moving, 4);
+    }
+
     tw_case("🔴 verifymap() complains at exactly the right side of each bound");
     {
 	/* verifymap() is the engine's own consistency check, compiled in
