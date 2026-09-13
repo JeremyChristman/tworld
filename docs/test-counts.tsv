@@ -2,4 +2,4 @@
 # re-run the unit suite instead. verify-docs.ps1 checks CLAUDE.md's
 # section 5 sentence against these, because that number went stale.
 layer	runs	checks
-unit	19	22796
+unit	19	23122

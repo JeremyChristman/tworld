@@ -523,6 +523,49 @@ static void test_loadedstate(void)
     freetileset();
     CHECK_INT(istilesetloaded(), FALSE);
 
+    tw_case("🔴 all THREE of istilesetloaded()'s clauses are load-bearing");
+    {
+	/* `geng.wtile > 0 && geng.htile > 0 && tileptr[Empty].celcount != 0`.
+	 *
+	 * ⚠ GOING THROUGH THE LOADER CANNOT TEST THIS, which is why the case
+	 * above does not. loadtileset() sets all three together and freetileset()
+	 * clears all three together, so every state the loader can produce agrees
+	 * on all three clauses -- and `wtile > 0` relaxed to `>= 0` survives the
+	 * whole suite. The only way to tell the clauses apart is to break them
+	 * one at a time, which means reaching into geng directly.
+	 *
+	 * This matters because jc-42 is the reason the third clause exists: a
+	 * HALF-BUILT tileset has a valid size and an empty tileptr, and would
+	 * die() at getcellimage() on the first tile it could not find. A guard
+	 * that answers TRUE for two thirds of itself is the same bug back. */
+	int savedw, savedh, savedcels;
+
+	CHECK_INT(loadgeometry(336, 768), TRUE);
+	CHECK_INT(istilesetloaded(), TRUE);
+	savedw = geng.wtile;
+	savedh = geng.htile;
+	savedcels = tileptr[Empty].celcount;
+
+	geng.wtile = 0;
+	CHECK_MSG(istilesetloaded() == FALSE,
+		  "a zero tile WIDTH still reads as a loaded tileset");
+	geng.wtile = savedw;
+
+	geng.htile = 0;
+	CHECK_MSG(istilesetloaded() == FALSE,
+		  "a zero tile HEIGHT still reads as a loaded tileset");
+	geng.htile = savedh;
+
+	tileptr[Empty].celcount = 0;
+	CHECK_MSG(istilesetloaded() == FALSE,
+		  "a tileset with no image for Empty reads as loaded -- this is"
+		  " the jc-42 half-built tileset, and getcellimage() dies on it");
+	tileptr[Empty].celcount = savedcels;
+
+	CHECK_INT(istilesetloaded(), TRUE);
+	freetileset();
+    }
+
     tw_case("🔴 a load refused on DIMENSIONS keeps the tileset already in use");
     /* Not "leaves nothing loaded" -- that was this case's first, wrong guess,
      * and the run corrected it. loadtileset() rejects unusable dimensions before
