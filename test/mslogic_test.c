@@ -1104,6 +1104,226 @@ int main(void)
     }
 
     /* ================================================================== */
+    tw_case("🔴 a Glider crosses Water and a Fireball crosses Fire, unharmed");
+    {
+	/* endmovement()'s hazard rules for MONSTERS -- the branch that is
+	 * neither Chip nor Block:
+	 *
+	 *     case Water: if (crid != Glider)   dead = TRUE;
+	 *     case Fire:  if (crid != Fireball) dead = TRUE;
+	 *
+	 * Invert either and the one creature that is supposed to cross its own
+	 * hazard drowns or burns instead. A glider that dies in water breaks the
+	 * solution to a great many levels. Both survived the census, because no
+	 * case had ever moved a monster onto a hazard at all.
+	 *
+	 * 🔴 THE SURVIVAL IS THE WHOLE ORACLE, AND THAT IS NOT A WEAKNESS -- it
+	 * is the only side of these rules that exists. A monster that is not
+	 * immune CANNOT REACH ITS HAZARD: canmakemove() refuses the move, so a
+	 * bug beside water simply turns away. Measured, including from a force
+	 * floor, which does not override it -- the bug stepped north off the
+	 * force floor instead, at (10,14). So the line is only ever evaluated
+	 * with crid already equal to Glider (or Fireball), and asserting that
+	 * THAT creature lives is exactly what tells the two forms apart.
+	 *
+	 * Chip's own drowning is a different branch of the same function and is
+	 * covered by "water without flippers is fatal" further up.
+	 *
+	 * The monsters must be in the monster list or initgame() never wakes
+	 * them; creatures[0] is Chip and 1..2 follow the fix_addcreature calls.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+
+	fix_settop(&lv, 10, 10, 0x53);		/* Glider, facing east   */
+	fix_addcreature(&lv, 10, 10);
+	fix_settop(&lv, 11, 10, FIX_WATER);
+	fix_settop(&lv, 12, 10, FIX_WATER);
+
+	fix_settop(&lv, 10, 20, 0x47);		/* Fireball, facing east */
+	fix_addcreature(&lv, 10, 20);
+	fix_settop(&lv, 11, 20, FIX_FIRE);
+	fix_settop(&lv, 12, 20, FIX_FIRE);
+
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount == 3,
+		  "wanted Chip and two monsters, got %d creatures", creaturecount);
+	runticks(12, NIL);
+
+	CHECK_MSG(!creatures[1]->hidden,
+		  "the Glider drowned; Water is the one hazard a Glider crosses."
+		  " It is at (%d,%d), id %02X",
+		  creatures[1]->pos % CXGRID, creatures[1]->pos / CXGRID,
+		  creatures[1]->id);
+	CHECK_MSG(creatures[1]->pos % CXGRID > 10,
+		  "the Glider never entered the water, so the rule was not"
+		  " exercised: it is at (%d,%d)",
+		  creatures[1]->pos % CXGRID, creatures[1]->pos / CXGRID);
+
+	CHECK_MSG(!creatures[2]->hidden,
+		  "the Fireball burned; Fire is the one hazard a Fireball"
+		  " crosses. It is at (%d,%d), id %02X",
+		  creatures[2]->pos % CXGRID, creatures[2]->pos / CXGRID,
+		  creatures[2]->id);
+	CHECK_MSG(creatures[2]->pos % CXGRID > 10,
+		  "the Fireball never entered the fire, so the rule was not"
+		  " exercised: it is at (%d,%d)",
+		  creatures[2]->pos % CXGRID, creatures[2]->pos / CXGRID);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 canmakemove refuses exactly the moves that leave the grid");
+    {
+	/* `if (y < 0 || y >= CYGRID || x < 0 || x >= CXGRID) return FALSE;` is
+	 * the only thing standing between a move and `cellat()` on an index off
+	 * the map -- and all four of its comparisons survived the census.
+	 *
+	 * ⚠ WHY EVERY EXISTING CASE MISSES THEM. They walk Chip around the
+	 * middle of a walled room, so the destination is always comfortably
+	 * inside the grid and all eight spellings of this line agree. The bound
+	 * only decides anything at the very edge, and a walled border means
+	 * nothing ever gets there. This level has NO border for that reason, and
+	 * the moves are asked of canmakemove() directly rather than played.
+	 *
+	 * Both sides of each bound, because a bound tested only from the
+	 * "refused" side moves outward for free and one tested only from the
+	 * "allowed" side moves inward.
+	 */
+	creature   *chip;
+
+	fix_init(&lv);				/* no border: all floor */
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	CHECK_INT(startlevel(&lv), TRUE);
+	chip = getchip();
+
+	chip->pos = 1 * CXGRID + 5;
+	CHECK_MSG(canmakemove(chip, NORTH, 0),
+		  "a move to row 0 was refused; row 0 is on the map");
+	chip->pos = 0 * CXGRID + 5;
+	CHECK_MSG(!canmakemove(chip, NORTH, 0),
+		  "a move NORTH off the top of the map was allowed");
+
+	chip->pos = 30 * CXGRID + 5;
+	CHECK_MSG(canmakemove(chip, SOUTH, 0),
+		  "a move to row %d was refused; it is the last row", CYGRID - 1);
+	chip->pos = (CYGRID - 1) * CXGRID + 5;
+	CHECK_MSG(!canmakemove(chip, SOUTH, 0),
+		  "a move SOUTH off the bottom of the map was allowed -- that is"
+		  " cellat() on the row-32 cloner area");
+
+	chip->pos = 5 * CXGRID + 1;
+	CHECK_MSG(canmakemove(chip, WEST, 0),
+		  "a move to column 0 was refused; column 0 is on the map");
+	chip->pos = 5 * CXGRID + 0;
+	CHECK_MSG(!canmakemove(chip, WEST, 0),
+		  "a move WEST off the left edge was allowed");
+
+	chip->pos = 5 * CXGRID + (CXGRID - 2);
+	CHECK_MSG(canmakemove(chip, EAST, 0),
+		  "a move to column %d was refused; it is the last column",
+		  CXGRID - 1);
+	chip->pos = 5 * CXGRID + (CXGRID - 1);
+	CHECK_MSG(!canmakemove(chip, EAST, 0),
+		  "a move EAST off the right edge was allowed -- without this"
+		  " bound it wraps onto the next row");
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 initgame breaks a teleport under a creature, and NOTHING else");
+    {
+	/* initgame()'s first pass sets FS_BROKEN on a teleport or toggle wall
+	 * that starts underneath floor, Chip or a Block -- MSCC's rule that such
+	 * a tile is dead for the whole level.
+	 *
+	 * ⚠ FIVE COMPARISONS, AND THE EXISTING CASES PIN NONE OF THEM, because
+	 * a level that never puts anything on a teleport agrees with every
+	 * mutation of them. Each condition below is therefore given both a
+	 * combination it must fire on and one it must not:
+	 *
+	 *   Block over Teleport   -> broken   (the rule)
+	 *   Bug   over Teleport   -> NOT      (kills `== Chip` and `== Block`,
+	 *                                      which inverted admit any creature)
+	 *   Block over Floor      -> NOT      (kills all three `bot ==` tests,
+	 *                                      which inverted admit any floor)
+	 */
+	int		broken, notcreature, notteleport;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 10, 10, FIX_BLOCK);
+	fix_setbot(&lv, 10, 10, FIX_TELEPORT);
+	fix_settop(&lv, 12, 10, 0x40);			/* Bug, facing north */
+	fix_setbot(&lv, 12, 10, FIX_TELEPORT);
+	fix_settop(&lv, 14, 10, FIX_BLOCK);
+	fix_setbot(&lv, 14, 10, FIX_FLOOR);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	broken = (cellat(10 + CXGRID * 10)->bot.state & FS_BROKEN) != 0;
+	notcreature = (cellat(12 + CXGRID * 10)->bot.state & FS_BROKEN) != 0;
+	notteleport = (cellat(14 + CXGRID * 10)->bot.state & FS_BROKEN) != 0;
+
+	CHECK_MSG(broken,
+		  "a teleport under a Block was not marked broken at level start");
+	CHECK_MSG(!notcreature,
+		  "a teleport under a BUG was marked broken; only floor, Chip and"
+		  " Block start a tile broken");
+	CHECK_MSG(!notteleport,
+		  "plain floor under a Block was marked broken; only teleports and"
+		  " toggle walls can be");
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 the monster list admits monsters, and refuses the three junk kinds");
+    {
+	/* initgame()'s second pass walks state->crlist and decides what becomes
+	 * a creature. Four separate conditions, each of which silently changes
+	 * the creature population when it moves by one, and the population is
+	 * the oracle for all of them.
+	 *
+	 * ⚠ THE CHIP-TILE FILTER IS jc-?? / FIX_MONSTERLIST_CHIP_TILES, and it
+	 * is why Jacques#1 "Welcome" desynced: its monster list points at a
+	 * SWIMMING CHIP tile, SuperCC ignores it, and Tile World used to wake a
+	 * phantom creature out of it. That fix had no test.
+	 *
+	 * Expected population: Chip, the bug at (8,8), and the bug at (0,0).
+	 * Everything else in the list is junk and must be refused.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+
+	fix_settop(&lv, 8, 8, 0x40);			/* a real monster    */
+	fix_addcreature(&lv, 8, 8);
+
+	/* 🔴 POSITION ZERO, which is the only value that tells `pos < 0` from
+	 * `pos <= 0`. Every other monster in the suite sits comfortably inside
+	 * the grid, so both forms agree on all of them and the bound was free to
+	 * swallow the top-left cell. The border wall there is overwritten on
+	 * purpose. */
+	fix_settop(&lv, 0, 0, 0x40);
+	fix_addcreature(&lv, 0, 0);
+
+	fix_settop(&lv, 9, 9, FIX_BLOCK);		/* a Block: refused  */
+	fix_addcreature(&lv, 9, 9);
+
+	fix_settop(&lv, 11, 11, 0x40);			/* on a cloner: ditto */
+	fix_setbot(&lv, 11, 11, FIX_CLONEMACHINE);
+	fix_addcreature(&lv, 11, 11);
+
+	fix_settop(&lv, 13, 13, FIX_CHIP_NORTH);	/* a Chip tile: ditto */
+	fix_addcreature(&lv, 13, 13);
+
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount == 3,
+		  "the monster list produced %d creatures, wanted 3 (Chip and two"
+		  " bugs). A Block, a monster on a cloner and a Chip tile are all"
+		  " in the list and none of them may become a creature.",
+		  creaturecount);
+    }
+
+    /* ================================================================== */
     tw_case("🔴 verifymap() complains at exactly the right side of each bound");
     {
 	/* The MS engine's own consistency check, compiled in whenever NDEBUG is
