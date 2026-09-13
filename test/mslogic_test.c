@@ -300,7 +300,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(240);
+    tw_expect_atleast(247);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1101,6 +1101,64 @@ int main(void)
 	/* And the array really is a row longer than the grid, which is what
 	 * makes 1024 an in-bounds index rather than an overrun. */
 	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 Teeth move at HALF speed, and ordinary monsters do not");
+    {
+	/* `if (cr->id == Teeth || cr->id == Blob) { if ((currenttime() +
+	 * stepping()) & 4) return; }` is the half-speed rule, and it had no test:
+	 * the suite walks Chip around and never timed a monster at all.
+	 *
+	 * ⚠ ONE ASSERTION ABOUT AN ORDINARY MONSTER KILLS BOTH HALVES, which is
+	 * why the Ball below is not padding. Invert either comparison and the
+	 * condition becomes true for nearly everything -- `id != Teeth` holds for
+	 * a Ball, `id != Blob` likewise -- so the slow path swallows every
+	 * creature in the game. Timing a Ball is what notices; timing only the
+	 * Teeth would leave the rule looking right while every monster crawled.
+	 *
+	 * ⚠ THE NUMBERS ARE 7 AND 3 OVER 32 TICKS, NOT 8 AND 4, and that is not
+	 * slack in the case. A monster only picks a move on a tick where
+	 * `currenttime() & 2` is clear, so its first move does not begin on tick
+	 * zero; the span loses one move to that offset. 7 against 3 is the 2:1 the
+	 * rule describes, measured rather than assumed, and either mutation moves
+	 * one of the two numbers to the other.
+	 */
+	int	start, moved;
+
+	/* A Ball runs straight until something stops it: full speed. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 2, 2, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 5, 10, 0x4B);			/* Ball, facing east */
+	fix_addcreature(&lv, 5, 10);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(creaturecount, 2);
+	start = creatures[1]->pos;
+	runticks(32, NIL);
+	moved = creatures[1]->pos - start;
+	CHECK_MSG(moved == 7,
+		  "a Ball moved %d cells in 32 ticks, wanted 7. If this is about"
+		  " half of 7, the half-speed rule is catching creatures it was"
+		  " never meant to", moved);
+
+	/* Teeth chase Chip, and do it at half speed. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 20, 10, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 5, 10, 0x57);			/* Teeth, facing east */
+	fix_addcreature(&lv, 5, 10);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(creaturecount, 2);
+	start = creatures[1]->pos;
+	runticks(32, NIL);
+	moved = creatures[1]->pos - start;
+	CHECK_MSG(moved == 3,
+		  "a Teeth moved %d cells in 32 ticks, wanted 3 -- half the 7 a"
+		  " full-speed monster manages over the same span", moved);
+	CHECK_MSG(creatures[1]->pos > start,
+		  "the Teeth did not chase Chip at all, so this case timed"
+		  " nothing");
     }
 
     /* ================================================================== */
