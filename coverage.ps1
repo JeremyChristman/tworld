@@ -50,8 +50,36 @@ param(
     # record for a file-scope initializer, so movelaws[] -- the array this fork's
     # headline defect indexed out of bounds -- appears nowhere in it. Calling that
     # "unreached" would quietly drop exactly the code most worth testing.
-    [string]$LineMapPath
+    [string]$LineMapPath,
+
+    # Regenerate the baseline even though the tree is dirty. See Assert-CleanTree.
+    [switch]$Force
 )
+
+# 🔴 A TOOL THAT REWRITES A COMMITTED TRUTH SOURCE MUST REFUSE A DIRTY TREE.
+#
+# These files are pins: the next run is judged against them. Regenerating one
+# from a working tree nobody can reconstruct records a number that can never be
+# checked again -- and worse, it LAUNDERS whatever is currently broken into the
+# new baseline. An audit did exactly that: mutated the engine, watched the golden
+# master go red across 342 digests, ran -Update on the dirty tree, and the gate
+# was green afterwards with the mutation still in place.
+#
+# mutate.ps1 already had this guard and the reasoning; it was never propagated to
+# the other three tools that regenerate a pin. -Force is the deliberate override,
+# because there are legitimate reasons (a fixture change that genuinely moves
+# every digest) and refusing outright would just get the guard deleted.
+function Assert-CleanTree([string]$root, [string]$what, [bool]$force) {
+    Push-Location $root
+    try { $dirty = @(& git status --porcelain) } finally { Pop-Location }
+    if ($dirty.Count -eq 0) { return }
+    if ($force) {
+        Write-Warning ("{0} on a DIRTY tree ({1} changed paths), because -Force was given. Whatever is uncommitted is being baked into the pin." -f $what, $dirty.Count)
+        return
+    }
+    throw ("$what refused: the working tree is dirty ($($dirty.Count) changed paths), so this pin could never be reproduced -- and anything currently broken would be laundered into it. Commit or stash first, or pass -Force if you mean it.")
+}
+
 $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
 $baselineFile = Join-Path $root "docs\coverage-baseline.tsv"
@@ -179,7 +207,7 @@ try {
             $h = if ($lineHit.ContainsKey($key)) { 1 } else { 0 }
             $mapLines += ("{0}`t{1}`t{2}" -f $f, $n, $h)
         }
-        [IO.File]::WriteAllLines($LineMapPath, $mapLines, (New-Object Text.UTF8Encoding $false))
+        [IO.File]::WriteAllText($LineMapPath, (($mapLines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
         Write-Host "per-line map written: $LineMapPath ($($lineAll.Count) lines)"
     }
 
@@ -233,6 +261,7 @@ try {
     Write-Host "  build, so what they reach is not counted. See the header of this script."
 
     if ($UpdateBaseline) {
+        Assert-CleanTree $root "coverage.ps1 -UpdateBaseline" $Force.IsPresent
         $dir = Split-Path -Parent $baselineFile
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $sb = New-Object Text.StringBuilder

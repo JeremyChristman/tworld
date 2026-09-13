@@ -487,7 +487,55 @@ if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and -not $Sanitize -
         "layer`truns`tchecks",
         ("unit`t{0}`t{1}" -f $runs.Count, $totalChecks)
     )
-    [System.IO.File]::WriteAllLines($countsPath, $countsLines, (New-Object Text.UTF8Encoding $false))
+    # ⚠ WriteAllText WITH EXPLICIT LF, not WriteAllLines. WriteAllLines uses
+    # Environment.NewLine, which is CRLF here, while .gitattributes declares
+    # `* text=auto eol=lf` -- so every complete run left this file dirty in git
+    # and trained the reader to ignore a dirty tree on the one file that records
+    # whether the suite shrank.
+    [System.IO.File]::WriteAllText($countsPath, (($countsLines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
+
+    # 🔴 EVERY CHECK FLOOR MUST EQUAL THE COUNT THE TEST ACTUALLY REPORTS.
+    #
+    # tw_expect_atleast(N) is the guard that catches a test function which has
+    # silently stopped being called -- but it only catches it while N is exact.
+    # Let N drift below the real count and the slack becomes a place a regression
+    # can hide: an audit deleted the jc-54 fuzz reproducer from settings_test.c,
+    # six checks vanished into a floor that had been left at 177 against an
+    # actual 183, and every one of the six layers stayed green.
+    #
+    # ⚠ THE SAME AUDIT FOUND THE OPPOSITE FAILURE TOO: five floors were raised by
+    # hand in one sitting and a sixth, in a file that sitting had not touched,
+    # was not -- because the fix was applied to the files in front of the author
+    # rather than to the class. That is what this check is for. It costs one
+    # regex per test file on a complete run, and it removes the need for anyone
+    # to remember.
+    #
+    # input_test.c and dirinput_test.c predate tw_test.h and spell the same guard
+    # by hand as `if (checks < N)`, so both forms are read.
+    $floorProblems = @()
+    foreach ($r in $runs) {
+        if ($r.status -ne 'passed') { continue }
+        $src = Join-Path $PSScriptRoot $r.test
+        if (-not (Test-Path -LiteralPath $src)) { continue }
+        $text = Get-Content -LiteralPath $src -Raw
+        $floor = $null
+        if ($text -match 'tw_expect_atleast\s*\(\s*(\d+)\s*\)') { $floor = [int]$Matches[1] }
+        elseif ($text -match 'if\s*\(\s*checks\s*<\s*(\d+)\s*\)') { $floor = [int]$Matches[1] }
+        if ($null -eq $floor) {
+            $floorProblems += "$($r.test) declares no check floor at all"
+        } elseif ($floor -ne $r.checks) {
+            $floorProblems += ("{0} [{1}] floor is {2} but the run reported {3} ({4} of slack)" -f
+                $r.test, $r.language, $floor, $r.checks, ($r.checks - $floor))
+        }
+    }
+    if ($floorProblems.Count -gt 0) {
+        Write-Host ""
+        Write-Host "########## CHECK FLOORS ARE STALE ##########" -ForegroundColor Red
+        foreach ($p in $floorProblems) { Write-Host "  $p" -ForegroundColor Red }
+        Write-Host "  Raise each floor to the count beside it. Slack in a floor is somewhere"
+        Write-Host "  a deleted test can hide -- see the note above this check."
+        $failed += $floorProblems.Count
+    }
 }
 
 if ($failed -gt 0) {

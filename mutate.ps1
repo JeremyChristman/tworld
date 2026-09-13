@@ -1417,7 +1417,8 @@ try {
             $out += ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}" -f $f, ($Operator -join ","),
                 (& $g "KILLED"), (& $g "SURVIVED"), (& $g "INVALID"), (& $g "TIMEOUT"), (& $g "FLAKY"), (& $g "ERROR"))
         }
-        [IO.File]::WriteAllLines($bl, $out, $utf8NoBom)
+        # LF explicitly; see the note in testun-tests.ps1 about WriteAllLines.
+        [IO.File]::WriteAllText($bl, (($out -join "`n") + "`n"), $utf8NoBom)
         Write-Host "  baseline written: $bl"
     }
 

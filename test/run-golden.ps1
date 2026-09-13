@@ -29,8 +29,36 @@ changed rather than the engine.
 [CmdletBinding()]
 param(
     [switch]$Update,
-    [string]$Cc = "gcc"
+    [string]$Cc = "gcc",
+
+    # Rewrite the digests even though the tree is dirty. See Assert-CleanTree.
+    [switch]$Force
 )
+
+# 🔴 A TOOL THAT REWRITES A COMMITTED TRUTH SOURCE MUST REFUSE A DIRTY TREE.
+#
+# These files are pins: the next run is judged against them. Regenerating one
+# from a working tree nobody can reconstruct records a number that can never be
+# checked again -- and worse, it LAUNDERS whatever is currently broken into the
+# new baseline. An audit did exactly that: mutated the engine, watched the golden
+# master go red across 342 digests, ran -Update on the dirty tree, and the gate
+# was green afterwards with the mutation still in place.
+#
+# mutate.ps1 already had this guard and the reasoning; it was never propagated to
+# the other three tools that regenerate a pin. -Force is the deliberate override,
+# because there are legitimate reasons (a fixture change that genuinely moves
+# every digest) and refusing outright would just get the guard deleted.
+function Assert-CleanTree([string]$root, [string]$what, [bool]$force) {
+    Push-Location $root
+    try { $dirty = @(& git status --porcelain) } finally { Pop-Location }
+    if ($dirty.Count -eq 0) { return }
+    if ($force) {
+        Write-Warning ("{0} on a DIRTY tree ({1} changed paths), because -Force was given. Whatever is uncommitted is being baked into the pin." -f $what, $dirty.Count)
+        return
+    }
+    throw ("$what refused: the working tree is dirty ($($dirty.Count) changed paths), so this pin could never be reproduced -- and anything currently broken would be laundered into it. Commit or stash first, or pass -Force if you mean it.")
+}
+
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -71,6 +99,7 @@ try {
     Write-Host ("level files: {0}" -f ($dats -join ", "))
 
     if ($Update) {
+        Assert-CleanTree (Split-Path -Parent $PSScriptRoot) "run-golden.ps1 -Update" $Force.IsPresent
         & $out -update @dats
         if ($LASTEXITCODE -ne 0) { throw "the snapshot could not be written" }
         Write-Host ""

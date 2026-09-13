@@ -6,10 +6,34 @@
 # correctness argument for every one of these is in FORK.md, measured against
 # SuperCC over a real solution corpus.
 #
-# A row of '-' means the search did not find such an input within its budget
-# (1,000,000 generated seeds). That is a statement about the SEARCH, not about
-# the fix: all 32 toggles were separately confirmed to change the preprocessed
-# source, so none is dead code. A blank row is NEVER grounds for deleting a fix.
+# A row of '-' USUALLY means the search did not find such an input within its
+# budget (1,000,000 generated seeds). That is a statement about the SEARCH, not
+# about the fix: all 32 toggles were separately confirmed to change the
+# preprocessed source, so none is dead code. A blank row is NEVER grounds for
+# deleting a fix.
+#
+# 🔴 BUT FOR THREE OF THEM THAT SENTENCE IS FALSE, AND NO SEED BUDGET WILL EVER
+# FILL THE ROW. They are unreachable by this generator by construction rather
+# than by luck, so do not spend a -Search on them:
+#
+#   NO_FIX_CLICK_EARLY       both need an outstanding MOUSE goal, and nofix.c's
+#   NO_FIX_KEY_CLEARS_GOAL   move alphabet (nofix.c:397) is NIL and the four
+#                            arrows only. No mouse command is ever emitted, so
+#                            the precondition cannot be constructed at any
+#                            budget. Closing these needs a mouse command in the
+#                            alphabet, routed through makemouseabsolute().
+#
+#   NO_FIX_ROW32_CLONER      is about a cloner at y == 32. tw_fixture.h fixes the
+#                            map at 32x32 (FIX_HEIGHT) and fix_settop() aborts on
+#                            y >= 32, so the builder refuses to express the exact
+#                            case the fix guards. Closing it needs a deliberate,
+#                            commented escape hatch in the fixture builder.
+#
+# The other blank rows ARE search failures and are worth a profile: nofix.c lays
+# out one specific interaction per seed (see NOFIX_PROFILES), and a fix whose
+# situation no profile builds will not be found however long the search runs.
+# NO_FIX_CHIP_PICKUP_ON_BLOCK is the clearest example -- it needs a key or boots
+# UNDER a Block_Static with Chip facing it, and no profile places that.
 #
 # Rebuild with:  powershell -File test\run-nofix.ps1 -Search
 # Check with:    powershell -File test\run-nofix.ps1   (or test/run-nofix.sh)

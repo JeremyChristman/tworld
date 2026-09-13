@@ -1263,6 +1263,6 @@ int main(void)
      * test_sectiontable()'s are derived from the NUMBER OF KEYS in SECTIONS[],
      * so adding a setting raises the real count on its own -- which is fine for
      * a floor, but do not read this number as an exact total. */
-    tw_expect_atleast(177);
+    tw_expect_atleast(183);
     return tw_end();
 }

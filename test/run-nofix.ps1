@@ -37,8 +37,36 @@ test\nofix\nofix.c.
 param(
     [switch]$Search,
     [long]$Seeds = 1000000,
-    [string]$Cc = "gcc"
+    [string]$Cc = "gcc",
+
+    # Rewrite the witness matrix even though the tree is dirty. See Assert-CleanTree.
+    [switch]$Force
 )
+
+# 🔴 A TOOL THAT REWRITES A COMMITTED TRUTH SOURCE MUST REFUSE A DIRTY TREE.
+#
+# These files are pins: the next run is judged against them. Regenerating one
+# from a working tree nobody can reconstruct records a number that can never be
+# checked again -- and worse, it LAUNDERS whatever is currently broken into the
+# new baseline. An audit did exactly that: mutated the engine, watched the golden
+# master go red across 342 digests, ran -Update on the dirty tree, and the gate
+# was green afterwards with the mutation still in place.
+#
+# mutate.ps1 already had this guard and the reasoning; it was never propagated to
+# the other three tools that regenerate a pin. -Force is the deliberate override,
+# because there are legitimate reasons (a fixture change that genuinely moves
+# every digest) and refusing outright would just get the guard deleted.
+function Assert-CleanTree([string]$root, [string]$what, [bool]$force) {
+    Push-Location $root
+    try { $dirty = @(& git status --porcelain) } finally { Pop-Location }
+    if ($dirty.Count -eq 0) { return }
+    if ($force) {
+        Write-Warning ("{0} on a DIRTY tree ({1} changed paths), because -Force was given. Whatever is uncommitted is being baked into the pin." -f $what, $dirty.Count)
+        return
+    }
+    throw ("$what refused: the working tree is dirty ($($dirty.Count) changed paths), so this pin could never be reproduced -- and anything currently broken would be laundered into it. Commit or stash first, or pass -Force if you mean it.")
+}
+
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -102,6 +130,7 @@ try {
     if (-not (Build-Variant "" $defaultExe)) { throw "the default build failed" }
 
     if ($Search) {
+        Assert-CleanTree (Split-Path -Parent $PSScriptRoot) "run-nofix.ps1 -Search" $Force.IsPresent
         $baseline = Join-Path $work "base.scan"
         Write-Host ("scanning {0} seed(s) with the default build (this is the slow part)..." -f $Seeds)
         & $defaultExe -scan 0 $Seeds | Set-Content -Encoding ascii $baseline
