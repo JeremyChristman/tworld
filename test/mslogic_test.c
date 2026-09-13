@@ -1103,6 +1103,123 @@ int main(void)
 	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
     }
 
+    /* ================================================================== */
+    tw_case("🔴 verifymap() complains at exactly the right side of each bound");
+    {
+	/* The MS engine's own consistency check, compiled in whenever NDEBUG is
+	 * not and run at the top of every tick -- so this suite executes it
+	 * thousands of times while asserting nothing about what it said. All
+	 * seven of its comparisons were free to move by one.
+	 *
+	 * ⚠ ITS ONLY OUTPUT IS warn(), so the warning count is the whole oracle,
+	 * and each bound is pinned from BOTH sides: the value that must be
+	 * complained about, and the one next to it that must not. A bound tested
+	 * only from the "must warn" side moves outward for free.
+	 *
+	 * See the matching case in lxlogic_test.c; the two engines carry
+	 * separate copies of this function and neither was covered. */
+	creature   *cr;
+	int		savedid, savedpos, saveddir, savedhidden;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	CHECK_INT(startlevel(&lv), TRUE);
+	runticks(2, NIL);
+
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "a freshly started, untouched level already produces %d"
+		  " verifymap warning(s); every check below is measured against"
+		  " this being zero", warn_count);
+
+	CHECK_MSG(creaturecount > 0, "no creatures to perturb");
+	cr = creatures[0];
+	savedid = cr->id;
+	savedpos = cr->pos;
+	saveddir = cr->dir;
+	savedhidden = cr->hidden;
+
+	/* --- the creature-id window is [0x40, 0x80) ---------------------- */
+	cr->id = 0x40;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "creature id 0x40 is the FIRST legal id and was reported as"
+		  " undefined");
+	cr->id = 0x80;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "creature id 0x80 is one past the last legal id and was not"
+		  " reported");
+	cr->id = savedid;
+
+	/* --- the position bound, which only applies to a VISIBLE creature -- */
+	cr->hidden = FALSE;
+	cr->pos = 0;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0, "position 0 was reported as off the map");
+	cr->pos = CXGRID * CYGRID;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "position CXGRID * CYGRID is the first one off the map and was"
+		  " not reported");
+	cr->hidden = TRUE;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "a HIDDEN creature off the map was reported; the bound is"
+		  " guarded by !cr->hidden and that guard is load-bearing");
+	cr->hidden = (unsigned char)savedhidden;
+	cr->pos = savedpos;
+
+	/* --- the direction rule, and its Block exemption ------------------ */
+	cr->dir = EAST;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "EAST is a legal direction and was reported as illegal");
+	cr->dir = NIL;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "a NIL direction was reported by the `dir > EAST` test, which"
+		  " NIL cannot reach: NIL is 0 and EAST is 8");
+
+	/* 🔴 A BLOCK WITH AN ILLEGAL DIRECTION, which is the only input that
+	 * exercises the `cr->dir != NIL` half of the guard.
+	 *
+	 * `if (cr->dir > EAST && (cr->dir != NIL || cr->id != Block))`. Because
+	 * NIL is 0 and EAST is 8, `dir > EAST` ALREADY implies `dir != NIL`, so
+	 * the left side of the OR is always true once the left of the AND is --
+	 * and the whole condition reduces to `dir > EAST`. Invert `!= NIL` to
+	 * `== NIL` and the OR starts depending on `id != Block` instead, so a
+	 * Block with an illegal direction stops being reported. Nothing else
+	 * tells the two apart.
+	 *
+	 * ⚠ AND THE OTHER HALF IS AN EQUIVALENT MUTANT. `cr->id != Block`
+	 * flipped to `== Block` leaves the OR true either way, for the same
+	 * reason. No input can distinguish it; do not go looking. */
+	cr->dir = EAST * 2;
+	cr->id = Block;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "a Block moving in an illegal direction (%d) was not reported",
+		  cr->dir);
+	cr->id = savedid;
+	cr->dir = saveddir;
+
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "the state was not restored cleanly after the perturbations");
+    }
+
     if (logic)
 	(*logic->shutdown)(logic);
     free(testsetup.leveldata);

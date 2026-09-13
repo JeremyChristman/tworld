@@ -644,6 +644,159 @@ int main(void)
 	}
     }
 
+    tw_case("🔴 verifymap() complains at exactly the right side of each bound");
+    {
+	/* verifymap() is the engine's own consistency check, compiled in
+	 * whenever NDEBUG is not, and called at the top of EVERY tick. It is
+	 * therefore executed thousands of times by this suite -- and until now
+	 * nothing asserted on what it said, so all twelve of its comparisons
+	 * were free to move by one. That is the exact shape the survivor split
+	 * calls REACHED: reached constantly, checked never.
+	 *
+	 * ⚠ ITS ONLY OUTPUT IS warn(), so the warning count is the entire
+	 * oracle. Each perturbation below sets ONE field to the value that sits
+	 * exactly on a bound, and the case asserts whether that value is
+	 * supposed to be complained about. Both sides matter: a bound tested
+	 * only from the "must warn" side moves outward for free.
+	 *
+	 * The state is restored after each perturbation, so the cases do not
+	 * depend on their own order.
+	 */
+	creature   *cr;
+	int		savedid, savedpos, saveddir, savedmoving;
+	int		savedtile;
+
+	openroom(&lv);
+	CHECK_INT(startlevel(&lv), TRUE);
+	runticks(2, NIL);
+
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "a freshly started, untouched level already produces %d"
+		  " verifymap warning(s); every case below is measured against"
+		  " this being zero", warn_count);
+
+	/* --- the floor-id bound: 0x40 is the first UNDEFINED tile --------- */
+	savedtile = state->map[100].top.id;
+	state->map[100].top.id = 0x3F;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0, "tile id 0x3F was reported as undefined floor");
+	state->map[100].top.id = 0x40;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "tile id 0x40 -- the first undefined floor -- was not reported");
+	state->map[100].top.id = (unsigned char)savedtile;
+
+	/* --- the row-32 area is NOT part of the map to be verified -------- */
+	/* `for (pos = 0 ; pos < CXGRID * CYGRID ; ++pos)`. Relax it and the
+	 * loop reads one cell into the virtual 33rd row, which holds the MSCC
+	 * cloner-glitch wiring and is not a floor at all. */
+	state->map[CXGRID * CYGRID].top.id = 0x40;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "verifymap() walked into the row-32 area and reported its"
+		  " contents as an undefined floor");
+	state->map[CXGRID * CYGRID].top.id = 0;
+
+	/* --- the creature-id window is [0x40, 0x80) ---------------------- */
+	cr = creaturelist();
+	savedid = cr->id;
+	savedpos = cr->pos;
+	saveddir = cr->dir;
+	savedmoving = cr->moving;
+
+	cr->id = 0x40;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "creature id 0x40 is the FIRST legal id and was reported as"
+		  " undefined");
+	cr->id = 0x80;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "creature id 0x80 is one past the last legal id and was not"
+		  " reported");
+	cr->id = savedid;
+
+	/* --- the creature-position bound --------------------------------- */
+	cr->pos = 0;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0, "position 0 was reported as off the map");
+	cr->pos = CXGRID * CYGRID;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "position CXGRID * CYGRID is the first one off the map and was"
+		  " not reported");
+	cr->pos = savedpos;
+
+	/* --- the direction rules ----------------------------------------- */
+	cr->dir = EAST;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "EAST is a legal direction and was reported as illegal");
+	cr->dir = NIL;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "a creature with no direction was not reported");
+
+	/* 🔴 A BLOCK WITH AN ILLEGAL DIRECTION, the only input that exercises
+	 * the `cr->dir != NIL` half of the line above it.
+	 *
+	 * `if (cr->dir > EAST && (cr->dir != NIL || cr->id != Block))`. NIL is 0
+	 * and EAST is 8, so `dir > EAST` ALREADY implies `dir != NIL` and the
+	 * condition reduces to `dir > EAST`. Invert `!= NIL` to `== NIL` and the
+	 * OR starts depending on `id != Block`, so a Block with an illegal
+	 * direction stops being reported.
+	 *
+	 * ⚠ THE OTHER HALF IS AN EQUIVALENT MUTANT: `cr->id != Block` flipped to
+	 * `== Block` leaves the OR true either way, for the same reason. Do not
+	 * go looking for an input; there is not one. */
+	cr->dir = EAST * 2;
+	cr->id = Block;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1,
+		  "a Block moving in an illegal direction (%d) was not reported",
+		  cr->dir);
+	cr->id = savedid;
+	cr->dir = saveddir;
+
+	/* --- the moving-time window is [0, 8] ---------------------------- */
+	cr->moving = 8;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "a moving time of 8 is legal and was reported as too large");
+	cr->moving = 9;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1, "a moving time of 9 was not reported");
+	cr->moving = 0;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "a moving time of 0 was reported as negative");
+	cr->moving = -1;
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count >= 1, "a negative moving time was not reported");
+	cr->moving = savedmoving;
+
+	warn_count = 0;
+	verifymap();
+	CHECK_MSG(warn_count == 0,
+		  "the state was not restored cleanly after the perturbations");
+    }
+
     if (logic) {
 	(*logic->shutdown)(logic);
 	logic = NULL;
