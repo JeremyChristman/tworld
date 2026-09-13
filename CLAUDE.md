@@ -222,10 +222,10 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,259 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
+Current state: **19 unit runs, 23,264 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,259 AS A MEASURE OF REACH. Three files are 95% of it.**
+🔴 **DO NOT READ 23,264 AS A MEASURE OF REACH. Three files are 95% of it.**
 `random_test.c` alone is **15,534** — 68%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 4,885 and `solution_test.c` 1,207. That leaves about
 **1,100 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
@@ -633,8 +633,31 @@ code.** `mslogic.c:2251` is `if (FALSE && …)` and `:3452` is `if (TRUE || …)
 short-circuits, so the compiler deletes the rest of the condition and **any mutation inside it is
 provably an equivalent mutant.** That is the equivalent-mutant registry, derived instead of asserted.
 
-🔴 **The seven the sanitizer caught are worth reading individually — they are guards nothing pins.**
-Each is a bound the plain suite runs straight through without noticing:
+✅ **THE SEVEN ARE RESOLVED, AND THE ANSWER SPLITS TWO WAYS** (2026-09-13). Two of them were real
+gaps in the ordinary suite and now have cases: `fileio.c:470` (`combinepath` in place, in
+`fileio_test.c`) and `lxlogic.c:1994` (a beartrap must HOLD Chip — inverting that guard springs the
+trap every tick, and the Lynx engine had no beartrap case at all).
+
+🔴 **THE OTHER FIVE ARE SANITIZER-ONLY BY CONSTRUCTION, NOT BY NEGLECT — DO NOT GO HUNTING FOR A
+PLAIN-PASS TEST.** `res.c:251`, `res.c:258`, `generic/tile.c:1191`, `generic/tile.c:1194` and
+`generic/in.c:367` are pure out-of-bounds accesses with **no behavioral consequence any assertion can
+observe.** Measured, each one, by applying the mutation and running both layers: the plain pass is
+green and `-Sanitize` traps. The reasons are specific and are written next to each case in its test
+file —
+
+- `res.c`'s bound is followed by `!tilesetkey[ruleset]`, which absorbs whatever the out-of-bounds
+  read returned and answers identically. Only the read differs, and no return value exposes a read.
+- `freetileset()`'s whole job is to write zero and NULL; running one element too far writes *more*
+  zeroes into slots nothing reads.
+- `resetkeystates()`'s extra element is never read by anything in the program.
+
+Seeing any of them would mean asserting on whatever the linker happened to place after the array —
+an accident, not a contract, and a check that cries wolf is worse than the gap it closed. **A
+mutation census over the plain pass will report these five as survivors forever. That is the census
+measuring one layer of six, not a hole.** `run-tests.ps1` runs `-Sanitize` every time, so the suite
+does catch them; `mutate.ps1 -Escalate` is what shows it.
+
+The seven, for reference — each a bound the plain suite runs straight through without noticing:
 
 | site | mutation | what it opens |
 |---|---|---|

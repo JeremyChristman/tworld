@@ -604,6 +604,23 @@ static void test_loadedstate(void)
     freetileset();
     CHECK_INT(istilesetloaded(), FALSE);
 
+    /* 🔴 freetileset()'s TWO LOOP BOUNDS ARE SANITIZER-ONLY, and that is a
+     * property of the function rather than a gap in these cases. Measured
+     * 2026-09-13: relax `n < NTILES` to `<=`, or `m < 16` to `<=`, and this file
+     * passes in full while run-tests.ps1 -Sanitize traps on the same build.
+     *
+     * The function's whole job is to write zero and NULL everywhere. Running one
+     * element too far writes MORE zeroes and NULLs, one past `tileptr[NTILES]`
+     * or past a 16-entry image row -- which changes nothing any later call can
+     * observe, because nothing was going to read those slots and they were
+     * already being cleared. Only the out-of-bounds write itself differs.
+     *
+     * An assertion could only see it by reading whatever the linker placed after
+     * tileptr[], which is an accident and not a contract. The cases below drive
+     * the loops; -Sanitize judges them. A mutation census over the plain pass
+     * will report both bounds as survivors forever, and that is the census
+     * measuring one layer of six. */
+
     tw_case("freetileset() is safe to call twice, and when nothing is loaded");
     freetileset();
     freetileset();

@@ -296,7 +296,7 @@ int main(void)
     int		r;
 
     tw_begin("lxlogic");
-    tw_expect_atleast(130);
+    tw_expect_atleast(135);
 
     /* ================================================================== *
      * The level loads at all.
@@ -642,6 +642,48 @@ int main(void)
 	    CHECK_MSG(chipisalive() || !chipisalive(),
 		      "the engine did not survive an off-grid creature");
 	}
+    }
+
+    tw_case("🔴 a beartrap HOLDS Chip, tick after tick");
+    {
+	/* The Lynx engine had no beartrap case of any kind, and one guard at the
+	 * end of advancegame() depends on it:
+	 *
+	 *     if (putwall() != -1) {
+	 *         if (!getchip()->hidden) {
+	 *             if (floorat(chippos()) == Beartrap) springtrap(chippos());
+	 *             floorat(putwall()) = Wall;
+	 *         }
+	 *         putwall() = -1;
+	 *     }
+	 *
+	 * putwall is set ONLY in pedantic mode, when a non-Chip creature steps on
+	 * a PopupWall -- so outside pedantic mode it is -1 on every tick and the
+	 * block never runs. Invert the test to `== -1` and it runs EVERY tick:
+	 * `floorat(-1) = Wall` writes before the map, and a Chip standing in a
+	 * beartrap is sprung free every tick by a guard that should never have
+	 * fired.
+	 *
+	 * ⚠ SO THE ORACLE IS THAT CHIP STAYS PUT. The out-of-bounds write is the
+	 * sanitize layer's to catch; what the ordinary suite can see is a trapped
+	 * Chip who walks away. Holding CmdEast for twenty ticks is what makes the
+	 * difference visible -- a single tick looks the same either way. */
+	openroom(&lv);
+	fix_settop(&lv, 10, 9, FIX_BEARTRAP);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(chipx(), 9);
+
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 10 && chipy() == 9,
+		  "Chip did not reach the beartrap: he is at (%d,%d)",
+		  chipx(), chipy());
+
+	runticks(20, CmdEast);
+	CHECK_MSG(chipx() == 10,
+		  "Chip escaped the beartrap eastward to x=%d with nothing to"
+		  " spring it -- an unwired trap holds until a button releases it",
+		  chipx());
+	CHECK_INT(chipy(), 9);
     }
 
     tw_case("🔴 applyicewallturn's full truth table, all four corners");

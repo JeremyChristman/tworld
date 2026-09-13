@@ -422,6 +422,24 @@ static void test_menu_command_not_stolen(void) {
  * recency. Documented in in.c and pinned here: the stub codes rank
  * West < North < East < South exactly as Qt's do, so Right wins after a
  * restart even though Left was pressed later. */
+/* 🔴 resetkeystates()'s TRANSLATION LOOP BOUND IS SANITIZER-ONLY.
+ *
+ * `for (int n = 0; n < TWK_LAST; n++) keystates[n] = newstate[(int)keystates[n]];`
+ * over `static char keystates[TWK_LAST]`. Measured 2026-09-13: relax it to
+ * `n <= TWK_LAST` and this file passes in full, while run-tests.ps1 -Sanitize
+ * traps on the same build.
+ *
+ * The extra iteration reads and writes one element past keystates[], and nothing
+ * in the program ever reads that element -- so no key, no sequence of key
+ * events, and no assertion here can tell the two forms apart. Seeing it would
+ * mean asserting on whatever the linker placed after the array, which is an
+ * accident rather than a contract.
+ *
+ * The cases below drive the loop on every cycle(); -Sanitize is what judges it.
+ * A mutation census over the plain pass reports this bound as a survivor
+ * forever, and that is the census measuring one layer of six rather than a hole
+ * in this file. */
+
 static void test_restartkeystates_uses_scancode_order(void) {
     reset(FALSE);
     queue(TWK_RIGHT, TRUE);

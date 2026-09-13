@@ -394,7 +394,27 @@ static void test_override(void)
 {
     tw_case("a ruleset outside the valid range is refused, not indexed");
     /* tilesetkey[] has one entry per ruleset; an out-of-range index here would
-     * read past it. Both ends, and both directions of the accessor. */
+     * read past it. Both ends, and both directions of the accessor.
+     *
+     * 🔴 THIS CASE CANNOT KILL A MUTATION OF THAT BOUND, AND THAT IS NOT A GAP
+     * IN IT. Measured 2026-09-13: relax `ruleset >= Ruleset_Count` to `>` in
+     * BOTH accessors and this file still passes, all 108 checks -- while
+     * run-tests.ps1 -Sanitize traps on the same build.
+     *
+     * The reason is in the guard's own shape. The relaxed bound lets
+     * ruleset == Ruleset_Count reach `tilesetkey[ruleset]`, one past a
+     * `char const *const [Ruleset_Count]` -- and then the THIRD clause,
+     * `!tilesetkey[ruleset]`, absorbs whatever it read and returns anyway. The
+     * answer is identical; only the out-of-bounds READ differs, and no return
+     * value can expose a read.
+     *
+     * So the sanitize layer is the oracle for this bound, and the job of the
+     * assertions below is to DRIVE it -- "not detected" and "not exercised" are
+     * different diagnoses, and this file fixes the second one. Do not go looking
+     * for a cleverer assertion here; the honest one would have to depend on
+     * whatever the linker happened to place after tilesetkey[], which is an
+     * accident rather than a contract. A mutation census will report these two
+     * as survivors forever; that is the census measuring one layer, not a hole. */
     CHECK_MSG(gettilesetoverride(-1) == NULL, "a negative ruleset was indexed");
     CHECK_MSG(gettilesetoverride(Ruleset_Count) == NULL,
 	      "an out-of-range ruleset was indexed");
