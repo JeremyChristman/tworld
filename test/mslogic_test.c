@@ -1104,6 +1104,206 @@ int main(void)
     }
 
     /* ================================================================== */
+    tw_case("🔴 trapfrombutton answers for the button asked about, not another");
+    {
+	/* `for (i = traplistsize(); i; ++traps, --i) if (traps->from == pos)
+	 * return traps->to;` -- invert the test and the function returns the
+	 * trap belonging to SOME OTHER button, and answers a wired trap for a
+	 * position that has no button at all.
+	 *
+	 * ⚠ TWO TRAPS, NOT ONE. With a single trap in the list, "the one that
+	 * matches" and "the first one that does not" are the same entry for the
+	 * failure case and the function looks right either way. The second trap
+	 * is what makes the wrong answer a DIFFERENT answer. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 3, 3, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 4, 4, FIX_BEARTRAP);
+	fix_addtrap(&lv, 3, 3, 4, 4);
+	fix_settop(&lv, 6, 6, FIX_BUTTON_BROWN);
+	fix_settop(&lv, 7, 7, FIX_BEARTRAP);
+	fix_addtrap(&lv, 6, 6, 7, 7);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(teststate.trapcount, 2);
+
+	CHECK_INT(trapfrombutton(3 + CXGRID * 3), 4 + CXGRID * 4);
+	CHECK_INT(trapfrombutton(6 + CXGRID * 6), 7 + CXGRID * 7);
+	CHECK_MSG(trapfrombutton(20 + CXGRID * 20) == -1,
+		  "a position with no button on it was given a trap: %d",
+		  trapfrombutton(20 + CXGRID * 20));
+    }
+
+    /* ⚠ movelaw_block(0) AND movelaw_creature(0) ARE EQUIVALENT MUTANTS, and the
+     * reason is in the table rather than the code. Their lower bound is
+     * `id >= 0`, so the only value that separates it from `id > 0` is zero --
+     * and movelaws[0] is the entry for Nothing, which is {0, 0, 0}. Both forms
+     * therefore answer 0 for id 0: one by reading the table, the other by
+     * refusing to. No input can tell them apart. The UPPER bound of both is
+     * pinned by the jc-57 cases further up, which are the ones that matter. */
+
+    /* ================================================================== */
+    tw_case("🔴 removefromsliplist removes the right entry, or none at all");
+    {
+	/* Four comparisons in eleven lines, and all four survived. The slip list
+	 * decides who is still sliding, so removing the wrong entry leaves a
+	 * creature sliding forever and removing none leaves a dead creature on
+	 * the list -- both of which desync a replay rather than crash.
+	 *
+	 * The list is driven directly here rather than through gameplay: the
+	 * function takes a creature and edits an array, and a level that makes
+	 * the engine populate the list its own way cannot put the boundary
+	 * cases where they need to be.
+	 *
+	 * ⚠ THE SLOT PAST THE END IS POISONED ON PURPOSE. Two of the four bounds
+	 * (`n < slipcount` in each loop) only do anything on the entry AFTER the
+	 * list, so the only way to see them is to put something recognizable
+	 * there and assert on what happened to it.
+	 */
+	creature   *a, *b, *c, *d;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	a = allocatecreature();
+	b = allocatecreature();
+	c = allocatecreature();
+	d = allocatecreature();
+	CHECK_MSG(a && b && c && d && a != b && b != c && c != d,
+		  "the creature pool handed out duplicates");
+
+	resetsliplist();
+	appendtosliplist(a, NORTH);
+	appendtosliplist(b, WEST);
+	appendtosliplist(c, SOUTH);
+	CHECK_INT(slipcount, 3);
+	slips[3].cr = NULL;		/* the poison, one past the list */
+	slips[3].dir = EAST;
+
+	/* A creature that is not on the list at all. The search must stop at
+	 * the end; running one entry further makes it fall through the
+	 * "not found" test and shorten the list without removing anything. */
+	removefromsliplist(d);
+	CHECK_MSG(slipcount == 3,
+		  "removing a creature that was never on the list changed the"
+		  " count to %d", slipcount);
+
+	/* Removing the MIDDLE entry: the count drops, the other two survive in
+	 * order, and the slot past the new end is not disturbed. */
+	removefromsliplist(b);
+	CHECK_MSG(slipcount == 2,
+		  "removing a creature that WAS on the list left the count at %d",
+		  slipcount);
+	CHECK_MSG(slips[0].cr == a,
+		  "the first entry was removed instead of the middle one");
+	CHECK_MSG(slips[1].cr == c,
+		  "the surviving entries are in the wrong order");
+	CHECK_MSG(slips[2].cr == c,
+		  "the shift ran one entry too far and pulled the poisoned slot"
+		  " past the end of the list into it");
+
+	removefromsliplist(a);
+	CHECK_INT(slipcount, 1);
+	CHECK_MSG(slips[0].cr == c, "the last surviving entry is wrong");
+
+	resetsliplist();
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 lookupcreature finds the creature AT the cell, and hides Chip on request");
+    {
+	/* `if (creatures[n]->pos == pos) if (creatures[n]->id != Chip ||
+	 * includechip)`. Invert the first and the function returns the first
+	 * creature that is NOT where you asked; invert the second and the
+	 * includechip flag means the opposite of what it says. Both survived,
+	 * because every caller in the suite asks about a cell that does hold the
+	 * creature it expects, so a wrong answer is never visible.
+	 *
+	 * ⚠ THE EMPTY CELL IS THE ONE THAT CATCHES THE FIRST. A lookup that
+	 * succeeds looks identical either way when the answer happens to be
+	 * right; only asking about a cell with NOTHING in it can tell "found the
+	 * match" from "found the first non-match". */
+	creature   *found;
+	int		mpos, empty;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 8, 8, 0x40);			/* a Bug */
+	fix_addcreature(&lv, 8, 8);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	mpos = 8 + CXGRID * 8;
+	empty = 20 + CXGRID * 20;
+
+	found = lookupcreature(mpos, FALSE);
+	CHECK_MSG(found != NULL, "the monster at (8,8) was not found");
+	if (found)
+	    CHECK_MSG(found->pos == mpos,
+		      "lookupcreature(%d) returned the creature at %d instead",
+		      mpos, found->pos);
+
+	CHECK_MSG(lookupcreature(empty, FALSE) == NULL,
+		  "an empty cell returned a creature -- the position test is"
+		  " matching everything EXCEPT the cell asked about");
+	CHECK_MSG(lookupcreature(empty, TRUE) == NULL,
+		  "an empty cell returned a creature even with includechip");
+
+	CHECK_MSG(lookupcreature(chippos(), FALSE) == NULL,
+		  "Chip was returned with includechip FALSE");
+	CHECK_MSG(lookupcreature(chippos(), TRUE) == getchip(),
+		  "Chip was NOT returned with includechip TRUE");
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 lookupblock caches one block per cell, and does not confuse two");
+    {
+	/* `if (blocks[n]->pos == pos && !blocks[n]->hidden) return blocks[n];`
+	 * -- the lookup that keeps the block list from growing a duplicate every
+	 * time a block is touched. Invert the position test and it returns the
+	 * block from SOME OTHER cell, which is a block teleporting across the
+	 * level as far as the rest of the engine is concerned.
+	 *
+	 * ⚠ NEITHER SIDE IS VISIBLE FROM ONE CALL. The first call to a fresh
+	 * list always allocates, so it looks right whatever the test says; the
+	 * bug only shows on the SECOND call, and only by comparing pointers. */
+	creature   *b1, *b2, *b3;
+	int		p, q;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 8, 8, FIX_BLOCK);
+	fix_settop(&lv, 12, 12, FIX_BLOCK);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	p = 8 + CXGRID * 8;
+	q = 12 + CXGRID * 12;
+
+	b1 = lookupblock(p);
+	CHECK_MSG(b1 != NULL, "no block was produced for (8,8)");
+	if (b1) {
+	    CHECK_INT(b1->pos, p);
+	    CHECK_INT(b1->id, Block);
+	}
+
+	b2 = lookupblock(p);
+	CHECK_MSG(b1 == b2,
+		  "asking twice about the same cell produced two different"
+		  " blocks; the cached one was not recognized");
+
+	b3 = lookupblock(q);
+	CHECK_MSG(b3 != b1,
+		  "a different cell returned the block from (8,8) -- the lookup"
+		  " is matching every block EXCEPT the one at the position asked"
+		  " about");
+	if (b3)
+	    CHECK_INT(b3->pos, q);
+    }
+
+    /* ================================================================== */
     tw_case("🔴 icewallturn's full truth table, all four corners");
     {
 	/* Four nested ternaries, eight comparisons, and not one of them pinned:
