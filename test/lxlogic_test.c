@@ -296,7 +296,7 @@ int main(void)
     int		r;
 
     tw_begin("lxlogic");
-    tw_expect_atleast(79);
+    tw_expect_atleast(130);
 
     /* ================================================================== *
      * The level loads at all.

@@ -901,6 +901,6 @@ int main(void)
     /* Exact, not a round number with slack: every case here is deterministic
      * and platform-independent -- the large counts come from loops over the
      * 128-entry tile table, which is a compile-time constant. */
-    tw_expect_atleast(4885);
+    tw_expect_atleast(5211);
     return tw_end();
 }

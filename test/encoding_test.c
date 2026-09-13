@@ -129,7 +129,7 @@ int main(void)
     int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(70);
+    tw_expect_atleast(100);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {

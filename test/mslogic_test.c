@@ -300,7 +300,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(138);
+    tw_expect_atleast(224);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");

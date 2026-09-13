@@ -85,6 +85,14 @@ you add cases; **never lower it to make a run pass.** ⚠ `input_test.c` and `di
 `tw_test.h` and carry the same guard hand-written (`if (checks < N)`), so grepping for the macro
 under-counts — an audit read that as two unguarded tests. Both floors are exact.
 
+🔴 **AND IT IS A MUTATION ORACLE, WHICH MAKES "RAISE IT" A CORRECTNESS RULE RATHER THAN TIDINESS.**
+Some mutants are caught by nothing except the check count: they change how many times a loop runs,
+no assertion looks at that, and the floor is what fails. Measured 2026-09-12 — adding cases to
+`tile_test.c` without raising its floor from 4,885 took `generic/tile.c:696` and `:776` from KILLED
+back to SURVIVED, because the new checks gave the mutation enough headroom to stay above the old
+floor. **Adding tests can LOWER the kill rate if you leave the floor behind.** Re-run
+`mutate.ps1 -Recheck` after adding cases, and compare the per-file numbers in both directions.
+
 🔴 **And run the sixth layer: `run-tests.ps1` includes `-Sanitize`**, the same cases under
 UndefinedBehaviorSanitizer. Eleven seconds, and it sees memory-safety guards the plain pass cannot.
 ⚠ The old line here said "reverting jc-50 leaves every other layer green" — **measured 2026-09-11,

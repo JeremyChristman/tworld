@@ -61,7 +61,7 @@ int main(void)
     int		n;
 
     tw_begin("fileio");
-    tw_expect_atleast(30);
+    tw_expect_atleast(32);
 
     tw_case("an absolute path ignores the directory entirely");
     {
