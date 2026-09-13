@@ -300,7 +300,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(224);
+    tw_expect_atleast(240);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1101,6 +1101,131 @@ int main(void)
 	/* And the array really is a row longer than the grid, which is what
 	 * makes 1024 an in-bounds index rather than an overrun. */
 	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a beartrap holds Chip when shut, and lets him through when open");
+    {
+	/* endmovement()'s trap-entry block decides whether a creature stepping
+	 * INTO a beartrap is caught or walks straight through:
+	 *
+	 *     if (floor == Beartrap) {
+	 *         ... shut-behind check ...
+	 *         if (istrapopen(newpos, oldpos)) cr->state |= CS_RELEASED;
+	 *     }
+	 *
+	 * Skip that block and nobody is ever released, so an OPEN trap starts
+	 * catching people -- which breaks every level that routes you through a
+	 * trap held open by a button somewhere else.
+	 *
+	 * ⚠ THE CLOSED TRAP CANNOT TELL THE TWO APART. Chip is held either way:
+	 * once because the trap is shut, once because the release never ran. Only
+	 * the OPEN trap distinguishes them, and holding a trap open means putting
+	 * something on its button -- istrapbuttondown() is "the button tile is
+	 * covered", so a Block parked on it does the job.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 7, 5, FIX_BEARTRAP);
+	fix_settop(&lv, 20, 20, FIX_BUTTON_BROWN);
+	fix_addtrap(&lv, 20, 20, 7, 5);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(teststate.trapcount, 1);
+
+	runticks(24, CmdEast);
+	CHECK_MSG(chipx() == 7,
+		  "with its button UNCOVERED the trap should have caught Chip at"
+		  " x=7; he is at x=%d", chipx());
+
+	/* Now the same level with a Block parked on the button, so the trap is
+	 * open before Chip ever reaches it. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 7, 5, FIX_BEARTRAP);
+	fix_settop(&lv, 20, 20, FIX_BLOCK);
+	fix_setbot(&lv, 20, 20, FIX_BUTTON_BROWN);
+	fix_addtrap(&lv, 20, 20, 7, 5);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(istrapbuttondown(20 + CXGRID * 20),
+		  "the Block did not register as holding the brown button down,"
+		  " so this half of the case proves nothing");
+
+	runticks(24, CmdEast);
+	CHECK_MSG(chipx() > 7,
+		  "the trap was held open by a covered button and still caught"
+		  " Chip: he is at x=%d", chipx());
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a red button clones, and the cloner re-arms when the clone leaves");
+    {
+	/* CLONING HAD NO TEST OF ANY KIND. The wiring was covered -- which button
+	 * points at which cloner, and what happens to a nonsense entry -- but
+	 * nothing had ever pressed a button and watched a creature appear.
+	 *
+	 * The rule being pinned is the FS_CLONING interlock, which is two lines
+	 * in two different functions:
+	 *
+	 *   activatecloner():  if (cellat(pos)->bot.state & FS_CLONING) return;
+	 *                      ... cellat(pos)->bot.state |= FS_CLONING;
+	 *   endmovement():     if (cellat(oldpos)->bot.id == CloneMachine)
+	 *                          cellat(oldpos)->bot.state &= ~FS_CLONING;
+	 *
+	 * Together they mean: a cloner fires once, and cannot fire again until
+	 * the clone it made has stepped off. Invert endmovement's test and the
+	 * flag is cleared on every cell EXCEPT the cloner -- so the cloner latches
+	 * on after one clone and never produces another. A level built around a
+	 * repeating cloner simply stops working, with nothing crashing.
+	 *
+	 * ⚠ PRESSING THE BUTTON TWICE IS THE WHOLE POINT. One press looks
+	 * identical either way; the interlock only decides anything on the second.
+	 */
+	int	cloner, button;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_BUTTON_RED);
+	fix_settop(&lv, 10, 10, 0x4B);			/* a Ball, facing east */
+	fix_setbot(&lv, 10, 10, FIX_CLONEMACHINE);
+	fix_addcloner(&lv, 6, 5, 10, 10);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	cloner = 10 + CXGRID * 10;
+	button = 6 + CXGRID * 5;
+	CHECK_MSG(creaturecount == 1,
+		  "a creature standing on a clone machine must not be woken at"
+		  " level start; got %d creatures", creaturecount);
+	CHECK_INT(teststate.clonercount, 1);
+	CHECK_INT(clonerfrombutton(button), cloner);
+
+	/* First press. */
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 6, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(creaturecount == 2,
+		  "pressing a red button produced no clone; got %d creatures",
+		  creaturecount);
+
+	/* While the clone is still standing on it, the cloner is latched. */
+	CHECK_MSG((cellat(cloner)->bot.state & FS_CLONING) != 0,
+		  "the cloner did not latch after firing, so a second press"
+		  " would clone again with the first clone still on top of it");
+
+	/* Let the clone walk away east, then check the latch released. */
+	runticks(16, NIL);
+	CHECK_MSG((cellat(cloner)->bot.state & FS_CLONING) == 0,
+		  "the clone left the cloner but FS_CLONING was never cleared --"
+		  " this cloner can never fire again");
+
+	/* Second press: step off the button and back onto it. */
+	runticks(4, CmdEast);
+	runticks(4, CmdWest);
+	CHECK_MSG(chipx() == 6, "Chip did not return to the button: x=%d", chipx());
+	CHECK_MSG(creaturecount == 3,
+		  "the second button press produced no clone; got %d creatures."
+		  " The cloner latched on and never released", creaturecount);
     }
 
     /* ================================================================== */
