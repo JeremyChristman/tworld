@@ -55,6 +55,26 @@
 # the fix is about -- the first moves, the second finds the cell taken, stalls,
 # and is left tile-less.
 #
+#   NO_FIX_BOUNCE_REFACE     ⚠ ATTEMPTED AND WITHDRAWN, three geometries. It
+#                            PASSES the persistence check -- it writes cr->dir --
+#                            so it is not one of the intra-tick group, and the
+#                            reason it resisted is different and worth knowing.
+#                            On STRAIGHT ice the bounce already reverses the
+#                            direction in both builds, so the re-face is a no-op;
+#                            measured with a Ball and with a Tank, and the state
+#                            is identical at ticks 8/10/12/14/18/24 (dir 8 then 2
+#                            in both). A ball additionally reverses by its own AI,
+#                            which masks the slide facing -- hence the tank. The
+#                            fix only bites where the landing tile DEFLECTS, i.e.
+#                            an ice CORNER reached mid-bounce, and one corner
+#                            layout tried did not produce it either.
+#                            ⚠ Note its own header: "fixes 0 desyncs with 0
+#                            regressions -- groundwork, not a win". It moves where
+#                            the 7 FACING desyncs diverge (DavidK3#40 tick 62 ->
+#                            391) without changing any outcome over 22,000 levels,
+#                            which makes it the LOWEST-VALUE of the fourteen to
+#                            guard and a poor place to spend the next hour.
+#
 #   NO_FIX_SLIDE_FACING      ⚠ ATTEMPTED AND WITHDRAWN. It re-faces a creature
 #                            arriving on ice or a force floor. But the force
 #                            floor's own push already sets that direction, so
