@@ -1246,23 +1246,36 @@ int main(void)
 
     /* Raise this when cases are added; never lower it to make a run pass.
      *
-     * 177, not the 183 a Windows run reports, and the arithmetic is worth
-     * writing down because the first version of this comment got it wrong twice.
-     * Two regions differ by platform:
+     * 🔴 TWO NUMBERS, ON PURPOSE: no single one is exact on both platforms, and
+     * a floor with slack in it is the exact failure this mechanism exists to
+     * report. Two regions differ:
      *
      *   the locked-destination block   7 checks on Windows, 0 on POSIX  (-7)
      *   the "will not open" setup      2 checks on Windows, 3 on POSIX  (+1)
      *
-     * so POSIX reaches 183 - 7 + 1 = 177, and that is the number every platform
-     * is guaranteed to hit. A floor with slack in it is the failure this
-     * mechanism exists to report: it would let a case stop running while the
-     * suite stayed green.
+     * so Windows reaches 183 and POSIX 183 - 7 + 1 = 177.
+     *
+     * Both mistakes have now been made here, a day apart. A single floor of 177
+     * was exact on POSIX and left SIX checks of slack on Windows -- a blind
+     * audit deleted a case inside that slack and all six layers stayed green.
+     * Raising it to 183 for everyone closed that hole and broke the Linux
+     * sanitizer job instead, where the run reports 177 and nothing else in CI
+     * covers settings.c under UBSan.
+     *
+     * The guard is `WIN32` and not `_WIN32` so that it is the SAME symbol the
+     * locked-destination block itself is written against (see above). Whatever
+     * that symbol evaluates to on a given toolchain, the floor cannot end up on
+     * a different branch from the code it is counting.
      *
      * jc-56 raised this from 128: test_optedout() adds 28 checks and
      * test_sectiontable() 21, none of them platform-dependent. ⚠ Twelve of
      * test_sectiontable()'s are derived from the NUMBER OF KEYS in SECTIONS[],
      * so adding a setting raises the real count on its own -- which is fine for
      * a floor, but do not read this number as an exact total. */
+#ifdef WIN32
     tw_expect_atleast(183);
+#else
+    tw_expect_atleast(177);
+#endif
     return tw_end();
 }
