@@ -317,7 +317,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(268);
+    tw_expect_atleast(283);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1474,6 +1474,181 @@ int main(void)
 	CHECK_MSG(chipx() > 7,
 		  "the trap was held open by a covered button and still caught"
 		  " Chip: he is at x=%d", chipx());
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a RELEASED tank in a beartrap is not stalled FOR GOOD");
+    {
+	/* FIX_TANK_IN_TRAP_STALL (`mslogic.c:2432`), unguarded until now.
+	 *
+	 * choosecreaturemove() ends with
+	 *
+	 *     if (cr->id == Tank) {
+	 *         if ((cr->state & CS_RELEASED) ||
+	 *             (floor != Beartrap && floor != CloneMachine))
+	 *             cr->state |= CS_HASMOVED;
+	 *
+	 * The second clause exists precisely so a trapped tank keeps trying every
+	 * tick. The CS_RELEASED clause in front of it overrides that, so a tank
+	 * whose trap has been OPENED takes CS_HASMOVED on its first failed move
+	 * and is skipped for good -- the only per-tick clear touches CS_TURNING
+	 * creatures, and a stalled tank has none.
+	 *
+	 * 🔴 WHAT MAKES THIS OBSERVABLE, after three toggles were withdrawn for
+	 * being intra-tick: the effect is a creature that never moves AGAIN. That
+	 * survives any number of ticks, so it only needs the right trigger --
+	 * released, blocked, and then UNBLOCKED:
+	 *
+	 *     trap open      a Block parked on the brown button holds it, and
+	 *                    FIX_TRAP_REFRESH re-grants CS_RELEASED every tick
+	 *     blocked        a Block sits on the tank's target cell
+	 *     unblocked      Chip pushes that Block out of the way and steps aside
+	 *
+	 * With the fix the tank is still eligible and drives out of the trap; with
+	 * it off the tank sat down at the first failed tick and stays there.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 8, 8, FIX_CHIP_NORTH);
+
+	fix_settop(&lv, 7, 5, 0x4F);		/* a Tank, facing east */
+	fix_setbot(&lv, 7, 5, FIX_BEARTRAP);
+	fix_addcreature(&lv, 7, 5);
+	fix_settop(&lv, 8, 5, FIX_BLOCK);	/* in its way, for now */
+
+	fix_settop(&lv, 20, 20, FIX_BLOCK);	/* holds the trap open */
+	fix_setbot(&lv, 20, 20, FIX_BUTTON_BROWN);
+	fix_addtrap(&lv, 20, 20, 7, 5);
+
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount >= 2, "the tank was not created");
+	CHECK_MSG(creatures[1]->id == Tank,
+		  "creatures[1] is not the tank, so the assertions below read the"
+		  " wrong creature");
+	CHECK_MSG(istrapbuttondown(20 + CXGRID * 20),
+		  "the Block is not holding the brown button down, so the tank is"
+		  " never RELEASED and this case proves nothing");
+
+	/* Let it fail against the Block first: that is the tick on which the
+	 * unfixed build writes CS_HASMOVED and gives up. */
+	runticks(8, NIL);
+	CHECK_MSG(creatures[1]->pos == 7 + CXGRID * 5,
+		  "the tank left the trap while it was still blocked, so nothing"
+		  " below distinguishes the two builds");
+
+	/* Chip walks north, pushing the Block off the tank's target cell, then
+	 * steps east out of that cell himself. */
+	runticks(12, CmdNorth);
+	runticks(8, CmdEast);
+	CHECK_MSG(cellat(8 + CXGRID * 5)->top.id != Block_Static,
+		  "the Block was not pushed off the tank's target cell");
+
+	runticks(24, NIL);
+	CHECK_MSG(creatures[1]->pos != 7 + CXGRID * 5,
+		  "the tank is STILL in the beartrap at (7,5) after its way was"
+		  " cleared -- it took CS_HASMOVED on the tick it failed while"
+		  " RELEASED and was never asked again");
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a cloner wired into ROW 32 still fires -- the MSCC glitch");
+    {
+	/* FIX_ROW32_CLONER (`mslogic.c:2972`), unguarded until now.
+	 *
+	 * A red button may be wired to a "cloner" at y == 32, one row below a
+	 * 32-row map. MSCC has no bounds check there and reads the memory that
+	 * follows the map, which in practice is its own variable block; four real
+	 * solutions depend on what comes out. activatecloner() bails on any
+	 * off-map position, so the fix routes row 32 to activaterow32cloner(),
+	 * which takes its template from ROW 0'S BOTTOM LAYER in that column --
+	 * that being the memory MSCC is really reading -- and walks the clone in
+	 * from below.
+	 *
+	 * ⚠ THE MATRIX SAID THIS NEEDED A FIXTURE ESCAPE HATCH. It does not.
+	 * fix_settop() does refuse y >= 32, but no TILE is needed at row 32: what
+	 * points there is the cloner WIRING, and fix_addcloner() writes the
+	 * coordinate through unchecked. The template goes in row 0's bottom
+	 * layer, which is an ordinary in-range cell.
+	 *
+	 * Only a BLOCK template is emulated (a non-block one warns and stops at
+	 * the variable spill), so the template is file code 0x0E, a cloning block
+	 * facing NORTH -- the direction that also exercises the resetdata() spill.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 4, 5, FIX_CHIP_EAST);
+	fix_settop(&lv, 5, 5, FIX_BUTTON_RED);
+
+	/* The template MSCC would find past the end of the map. */
+	fix_setbot(&lv, 10, 0, 0x0E);		/* cloning block, facing north */
+	fix_addcloner(&lv, 5, 5, 10, 32);	/* button -> (10, ROW 32) */
+
+	/* The clone enters at (10,32) and steps north onto (10,31), so that cell
+	 * cannot be the border wall or it is removed again for being unable to
+	 * get out -- and the two builds would look identical. */
+	fix_settop(&lv, 10, 31, FIX_FLOOR);
+
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.clonercount == 1,
+		  "the row-32 cloner wiring was dropped by the parser, so this"
+		  " case cannot distinguish anything; got %d",
+		  teststate.clonercount);
+	CHECK_MSG(cellat(10 + CXGRID * 31)->top.id != Block_Static,
+		  "there is already a block on the landing cell");
+
+	runticks(8, CmdEast);		/* Chip steps onto the red button */
+
+	CHECK_MSG(cellat(10 + CXGRID * 31)->top.id == Block_Static,
+		  "the row-32 cloner did not fire: (10,31) holds %02X, not a"
+		  " block. activatecloner() rejected the off-map position"
+		  " outright instead of routing it to activaterow32cloner()",
+		  cellat(10 + CXGRID * 31)->top.id);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a KEY press abandons an outstanding MOUSE goal");
+    {
+	int afterclick;
+
+	/* FIX_KEY_CLEARS_GOAL (`mslogic.c`), unguarded until now.
+	 *
+	 * SuperCC drops the click outright at the foot of MSLevel.tick:
+	 *     if (moveType == KEY || chip.getPosition().getIndex() == mouseGoal)
+	 *         mouseGoal = NO_CLICK;
+	 * Tile World cancels the goal on several paths but NOT on an ordinary
+	 * successful key move, so a click stayed live indefinitely and kept
+	 * steering Chip on every later tick that carried no input -- measured on
+	 * JacquesOld #159, where Tile World was still walking toward the stale
+	 * target 60 ticks after 29 keyboard moves had been played.
+	 *
+	 * ⚠ THE MATRIX SAID THIS NEEDED A MOUSE COMMAND THE HARNESS DOES NOT
+	 * HAVE. That is true of test\nofix\nofix.c, whose generated move alphabet
+	 * is NIL plus the four arrows -- it is not true here: this file drives
+	 * the engine by writing currentinput() directly, and an absolute mouse
+	 * command is just CmdAbsMouseMoveFirst + the target cell.
+	 */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_EAST);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	/* Click on (15,5), then let the goal steer him for a while. */
+	tick(CmdAbsMouseMoveFirst + (13 + CXGRID * 5));
+	runticks(12, NIL);
+	afterclick = chipx();
+	CHECK_MSG(afterclick > 5,
+		  "the click never started Chip moving (x=%d), so nothing below"
+		  " distinguishes the two builds", afterclick);
+	CHECK_MSG(afterclick < 13, "Chip already reached the goal; widen the gap");
+
+	/* One keyboard move, then no input at all for a long time. */
+	tick(CmdNorth);
+	runticks(40, NIL);
+
+	CHECK_MSG(chipx() == afterclick,
+		  "Chip kept walking toward the clicked cell after a key press:"
+		  " he was at x=%d when the key went in and is at x=%d now. The"
+		  " mouse goal outlived the keyboard move", afterclick, chipx());
     }
 
     /* ================================================================== */

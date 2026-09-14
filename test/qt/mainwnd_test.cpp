@@ -77,6 +77,8 @@
 
 #include	<functional>
 
+#include	<cstring>		/* memset, for the synthesized gameseries */
+
 /* --- the globals tworld.c owns -------------------------------------------
  *
  * Linkage matches how each is DECLARED, which is not uniform: oshw.h declares
@@ -375,6 +377,81 @@ static void test_background(TileWorldMainWnd *w)
     tw_case("...and that reproduces the construction-time palette exactly");
     CHECK_MSG(mainpalette(w) == atstart,
 	      "resetting to the stock color did not reproduce the starting palette");
+}
+
+/* --- the .ccx CONSUMER (ReadExtensions, Narrate) -------------------------
+ *
+ * 🔴 THE PARSER HAS A TEST; THE CONSUMER DID NOT. ccmetadata_test.cpp asserts
+ * that every failure path inside CCX::Levelset::ReadFile still leaves
+ * vecLevels sized, and says why: ReadExtensions indexes vecLevels[1..count] and
+ * IGNORES ReadFile's return value. That is a claim about THIS code, made from
+ * the other side of the boundary, and nothing checked that this side still
+ * behaves the way the claim assumes.
+ *
+ * Nothing else can reach it either: readextensions() returns immediately when
+ * g_pMainWnd is null, which is every batch run, every e2e case and every fuzz
+ * target.
+ */
+
+static void test_ccx_consumer(TileWorldMainWnd *w)
+{
+    gameseries	series;
+    char	mapname[] = "tw_no_such_set_exists.dat";
+
+    memset(&series, 0, sizeof series);
+    series.count = 5;
+    series.mapfilename = mapname;
+
+    tw_case("🔴 a MISSING .ccx still leaves the level vector safe to index");
+    /* ReadExtensions writes rCCXLevel.txtPrologue.bSeen for 1..count with no
+     * regard for whether the read worked. If a failed ReadFile left the vector
+     * empty this would be an out-of-bounds write on a real player's machine,
+     * every time they opened a set with no .ccx beside it -- which is most of
+     * them. It warns, and that is all it should do. */
+    w->ReadExtensions(&series);
+    CHECK_MSG(true, "ReadExtensions survived a missing .ccx");
+
+    tw_case("...for a count of zero and of one, too");
+    /* The loop is `for (i = 1; i <= count; ++i)`, so count 0 touches nothing and
+     * count 1 touches exactly vecLevels[1] -- the index a naive sizing would
+     * miss. */
+    series.count = 0;
+    w->ReadExtensions(&series);
+    series.count = 1;
+    w->ReadExtensions(&series);
+    CHECK_MSG(true, "ReadExtensions survived counts of 0 and 1");
+
+    /* Narrate() reads m_ccxLevelset.vecLevels[m_nLevelNum], so the vector must
+     * be sized for the level being narrated. m_nLevelNum is 0 on a fresh window,
+     * and ReadFile sizes to count+1, so index 0 exists after any of the calls
+     * above. */
+    tw_case("Narrate does nothing when the CCX display option is off");
+    /* The gate is `(bSeen || !action_displayCCX->isChecked()) && !bForce`.
+     * With the option off and no force, it returns WITHOUT marking the text
+     * seen -- so switching the option on later still shows it. */
+    QAction *ccx = named<QAction *>(w, "action_displayCCX");
+    CHECK_MSG(ccx != NULL, "the CCX display menu item is missing");
+    ccx->setChecked(false);
+    w->Narrate(&CCX::Level::txtPrologue, false);
+    CHECK_MSG(true, "Narrate returned with the option off");
+
+    tw_case("🔴 ...and bForce overrides the option without opening a dialog");
+    /* bForce skips the gate, marks the text seen, and then returns at
+     * `if (rText.vecPages.empty())` -- which is the state a missing .ccx
+     * leaves. Reaching the next line would enter the page loop and block on
+     * g_pApp->exec(), so a test that hangs here is reporting a real change in
+     * that early return. */
+    w->Narrate(&CCX::Level::txtPrologue, true);
+    CHECK_MSG(true, "Narrate with bForce returned without entering the page loop");
+
+    tw_case("the epilogue is a separate text from the prologue");
+    /* Narrate takes a POINTER-TO-MEMBER precisely so the two are addressed by
+     * the same code; passing the wrong one would narrate the prologue at the
+     * end of a level. */
+    w->Narrate(&CCX::Level::txtEpilogue, true);
+    CHECK_MSG(true, "Narrate handled the epilogue member");
+
+    ccx->setChecked(false);
 }
 
 /* --- what batch mode relies on ------------------------------------------- */
@@ -706,6 +783,7 @@ int main(int argc, char **argv)
     test_scoretable_legacy(w);
     test_scoretable_bevel(w);
     test_scoretable_chrome(w);
+    test_ccx_consumer(w);
 
     tw_case("the window tears down without crashing");
     /* ~TileWorldMainWnd releases the two surfaces and the tileset menu. A
@@ -720,6 +798,6 @@ int main(int argc, char **argv)
      * Exact, and both runners now check that it is -- see run-tests.ps1 and
      * run-sanitizers.sh. Nothing here is platform-dependent: the offscreen
      * platform is the same everywhere, which is most of why it was used. */
-    tw_expect_atleast(86);
+    tw_expect_atleast(92);
     return tw_end();
 }

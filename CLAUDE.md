@@ -222,7 +222,7 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,308 checks; 13 end-to-end cases, 38 checks; 2 Qt runs, 116 checks;
+Current state: **19 unit runs, 23,323 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 208 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
 🔴 **DO NOT READ 23,308 AS A MEASURE OF REACH. Three files are 95% of it.**
@@ -278,6 +278,16 @@ layers that can see an engine behavior change**, so run them after any edit to `
   one changes no shipped behavior and nothing goes red — two of them had already rotted to the point
   of not compiling. `-Search` rediscovers witnesses and takes about half an hour; the check is
   seconds. See [`docs/adr/0012`](docs/adr/0012-engine-toggles-need-a-differential-witness.md).
+
+  **The 14 without a witness get a second oracle**: the runner rebuilds `mslogic_test.c` against each
+  one and requires it to FAIL, so a named unit case counts as a guard. **9 of 14 are guarded**; the
+  five that are not are each recorded in `nofix-matrix.tsv` with the measurement that withdrew them,
+  and all five are INTRA-TICK — the fix changes when inside a tick something resolves, and the
+  observable state converges before any assertion can run. ⚠ Two of the blockers written there turned
+  out to be wrong when tested: `ROW32_CLONER` needed no fixture escape hatch (the cloner *wiring*
+  points at row 32, and `fix_addcloner()` writes it unchecked), and the "no mouse command" note was
+  about `nofix.c`'s generated alphabet only — a unit case writes `currentinput()` directly, which is
+  how `KEY_CLEARS_GOAL` is now guarded.
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -489,14 +499,18 @@ misreading in the parser is faithfully reproduced and never caught.
     password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
     `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
     `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
-  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 86 checks, the largest file that ships. It links
+  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 92 checks, the largest file that ships. It links
     the window against most of the core (27 declared sources; `tworld.c` owns `main()` and is
     stubbed) and drives it under `QT_QPA_PLATFORM=offscreen`. What it asserts are DECISIONS, never
     drawings: the jc-37/jc-38 short-message precedence, the death-counter menu, the window title
     with the `[jc-N]` tag **off by default**, that a retint always derives from the palette the
-    `.ui` built, and the **score table** — the tablespec→model translation, the jc-36 column spans
+    `.ui` built, the **score table** — the tablespec→model translation, the jc-36 column spans
     (including the clamp at the last column and the `'0'`-prefix floor that used to walk off the end
-    of `items`), and the jc-33 legacy styling.
+    of `items`), and the jc-33 legacy styling. It also covers the **`.ccx` CONSUMER** —
+    `ReadExtensions()` and `Narrate()`. `ccmetadata_test.cpp`'s header makes a claim *about this
+    code* (every failure path must still leave `vecLevels` sized, because the consumer indexes
+    `[1..count]` and ignores the return value) and nothing checked it from this side; moving the
+    `resize()` after the missing-file early return now aborts on an out-of-bounds access.
     🔑 **`DisplayList()` is modal and still testable**: it ends in `g_pApp->exec()`, so a
     single-shot timer armed before the call inspects the built table from inside that loop and then
     exits it, which also exercises the teardown — and the teardown is half the point, because the

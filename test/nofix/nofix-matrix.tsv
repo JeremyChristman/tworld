@@ -20,14 +20,29 @@
 #   NO_FIX_KEY_CLEARS_GOAL   move alphabet (nofix.c:397) is NIL and the four
 #                            arrows only. No mouse command is ever emitted, so
 #                            the precondition cannot be constructed at any
-#                            budget. Closing these needs a mouse command in the
-#                            alphabet, routed through makemouseabsolute().
+#                            budget, and no -Search will ever fill these rows.
 #
-#   NO_FIX_ROW32_CLONER      is about a cloner at y == 32. tw_fixture.h fixes the
-#                            map at 32x32 (FIX_HEIGHT) and fix_settop() aborts on
-#                            y >= 32, so the builder refuses to express the exact
-#                            case the fix guards. Closing it needs a deliberate,
-#                            commented escape hatch in the fixture builder.
+#   ⚠ THAT IS ABOUT THE WITNESS SEARCH ONLY, and it had been read as though it
+#   also ruled out a unit case. It does not. mslogic_test.c drives the
+#   engine by writing currentinput() directly, and an absolute mouse command is
+#   just CmdAbsMouseMoveFirst + the target cell -- no alphabet involved.
+#   NO_FIX_KEY_CLEARS_GOAL IS NOW GUARDED that way (2026-09-14).
+#   ⚠ The target must lie within MOUSERANGE (+-9 cells of Chip); further and
+#   makemouserelative() fails an _assert and the test binary dies with no result.
+#
+#   NO_FIX_ROW32_CLONER      ✅ GUARDED 2026-09-14, and the blocker recorded here
+#                            was WRONG. This said the fixture builder "refuses to
+#                            express the exact case" because fix_settop() aborts
+#                            on y >= 32, and concluded a deliberate escape hatch
+#                            was needed. No TILE at row 32 is needed: what points
+#                            there is the cloner WIRING, and fix_addcloner()
+#                            writes the coordinate through unchecked. The
+#                            template lives in ROW 0'S BOTTOM LAYER, an ordinary
+#                            in-range cell. Only a BLOCK template is emulated, so
+#                            the case uses file code 0x0E (cloning block, north),
+#                            and (x,31) must not be the border wall or the clone
+#                            is removed for being unable to get out -- which
+#                            would make both builds look identical.
 #
 # 🔴 THE DIVIDING LINE, MEASURED: IS THE FIX'S EFFECT INTRA-TICK OR PERSISTENT?
 #
@@ -74,6 +89,21 @@
 #                            391) without changing any outcome over 22,000 levels,
 #                            which makes it the LOWEST-VALUE of the fourteen to
 #                            guard and a poor place to spend the next hour.
+#
+#   NO_FIX_CLICK_EARLY       ⚠ A UNIT CASE WAS ATTEMPTED AND WITHDRAWN, 2026-09-14,
+#                            now that the mouse-goal precondition is known to be
+#                            reachable. Chip sliding east on a force floor, clicked
+#                            south, with all five guards satisfied: the case passes
+#                            with the fix ON and OFF ALIKE. Tile World already walks
+#                            him south through its own late path
+#                            (chipmovetogoalpos(), `(currenttime() & 3) == 2`), so
+#                            the only difference is WHEN INSIDE THE TICK the move
+#                            resolves -- which is the intra-tick group below.
+#                            Distinguishing it needs something that OBSERVES the
+#                            intermediate position: a slider that reaches the cell
+#                            Chip vacates early. Not attempted; the fix covers 19
+#                            levels with mouse clicks, which makes it the lowest
+#                            value of the five still open.
 #
 #   NO_FIX_SLIDE_FACING      ⚠ ATTEMPTED AND WITHDRAWN. It re-faces a creature
 #                            arriving on ice or a force floor. But the force
