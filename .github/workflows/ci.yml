@@ -482,6 +482,10 @@ jobs:
       # actually RAN rather than trusting the exit code.
       - name: Qt tests (oshw-qt, the .ccx parser)
         run: |
+          # See corpus.yml's cleanup step: capturing a native command's stderr
+          # under EAP="Stop" turns each line into a terminating NativeCommandError,
+          # which would kill this step before either assertion below could run.
+          $ErrorActionPreference = "Continue"
           $out = powershell -ExecutionPolicy Bypass -File test\run-qt-tests.ps1 2>&1 | Out-String
           Write-Host $out
           if ($out -match 'Qt tests SKIPPED') {

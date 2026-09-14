@@ -162,8 +162,21 @@ jobs:
             corpus-head
           if-no-files-found: warn
 
+      # 🔴 THIS STEP RUNS ON THE SKIP PATH TOO, WHERE THERE IS NO WORKTREE TO
+      # REMOVE, and that is how it failed the first time it was dispatched
+      # (run 34840809524). `git worktree remove` writes "fatal: '..' is not a
+      # working tree" to STDERR; GitHub runs the `powershell` shell with
+      # $ErrorActionPreference = "Stop", under which a native command's stderr
+      # becomes a terminating NativeCommandError -- so `exit 0` never ran and a
+      # correct skip reported failure. `2>$null` does not help; the redirection
+      # is what wraps each stderr line in an ErrorRecord to begin with. This is
+      # the same trap test\run-nofix.ps1 documents in its own header.
       - name: Remove the baseline worktree
         if: always()
         run: |
-          git worktree remove ..\tworld-baseline --force 2>$null
+          $ErrorActionPreference = "Continue"
+          if (Test-Path -LiteralPath ..\tworld-baseline) {
+              git worktree remove ..\tworld-baseline --force
+          }
+          git worktree prune
           exit 0
