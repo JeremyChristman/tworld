@@ -164,23 +164,6 @@ try {
     # anywhere else gcov reports "Cannot open source file generic/dirinput.c" --
     # and then prints numbers anyway, having never read the source. Silent, and
     # wrong in the flattering direction.
-    Push-Location $root
-    try {
-        foreach ($gcda in $gcdaFiles) {
-            # The .gcno sits beside its .gcda, which is not always $work itself.
-            & $gcov --json-format --branch-probabilities --object-directory $gcda.DirectoryName $gcda.FullName 2>&1 | Out-Null
-        }
-    } finally {
-        Pop-Location
-    }
-
-    # gcov writes <name>.gcov.json.gz into the CURRENT directory, which is $root
-    # above -- so they land in the repo and must be cleaned up afterwards.
-    $jsonFiles = @(Get-ChildItem -LiteralPath $root -Filter *.gcov.json.gz -File -ErrorAction SilentlyContinue)
-    if ($jsonFiles.Count -eq 0) {
-        throw "gcov produced no JSON output. Check that gcov $(& $gcov --version | Select-Object -First 1) supports --json-format."
-    }
-
     # Union the per-line and per-branch counts across every run. The C and C++
     # builds of a test are separate translation units with separate .gcda, so a
     # line reached only by the C++ build must still count as reached -- taking
@@ -189,40 +172,75 @@ try {
     $lineAll = @{}
     $brHit   = @{}   # "file:line:i" -> taken anywhere
     $brAll   = @{}
+    $jsonSeen = 0
 
-    foreach ($jf in $jsonFiles) {
-        $inStream = [IO.File]::OpenRead($jf.FullName)
-        $gz = New-Object IO.Compression.GZipStream($inStream, [IO.Compression.CompressionMode]::Decompress)
-        $reader = New-Object IO.StreamReader($gz)
-        $text = $reader.ReadToEnd()
-        $reader.Close(); $gz.Close(); $inStream.Close()
+    # 🔴 EACH gcov RUN IS DRAINED BEFORE THE NEXT ONE STARTS, and that is the
+    # whole reason this loop is shaped this way rather than "run them all, then
+    # read them all".
+    #
+    # gcov names its output after the SOURCE file -- CCMetaData.cpp.gcov.json.gz
+    # -- not after the .gcda. Two translation units that compiled the same source
+    # therefore write the SAME filename, and the second silently overwrites the
+    # first. Reading them afterwards unions whatever happened to survive.
+    #
+    # Measured: CCMetaData.cpp is built into both ccmetadata_test and
+    # mainwnd_test. Run alone it reports 92.1% of lines; in the combined run it
+    # reported 8.8%, because mainwnd_test's gcov output landed last. The same
+    # collision applies to the C and C++ builds of any one unit test -- which is
+    # exactly the union the comment above has always claimed to perform.
+    Push-Location $root
+    try {
+        foreach ($gcda in $gcdaFiles) {
+            # The .gcno sits beside its .gcda, which is not always $work itself.
+            & $gcov --json-format --branch-probabilities --object-directory $gcda.DirectoryName $gcda.FullName 2>&1 | Out-Null
 
-        $data = $text | ConvertFrom-Json
-        foreach ($file in $data.files) {
-            $name = ($file.file -replace '\\', '/')
-            # Anything outside this repository (system headers) and the test
-            # scaffolding itself. See the header for why the tests are excluded.
-            if ($name -match '^[A-Za-z]:/' -and $name -notmatch [regex]::Escape(($root -replace '\\','/'))) { continue }
-            if ($name -match '(^|/)test/') { continue }
-            if ($name -match '_test\.c$' -or $name -match 'tw_test\.h$' -or $name -match 'tw_fixture\.h$') { continue }
-            $short = $name -replace '^.*?/(?=[^/]+$)', ''
-            $short = $name -replace [regex]::Escape(($root -replace '\\','/') + '/'), ''
+            # gcov writes into the CURRENT directory, which is $root -- so these
+            # land in the repository and must not be left behind.
+            $jsonFiles = @(Get-ChildItem -LiteralPath $root -Filter *.gcov.json.gz -File -ErrorAction SilentlyContinue)
+            foreach ($jf in $jsonFiles) {
+                ++$jsonSeen
+                $inStream = [IO.File]::OpenRead($jf.FullName)
+                $gz = New-Object IO.Compression.GZipStream($inStream, [IO.Compression.CompressionMode]::Decompress)
+                $reader = New-Object IO.StreamReader($gz)
+                $text = $reader.ReadToEnd()
+                $reader.Close(); $gz.Close(); $inStream.Close()
 
-            foreach ($line in $file.lines) {
-                $key = "$short`:$($line.line_number)"
-                $lineAll[$key] = $true
-                if ($line.count -gt 0) { $lineHit[$key] = $true }
-                $i = 0
-                foreach ($b in $line.branches) {
-                    $bkey = "$key`:$i"
-                    $brAll[$bkey] = $true
-                    if ($b.count -gt 0) { $brHit[$bkey] = $true }
-                    ++$i
+                $data = $text | ConvertFrom-Json
+                foreach ($file in $data.files) {
+                    $name = ($file.file -replace '\\', '/')
+                    # Anything outside this repository (system headers) and the
+                    # test scaffolding itself. See the header for why the tests
+                    # are excluded.
+                    if ($name -match '^[A-Za-z]:/' -and $name -notmatch [regex]::Escape(($root -replace '\\','/'))) { continue }
+                    if ($name -match '(^|/)test/') { continue }
+                    if ($name -match '_test\.c$' -or $name -match 'tw_test\.h$' -or $name -match 'tw_fixture\.h$') { continue }
+                    $short = $name -replace [regex]::Escape(($root -replace '\\','/') + '/'), ''
+
+                    foreach ($line in $file.lines) {
+                        $key = "$short`:$($line.line_number)"
+                        $lineAll[$key] = $true
+                        if ($line.count -gt 0) { $lineHit[$key] = $true }
+                        $i = 0
+                        foreach ($b in $line.branches) {
+                            $bkey = "$key`:$i"
+                            $brAll[$bkey] = $true
+                            if ($b.count -gt 0) { $brHit[$bkey] = $true }
+                            ++$i
+                        }
+                    }
                 }
             }
+            if ($jsonFiles.Count -gt 0) {
+                Remove-Item -LiteralPath ($jsonFiles | ForEach-Object { $_.FullName }) -Force -ErrorAction SilentlyContinue
+            }
         }
+    } finally {
+        Pop-Location
     }
-    Remove-Item -LiteralPath ($jsonFiles | ForEach-Object { $_.FullName }) -Force -ErrorAction SilentlyContinue
+
+    if ($jsonSeen -eq 0) {
+        throw "gcov produced no JSON output. Check that gcov $(& $gcov --version | Select-Object -First 1) supports --json-format."
+    }
 
     if ($LineMapPath) {
         $mapLines = @(
@@ -296,8 +314,13 @@ try {
         $dir = Split-Path -Parent $baselineFile
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $sb = New-Object Text.StringBuilder
-        [void]$sb.AppendLine("# Coverage baseline, unit layer only. Regenerate with coverage.ps1 -UpdateBaseline.")
+        [void]$sb.AppendLine("# Coverage baseline. Regenerate with coverage.ps1 -UpdateBaseline.")
         [void]$sb.AppendLine("# A FLOOR, not a grade. Raising a number here is progress; lowering one needs a reason.")
+        [void]$sb.AppendLine("#")
+        [void]$sb.AppendLine("# The UNIT layer, plus the Qt layer for the oshw-qt/ rows -- nothing else reaches")
+        [void]$sb.AppendLine("# those, and the Qt run does NOT instrument the core, so every other row still")
+        [void]$sb.AppendLine("# means exactly what it always did. The end-to-end tests run an uninstrumented")
+        [void]$sb.AppendLine("# build and are not counted anywhere here.")
         [void]$sb.AppendLine("file`tlines`tlinesHit`tbranches`tbranchesHit")
         foreach ($r in ($rows | Sort-Object File)) {
             [void]$sb.AppendLine(("{0}`t{1}`t{2}`t{3}`t{4}" -f $r.File, $r.Lines, $r.LinesHit, $r.Branches, $r.BranchesHit))
