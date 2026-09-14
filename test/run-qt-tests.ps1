@@ -51,7 +51,18 @@ the widget/non-widget one this header used to draw.
 #>
 param(
     [string]$Filter,
-    [string]$MsysRoot = "C:\msys64"
+    [string]$MsysRoot = "C:\msys64",
+
+    # The same contract test\run-tests.ps1 offers coverage.ps1: build with
+    # --coverage and leave the .gcno/.gcda somewhere the caller can find them.
+    #
+    # 🔴 ONLY THE oshw-qt SOURCES ARE INSTRUMENTED, deliberately. A Qt test links
+    # most of the game core too, and instrumenting that as well would fold
+    # whatever the main window happens to touch into mslogic.c's and series.c's
+    # figures -- silently changing the meaning of sixteen rows that have always
+    # meant "what the UNIT layer reaches".
+    [switch]$Coverage,
+    [string]$OutDir
 )
 $ErrorActionPreference = "Stop"
 
@@ -144,7 +155,15 @@ function Get-Decls([string]$path, [string]$tag) {
              Where-Object { $_ })
 }
 
-$objDir = Join-Path ([IO.Path]::GetTempPath()) ("tw-qt-tests-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+# ⚠ $objDir, NOT $OutDir. Assigning to the parameter would be the shadowing trap
+# test\run-tests.ps1 documents at its own copy of this: PowerShell variables are
+# case-insensitive, so a local named $outDir IS the $OutDir parameter, and the
+# "use the default" branch silently overwrites the caller's argument.
+if ($OutDir) {
+    $objDir = $OutDir
+} else {
+    $objDir = Join-Path ([IO.Path]::GetTempPath()) ("tw-qt-tests-" + [guid]::NewGuid().ToString("N").Substring(0,8))
+}
 New-Item -ItemType Directory -Force -Path $objDir | Out-Null
 
 $results = @()
@@ -258,6 +277,8 @@ foreach ($test in $tests) {
             $full = (Resolve-Path $src -ErrorAction SilentlyContinue).Path
             $defs = @()
             if ($full -and ($noMain -contains $full)) { $defs = @("-Dmain=tw_unused_entry_point") }
+            # See the -Coverage note in param(): the oshw-qt sources only.
+            if ($Coverage -and $src -match 'oshw-qt') { $defs += @("--coverage", "-O0") }
             $compiler = if ($isC) { Join-Path $binDir "gcc.exe" } else { $gxx }
             $std      = if ($isC) { "-std=gnu11" } else { "-std=gnu++11" }
             $srcArgs  = @($std, "-Wall", "-Wextra") + $defs + $incArr + $cflagArr +
@@ -269,7 +290,10 @@ foreach ($test in $tests) {
     }
 
     if (-not $genFailed) {
-        $argsList = @("-std=gnu++11", "-Wall", "-Wextra") + $incArr + $cflagArr +
+        # --coverage on the LINK too, or the gcov runtime is never pulled in and
+        # no .gcda is written however many objects carry counters.
+        $linkCov = @(if ($Coverage) { "--coverage" })
+        $argsList = @("-std=gnu++11", "-Wall", "-Wextra") + $linkCov + $incArr + $cflagArr +
                     @("-o", $exe, $test.FullName) + $objs + $libArr
         & $gxx $argsList 2>> $log
     }
@@ -336,7 +360,11 @@ foreach ($test in $tests) {
 $ErrorActionPreference = $eapBeforeBuild
 
 } finally {
-    Remove-Item -LiteralPath $objDir -Recurse -Force -ErrorAction SilentlyContinue
+    # Not when the caller supplied it: coverage.ps1 passes -OutDir precisely so
+    # it can read the .gcda back afterwards, and owns the directory itself.
+    if (-not $OutDir) {
+        Remove-Item -LiteralPath $objDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host ""

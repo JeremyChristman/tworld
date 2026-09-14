@@ -16,12 +16,23 @@ both and sorts on branches.
 
 WHAT IS MEASURED, AND WHAT IS NOT
 
-Only the UNIT layer. The end-to-end tests drive a separately built executable
-that carries no instrumentation, so nothing they exercise appears here -- which
-means these numbers UNDERSTATE what the suite as a whole reaches. Building the
-whole CMake tree with --coverage and running a batch verification would measure
-mslogic.c, series.c, solution.c and encoding.c in one pass, and is the obvious
-next step for anyone who wants a real number.
+The UNIT layer, plus the Qt layer for oshw-qt\ ONLY. The end-to-end tests drive
+a separately built executable that carries no instrumentation, so nothing they
+exercise appears here -- which means these numbers UNDERSTATE what the suite as
+a whole reaches. Building the whole CMake tree with --coverage and running a
+batch verification would measure mslogic.c, series.c, solution.c and encoding.c
+in one pass, and is the obvious next step for anyone who wants a real number.
+
+🔴 THE QT RUN INSTRUMENTS oshw-qt\ AND NOTHING ELSE, and that boundary is the
+point. A Qt test links most of the game core as well; instrumenting that too
+would fold whatever the main window happens to touch into mslogic.c's and
+series.c's figures, silently changing the meaning of sixteen rows that have
+always meant "what the unit layer reaches". test\run-qt-tests.ps1 -Coverage
+applies --coverage per source, and only under oshw-qt\.
+
+⚠ AND IT SKIPS WITHOUT Qt. A machine with no Qt5 gets the unit rows and NO
+oshw-qt rows at all -- not zeroed ones. -CheckBaseline reports those as missing
+rather than as regressions, because absent is not the same as uncovered.
 
 Test files and the fixture headers are EXCLUDED from the metric. Including them
 is not merely noise: dirinput_test.c alone is 203 lines against the 33 lines of
@@ -123,7 +134,26 @@ try {
         Write-Warning "the unit suite FAILED under coverage instrumentation. The numbers below still describe what ran, but treat them as provisional."
     }
 
-    $gcdaFiles = @(Get-ChildItem -LiteralPath $work -Filter *.gcda -File -ErrorAction SilentlyContinue)
+    # And the Qt layer, which is the only thing that reaches oshw-qt\ at all.
+    # Same -Coverage/-OutDir contract; it instruments ONLY the oshw-qt sources,
+    # so the sixteen rows above keep meaning "what the unit layer reaches".
+    #
+    # ⚠ IT SKIPS CLEANLY WITHOUT Qt and exits 0 when it does, so a machine with
+    # no Qt5 still gets the unit numbers -- and gets no oshw-qt rows, which
+    # -CheckBaseline would then report as missing rather than as zero. That is
+    # the honest outcome: absent is not the same as uncovered.
+    Write-Host "building and running the Qt layer with --coverage..." -ForegroundColor Cyan
+    $qtArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-qt-tests.ps1"),
+                "-Coverage", "-OutDir", $work)
+    if ($Filter) { $qtArgs += @("-Filter", $Filter) }
+    & powershell @qtArgs | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "the Qt layer FAILED under coverage instrumentation. Same caveat as above."
+    }
+
+    # -Recurse: run-tests.ps1 puts its objects straight in $work, but run-qt-tests.ps1
+    # gives each test its own subdirectory.
+    $gcdaFiles = @(Get-ChildItem -LiteralPath $work -Filter *.gcda -File -Recurse -ErrorAction SilentlyContinue)
     if ($gcdaFiles.Count -eq 0) {
         throw "no .gcda files were produced in $work -- the instrumented binaries did not run"
     }
@@ -137,7 +167,8 @@ try {
     Push-Location $root
     try {
         foreach ($gcda in $gcdaFiles) {
-            & $gcov --json-format --branch-probabilities --object-directory $work $gcda.FullName 2>&1 | Out-Null
+            # The .gcno sits beside its .gcda, which is not always $work itself.
+            & $gcov --json-format --branch-probabilities --object-directory $gcda.DirectoryName $gcda.FullName 2>&1 | Out-Null
         }
     } finally {
         Pop-Location
@@ -257,9 +288,9 @@ try {
     $overallBr = if ($totBr) { [math]::Round(100.0 * $totBrHit / $totBr, 1) } else { 0 }
     Write-Host ("  {0,-28} {1,6:N1}%  {2,6:N1}%   OVERALL" -f "", $overallLine, $overallBr)
     Write-Host ""
-    Write-Host "  These cover the UNIT layer only; the end-to-end tests run an uninstrumented"
-    Write-Host "  build, so what they reach is not counted. See the header of this script."
-
+    Write-Host "  The UNIT layer plus the Qt layer's reach into oshw-qt\; the end-to-end tests run"
+    Write-Host "  an uninstrumented build, so what they reach is not counted, and the core sources"
+    Write-Host "  are NOT instrumented by the Qt run. See the header of this script."
     if ($UpdateBaseline) {
         Assert-CleanTree $root "coverage.ps1 -UpdateBaseline" $Force.IsPresent
         $dir = Split-Path -Parent $baselineFile
@@ -320,6 +351,28 @@ try {
             if ($r.BranchPct -lt [math]::Round($wasPct, 1) - 0.05) {
                 $regressed += ("{0}: branch coverage fell from {1:N1}% to {2:N1}%" -f $r.File, $wasPct, $r.BranchPct)
             }
+        }
+        # 🔴 A BASELINE ROW WITH NO MEASUREMENT IS NOT A PASS. The loop above
+        # walks the MEASURED rows and skips anything absent from the baseline,
+        # which is right for a newly added file -- but the reverse is a hole:
+        # the oshw-qt rows exist only when the Qt layer ran, and a machine where
+        # it SKIPPED (no Qt5) would compare nothing for them and report success.
+        # That is the "gate that always passes" shape this same function already
+        # carries a note about, and it is a failure here for the same reason:
+        # -CheckBaseline exists so a release can assert these numbers are still
+        # true, and a number nobody measured cannot be asserted.
+        $measured = @{}
+        foreach ($r in $rows) { $measured[$r.File] = $true }
+        $unmeasured = @($baseline.Keys | Where-Object { -not $measured.ContainsKey($_) } | Sort-Object)
+        if ($unmeasured.Count -gt 0) {
+            Write-Host ""
+            Write-Host "these files are in the baseline but were NOT measured:" -ForegroundColor Red
+            foreach ($m in $unmeasured) { Write-Host "  - $m" -ForegroundColor Red }
+            Write-Host "  Either the layer that covers them did not run -- the Qt layer SKIPS when" -ForegroundColor Yellow
+            Write-Host "  Qt5 is not installed, and the oshw-qt rows come only from it -- or the" -ForegroundColor Yellow
+            Write-Host "  file is gone. Absent is not the same as uncovered, so this is not scored" -ForegroundColor Yellow
+            Write-Host "  as a regression; it is reported as an unanswered question." -ForegroundColor Yellow
+            exit 1
         }
         if ($regressed.Count -gt 0) {
             Write-Host ""
