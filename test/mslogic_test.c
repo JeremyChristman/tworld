@@ -317,7 +317,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(265);
+    tw_expect_atleast(268);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1166,6 +1166,69 @@ int main(void)
 	CHECK_MSG(creatures[1]->pos != creatures[2]->pos,
 		  "both tanks are still on the shared cell, so neither was ever left"
 		  " tile-less and this case exercised nothing");
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a Walker blocked by fire KEEPS its slip-list slot");
+    {
+	/* FIX_KEEPSLOT_FIRE (`mslogic.c:2103`), unguarded until now.
+	 *
+	 * The keep-or-drop predicate asks "would the terrain underneath have
+	 * refused this move too?" and answers with movelaws[].creature -- a
+	 * per-TILE mask with no notion of which creature is asking. SuperCC's
+	 * canEnter is creature-type aware: FIRE refuses BUG and WALKER. So for a
+	 * walker the entry guard fails outright, tryEnter never runs, `sliding`
+	 * is never cleared, and the slider KEEPS ITS SLOT. Tile World saw
+	 * movelaws[Fire] = {NWSE,NWSE,NWSE}, concluded the terrain permits, and
+	 * dropped the slot instead. Measured on Jacques #922 at ct=834.
+	 *
+	 * ⚠ ONE SLIPPER PROVES NOTHING. Dropping a slot re-appends it at the END
+	 * of the slip list, so with a single slider it lands back at index 0 and
+	 * both forms agree. The reorder is the whole effect, so the list needs a
+	 * SECOND slider for the walker to be reordered past.
+	 *
+	 * ⚠ AND THE DESTINATION NEEDS A CREATURE ON TOP OF THE FIRE. The clause
+	 * lives inside `if (iscreature(floor))` -- it is the occupied-destination
+	 * branch. Fire alone is not enough to reach it.
+	 */
+	int	n, walkerslot, ballslot;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 2, 2, FIX_CHIP_SOUTH);
+
+	/* ⚠ THE CREATURES MUST WALK ONTO THE ICE, not start on it. Sliding
+	 * begins when a creature ENTERS a slide tile, so one placed on ice at
+	 * load time is never enlisted -- measured, slipcount stays 0 forever. */
+	fix_settop(&lv, 10, 8, 0x5A);		/* a Walker, facing south */
+	fix_addcreature(&lv, 10, 8);
+	fix_settop(&lv, 10, 9, FIX_ICE);
+	fix_settop(&lv, 10, 10, FIX_ICE);
+	fix_settop(&lv, 10, 11, 0x46);		/* a Fireball on top ...    */
+	fix_setbot(&lv, 10, 11, FIX_FIRE);	/* ... over FIRE            */
+
+	fix_settop(&lv, 20, 18, 0x4A);		/* a Ball: the second slider */
+	fix_addcreature(&lv, 20, 18);
+	fix_settop(&lv, 20, 19, FIX_ICE);
+	fix_settop(&lv, 20, 20, FIX_ICE);
+
+	CHECK_INT(startlevel(&lv), TRUE);
+	/* Tick 8 is when the walker meets the fire. Before that nothing is
+	 * sliding yet; after it the list has drained again. */
+	runticks(8, NIL);
+
+	walkerslot = -1; ballslot = -1;
+	for (n = 0 ; n < slipcount ; ++n) {
+	    if (slips[n].cr->id == Walker) walkerslot = n;
+	    if (slips[n].cr->id == Ball) ballslot = n;
+	}
+	CHECK_MSG(slipcount > 0,
+		  "nothing is on the slip list at all, so this case proves nothing");
+	CHECK_MSG(walkerslot >= 0,
+		  "the Walker was DROPPED from the slip list when a fireball over FIRE"
+		  " blocked it (list holds %d, ball at %d). FIRE refuses a Walker, so"
+		  " the entry guard fails outright and the slider keeps its slot",
+		  slipcount, ballslot);
     }
 
     /* ================================================================== */
