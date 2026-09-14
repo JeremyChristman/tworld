@@ -77,8 +77,9 @@ function Skip([string]$why) {
     Write-Host ""
     Write-Host "########## Qt tests SKIPPED ##########" -ForegroundColor Yellow
     Write-Host "  $why"
-    Write-Host "  These cover oshw-qt\ - the .ccx parser in particular, which"
-    Write-Host "  nothing else in the suite can reach. CI runs them; this machine did not."
+    Write-Host "  These cover oshw-qt\ - the .ccx parser, which nothing else in the"
+    Write-Host "  suite can reach, and the main window itself. CI runs them; this"
+    Write-Host "  machine did not."
     exit 0
 }
 
@@ -170,6 +171,12 @@ $failed  = 0
 $eapBeforeBuild = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 
+# ⚠ try/finally, because the object directory has to go on EVERY exit path, not
+# only the tidy one. Skip() calls exit, and a throw out of the loop leaves it
+# too: a run that died on a NativeCommandError left a tw-qt-tests-<hex> tree of
+# .o files sitting in %TEMP%, which is exactly the orphan this repository asks
+# people not to leave behind. `finally` runs on `exit` in PowerShell 5.1.
+try {
 foreach ($test in $tests) {
     $testObjDir = Join-Path $objDir $test.BaseName
     New-Item -ItemType Directory -Force -Path $testObjDir | Out-Null
@@ -303,7 +310,9 @@ foreach ($test in $tests) {
 
 $ErrorActionPreference = $eapBeforeBuild
 
-Remove-Item -LiteralPath $objDir -Recurse -Force -ErrorAction SilentlyContinue
+} finally {
+    Remove-Item -LiteralPath $objDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host ""
 Write-Host "########## Qt test summary ##########"
