@@ -373,10 +373,12 @@ that runs on from it.
 executed. A test function that stops being called — an early return, a case commented out during
 debugging and never restored — removes coverage while leaving the suite green. **Raise the number
 when you add cases; never lower it to make a run pass.** Lowering it is the bug it exists to report.
-Both runners additionally require the floor to be EXACT — `run-tests.ps1` on Windows and
-`run-sanitizers.sh` on POSIX — because slack in a floor is somewhere a deleted case can hide. A
-count that differs by platform declares both floors behind an `#ifdef`; the binary reports whichever
-one it compiled, as the sixth field of `TWSUMMARY`, so neither runner has to guess.
+**All three runners additionally require the floor to be EXACT** — `run-tests.ps1` on Windows,
+`run-sanitizers.sh` on POSIX and `run-qt-tests.ps1` for the Qt layer — because slack in a floor is
+somewhere a deleted case can hide, and each of them says how many floors it verified rather than
+passing in silence. A count that differs by platform declares both floors behind an `#ifdef`; the
+binary reports whichever one it compiled, as the sixth field of `TWSUMMARY`, so no runner has to
+guess.
 
 `run-tests.ps1` sets `TW_TEST_MACHINE`, which turns on `TWCASE`/`TWSUMMARY` marker lines that the
 runner parses into JUnit XML and JSON. Run a test binary by hand and you get clean output instead.
@@ -487,12 +489,19 @@ misreading in the parser is faithfully reproduced and never caught.
     password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
     `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
     `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
-  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 43 checks, the largest file that ships. It links
+  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 86 checks, the largest file that ships. It links
     the window against most of the core (27 declared sources; `tworld.c` owns `main()` and is
     stubbed) and drives it under `QT_QPA_PLATFORM=offscreen`. What it asserts are DECISIONS, never
     drawings: the jc-37/jc-38 short-message precedence, the death-counter menu, the window title
-    with the `[jc-N]` tag **off by default**, and that a retint always derives from the palette the
-    `.ui` built. ⭐ **It found a false comment on its first run** — `TWTheme.cpp`
+    with the `[jc-N]` tag **off by default**, that a retint always derives from the palette the
+    `.ui` built, and the **score table** — the tablespec→model translation, the jc-36 column spans
+    (including the clamp at the last column and the `'0'`-prefix floor that used to walk off the end
+    of `items`), and the jc-33 legacy styling.
+    🔑 **`DisplayList()` is modal and still testable**: it ends in `g_pApp->exec()`, so a
+    single-shot timer armed before the call inspects the built table from inside that loop and then
+    exits it, which also exercises the teardown — and the teardown is half the point, because the
+    table widget is shared with the level-set picker, the solution list and the help pages.
+    ⭐ **It found a false comment on its first run** — `TWTheme.cpp`
     claimed its factors reproduced the `.ui`'s shade literals exactly, and `Mid` is one off in red
     (`darker(150)` rounds through HSV, 27 not 26); the shipped value has always been 27.
     ⚠ It never takes a path that writes a file: `TWTheme::saveBackground()` calls `savesettings()`,

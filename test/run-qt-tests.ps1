@@ -149,6 +149,7 @@ New-Item -ItemType Directory -Force -Path $objDir | Out-Null
 
 $results = @()
 $failed  = 0
+$floorsChecked = 0
 
 # 🔴 "Continue" FOR THE REST OF THE SCRIPT, AND THIS IS NOT OPTIONAL.
 #
@@ -293,10 +294,34 @@ foreach ($test in $tests) {
         Pop-Location
     }
 
-    $checks = 0; $fails = 0
+    # 🔴 THE CHECK FLOOR IS VERIFIED HERE TOO, and it has to be: tw_expect_atleast(N)
+    # only catches a case that stopped running while N is EXACT, and this layer was
+    # the last one not checking it. run-tests.ps1 and run-sanitizers.sh both do.
+    #
+    # The floor comes from TWSUMMARY's SIXTH field, i.e. from the binary, which is
+    # why tw_end() reports it -- a floor may sit behind an #ifdef and grepping the
+    # source for the first tw_expect_atleast() would read the wrong branch.
+    $checks = 0; $fails = 0; $floor = $null
     foreach ($line in $output) {
-        if ($line -match '^\s*(\d+) checks, (\d+) failures') {
+        if ($line -match '^TWSUMMARY\t[^\t]*\t(\d+)\t(\d+)\t(\d+)\t(\d+)$') {
+            $checks = [int]$Matches[1]; $fails = [int]$Matches[2]; $floor = [int]$Matches[4]
+        } elseif ($line -match '^\s*(\d+) checks, (\d+) failures') {
+            # The human line, for a test that predates the marker.
             $checks = [int]$Matches[1]; $fails = [int]$Matches[2]
+        }
+    }
+    if ($exit -eq 0) {
+        if ($null -eq $floor -or $floor -eq 0) {
+            Write-Host "  $($test.Name) declares no check floor at all" -ForegroundColor Red
+            $failed++
+        } elseif ($floor -ne $checks) {
+            Write-Host ("  {0} floor is {1} but the run reported {2} ({3} of slack)" -f
+                        $test.Name, $floor, $checks, ($checks - $floor)) -ForegroundColor Red
+            Write-Host "  Raise it to the count beside it. Slack in a floor is somewhere a"
+            Write-Host "  deleted case can hide."
+            $failed++
+        } else {
+            $floorsChecked++
         }
     }
     $output | ForEach-Object { Write-Host $_ }
@@ -323,7 +348,7 @@ foreach ($r in $results) {
                 $mark, $r.Name, $r.Checks, $r.Failures, $r.Status)
     $total += $r.Checks
 }
-Write-Host ("  {0} run(s), {1:N0} checks total" -f $results.Count, $total)
+Write-Host ("  {0} run(s), {1:N0} checks total, {2} check floor(s) verified exact" -f $results.Count, $total, $floorsChecked)
 
 if ($failed -gt 0) {
     Write-Host "$failed Qt test run(s) FAILED" -ForegroundColor Red
