@@ -23,10 +23,16 @@
  * ctype calls on a signed char, and it is why every high byte is exercised
  * below rather than a tasteful sample.
  *
- * WHAT THIS DOES NOT COVER: the widgets. TWProgressBar, TWDisplayWidget,
- * TWMainWnd and the score table still have no automated coverage, because they
- * need a QApplication and a paint device and asserting on painted pixels is a
- * different and much weaker kind of test. The gap is named in CLAUDE.md.
+ * WHAT THIS DOES NOT COVER: the widgets. TWProgressBar, TWDisplayWidget and the
+ * score table's drawing still have no automated coverage, because asserting on
+ * painted pixels is a different and much weaker kind of test.
+ *
+ * ⚠ THE OTHER HALF OF THAT SENTENCE NO LONGER HOLDS. It used to read "they need
+ * a QApplication and a paint device", and named TWMainWnd among them. Qt's
+ * `offscreen` platform plugin supplies both with no display, and
+ * mainwnd_test.cpp now runs the real main window that way -- asserting on the
+ * decisions it makes rather than on anything it draws. The limit that survives
+ * is about PIXELS, not about widgets.
  *
  * TESTSRC: ../../oshw-qt/TWTextCoder.cpp
  */

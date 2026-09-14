@@ -37,7 +37,17 @@ prevent.
 
 A test declares the extra sources it needs in a TESTSRC: comment on one of its
 first lines, the same way test\run-tests.ps1 reads TESTFLAGS -- so the knowledge
-lives with the test rather than in a table here that nobody updates.
+lives with the test rather than in a table here that nobody updates. TESTUIC:,
+TESTMOC:, TESTPKG: and TESTNOMAIN: declare the rest; see the note above the
+build loop for what each means.
+
+AND IT IS NO LONGER ONLY THE NON-WIDGETS. The argument above was written when
+the two tests here were both chosen for not being widgets. Qt ships an
+`offscreen` platform plugin, and under it the real TileWorldMainWnd constructs,
+runs and destroys with no display -- so test\qt\mainwnd_test.cpp drives the
+actual main window, the largest file that ships. It asserts on the DECISIONS the
+window makes, never on a painted pixel; that distinction is the real limit, not
+the widget/non-widget one this header used to draw.
 #>
 param(
     [string]$Filter,
@@ -107,42 +117,162 @@ if (-not $tests) {
     throw "no *_test.cpp files found in $qtDir"
 }
 
+# A test declares everything it needs in comments near its top, so the knowledge
+# lives with the test rather than in a table here that nobody updates. All paths
+# are relative to test\qt\.
+#
+#   TESTSRC:     extra sources to build in. MAY APPEAR ON SEVERAL LINES, and
+#                they accumulate -- mainwnd_test.cpp needs 27 of them and one
+#                line would be unreadable. A .c is compiled as C with gcc and a
+#                .cpp as C++ with g++, the same split CMake makes.
+#   TESTUIC:     .ui files to run through uic. The generated ui_*.h lands in the
+#                object directory, which is put on the include path.
+#   TESTMOC:     headers with Q_OBJECT, to run through moc. The generated .cpp
+#                is compiled in.
+#   TESTPKG:     extra pkg-config modules beyond Qt5Xml/Qt5Gui/Qt5Core.
+#   TESTNOMAIN:  sources whose own main() must be renamed out of the way.
+#                TWApp.cpp defines the program's entry point, and a test that
+#                links it has to keep its own.
+function Get-Decls([string]$path, [string]$tag) {
+    # 🔴 @() AROUND THE WHOLE PIPELINE. A single declared item would otherwise
+    # unroll to a bare string and then splat one character per argument -- the
+    # PowerShell 5.1 trap this repository has been bitten by more than once.
+    return @(Select-String -Path $path -Pattern "${tag}:(.*)" |
+             ForEach-Object { ($_.Matches[0].Groups[1].Value -replace '\*/\s*$','').Trim() } |
+             ForEach-Object { $_ -split '\s+' } |
+             Where-Object { $_ })
+}
+
 $objDir = Join-Path ([IO.Path]::GetTempPath()) ("tw-qt-tests-" + [guid]::NewGuid().ToString("N").Substring(0,8))
 New-Item -ItemType Directory -Force -Path $objDir | Out-Null
 
 $results = @()
 $failed  = 0
 
+# 🔴 "Continue" FOR THE REST OF THE SCRIPT, AND THIS IS NOT OPTIONAL.
+#
+# Everything below redirects a NATIVE command's stderr -- the compiler's into a
+# log, the test binary's into a variable -- and under $ErrorActionPreference =
+# "Stop" PowerShell 5.1 wraps every such line in a NativeCommandError, which is
+# terminating. It is the REDIRECTION that does it, not the exit code: an
+# unredirected native command may print to stderr and exit 128 without throwing,
+# and a redirected one throws on a single warning while exiting 0. Measured all
+# four ways; the rule is written up at the bottom of .github/workflows/corpus.yml.
+#
+# This was latent here from the day the runner was written and never fired,
+# because the only two sources any test declared compile without a warning. The
+# moment mainwnd_test.cpp declared the shipping sources -- which do warn -- the
+# first -Wunused-parameter killed the run, with the compiler's message wrapped
+# in a PowerShell error that named none of it.
+#
+# Failure is detected the way it already was and has to be: $LASTEXITCODE, and
+# the log is printed when it is nonzero.
+$eapBeforeBuild = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 foreach ($test in $tests) {
-    # Extra sources, declared by the test itself. Paths are relative to test\qt\.
-    $extraSrc = @()
-    $decl = Select-String -Path $test.FullName -Pattern 'TESTSRC:(.*)' |
-            Select-Object -First 1
-    if ($decl) {
-        $extraSrc = @(($decl.Matches[0].Groups[1].Value -replace '\*/\s*$','').Trim() -split '\s+' |
-                      Where-Object { $_ } |
-                      ForEach-Object { Join-Path $qtDir $_ })
-    }
+    $testObjDir = Join-Path $objDir $test.BaseName
+    New-Item -ItemType Directory -Force -Path $testObjDir | Out-Null
+
+    $extraSrc = @(Get-Decls $test.FullName 'TESTSRC' | ForEach-Object { Join-Path $qtDir $_ })
+    $uiFiles  = @(Get-Decls $test.FullName 'TESTUIC' | ForEach-Object { Join-Path $qtDir $_ })
+    $mocFiles = @(Get-Decls $test.FullName 'TESTMOC' | ForEach-Object { Join-Path $qtDir $_ })
+    $extraPkg = @(Get-Decls $test.FullName 'TESTPKG')
+    $noMain   = @(Get-Decls $test.FullName 'TESTNOMAIN' |
+                  ForEach-Object { (Resolve-Path (Join-Path $qtDir $_) -ErrorAction SilentlyContinue).Path })
 
     $exe = Join-Path $objDir ($test.BaseName + ".exe")
     $log = Join-Path $objDir ($test.BaseName + ".cc.log")
+    Set-Content -LiteralPath $log -Value "" -NoNewline
+
+    # Per-test flags, because a test that asks for Qt5Widgets should not make
+    # every other test link it.
+    $testCflags = $cflags
+    $testLibs   = $libs
+    if ($extraPkg.Count -gt 0) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"   # native stderr; see the note above
+        $moreC = & $pkgconfig --cflags $extraPkg
+        $moreCOk = ($LASTEXITCODE -eq 0)
+        $moreL = & $pkgconfig --libs $extraPkg
+        $moreLOk = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prev
+        if (-not $moreCOk -or -not $moreLOk) { Skip "pkg-config does not know $($extraPkg -join ' ') - needed by $($test.Name)" }
+        $testCflags = "$cflags $moreC"
+        # ⚠ SDL2's pkg-config answer carries -Dmain=SDL_main and -lSDL2main,
+        # which exist to hijack main() for SDL's own entry point. A test owns its
+        # main(); CMake gets away with it because tworld.c is built for exactly
+        # that. Strip them, and -mwindows with them, or the binary has no console
+        # to print its results to.
+        $testCflags = ($testCflags -replace '-Dmain=SDL_main','')
+        $testLibs   = "$libs $moreL" -replace '-lSDL2main','' -replace '-mwindows',''
+    }
+    $cflagArr = @($testCflags -split '\s+' | Where-Object { $_ })
+    $libArr   = @($testLibs   -split '\s+' | Where-Object { $_ })
+
+    # uic and moc first: everything else may include what they generate.
+    #
+    # Checked here rather than beside g++ at the top, because only a test that
+    # DECLARES them needs them -- skipping the .ccx and codec tests on a machine
+    # that has the Qt libraries but not the designer tools would be a worse
+    # answer than running them.
+    $uicExe = Join-Path $binDir "uic.exe"
+    $mocExe = Join-Path $binDir "moc.exe"
+    if ($uiFiles.Count  -gt 0 -and -not (Test-Path $uicExe)) { Skip "no uic at $uicExe - needed by $($test.Name)" }
+    if ($mocFiles.Count -gt 0 -and -not (Test-Path $mocExe)) { Skip "no moc at $mocExe - needed by $($test.Name)" }
+
+    $generated = @()
+    $genFailed = $false
+    foreach ($ui in $uiFiles) {
+        $out = Join-Path $testObjDir ("ui_" + [IO.Path]::GetFileNameWithoutExtension($ui) + ".h")
+        & $uicExe $ui -o $out 2>> $log
+        if ($LASTEXITCODE -ne 0) { $genFailed = $true }
+    }
+    foreach ($h in $mocFiles) {
+        $out = Join-Path $testObjDir ("moc_" + [IO.Path]::GetFileNameWithoutExtension($h) + ".cpp")
+        & $mocExe $h -o $out 2>> $log
+        if ($LASTEXITCODE -ne 0) { $genFailed = $true }
+        $generated += $out
+    }
+
+    # The object directory is on the include path so setupUi's header is found,
+    # and so is each declared source's own directory.
+    $incArr = @("-I", $testObjDir, "-I", $repoRoot, "-I", (Join-Path $repoRoot "generic"),
+                "-I", (Join-Path $repoRoot "oshw-qt"))
 
     # -std=gnu++11 to match what CMake builds oshw-qt with; gnu, not strict
     # ANSI, for the same reason the C runner uses gnu11 (CLAUDE.md 3.3).
-    $argsList = @("-std=gnu++11", "-Wall", "-Wextra") +
-                ($cflags -split '\s+' | Where-Object { $_ }) +
-                @("-o", $exe, $test.FullName) + $extraSrc +
-                ($libs -split '\s+' | Where-Object { $_ })
+    $objs = @()
+    if (-not $genFailed) {
+        foreach ($src in @($extraSrc + $generated)) {
+            $obj = Join-Path $testObjDir ((Split-Path -Leaf $src) + ".o")
+            $isC = ([IO.Path]::GetExtension($src) -eq ".c")
+            $full = (Resolve-Path $src -ErrorAction SilentlyContinue).Path
+            $defs = @()
+            if ($full -and ($noMain -contains $full)) { $defs = @("-Dmain=tw_unused_entry_point") }
+            $compiler = if ($isC) { Join-Path $binDir "gcc.exe" } else { $gxx }
+            $std      = if ($isC) { "-std=gnu11" } else { "-std=gnu++11" }
+            $srcArgs  = @($std, "-Wall", "-Wextra") + $defs + $incArr + $cflagArr +
+                        @("-c", $src, "-o", $obj)
+            & $compiler $srcArgs 2>> $log
+            if ($LASTEXITCODE -ne 0) { $genFailed = $true; break }
+            $objs += $obj
+        }
+    }
 
-    & $gxx $argsList 2> $log
-    if ($LASTEXITCODE -ne 0) {
+    if (-not $genFailed) {
+        $argsList = @("-std=gnu++11", "-Wall", "-Wextra") + $incArr + $cflagArr +
+                    @("-o", $exe, $test.FullName) + $objs + $libArr
+        & $gxx $argsList 2>> $log
+    }
+
+    if ($genFailed -or $LASTEXITCODE -ne 0) {
         Write-Host "=== $($test.Name) : COMPILE FAILED ===" -ForegroundColor Red
         Get-Content $log -TotalCount 25 | ForEach-Object { Write-Host "  $_" }
         $results += [pscustomobject]@{ Name = $test.Name; Checks = 0; Failures = 0; Status = "compile-failed" }
         $failed++
         continue
     }
-
     # From the REPOSITORY ROOT: the .ccx cases read the real data\*.ccx files
     # that ship here, and the test resolves them relative to the working
     # directory. Running from anywhere else would silently test fewer files.
@@ -170,6 +300,8 @@ foreach ($test in $tests) {
         Status = $(if ($exit -eq 0) { "passed" } else { "failed" })
     }
 }
+
+$ErrorActionPreference = $eapBeforeBuild
 
 Remove-Item -LiteralPath $objDir -Recurse -Force -ErrorAction SilentlyContinue
 

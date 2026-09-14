@@ -22,9 +22,21 @@ namespace
 	 */
 	char const *const BGCOLOR_SETTING = "bgcolor";
 
-	/* The five shades TWMainWnd.ui derives from #285080. These factors
-	 * reproduce its literals exactly: Light 60,120,192 / Midlight
-	 * 50,100,160 / Dark 20,40,64 / Mid 26,53,85.
+	/* The five shades TWMainWnd.ui derives from #285080. Three of the four
+	 * factors reproduce its literals exactly -- Light 60,120,192 / Midlight
+	 * 50,100,160 / Dark 20,40,64 -- and MID DOES NOT: the .ui says 26,53,85
+	 * and darker(150) gives 27,53,85.
+	 *
+	 * ⚠ That is not a rounding mistake to correct. QColor::darker() scales
+	 * the HSV VALUE (128 -> 85) and derives red from the ratio, so red is
+	 * 40 * 85/128 = 26.56 -> 27; the .ui's literal is the truncation of
+	 * 40/1.5 = 26.667. Since the constructor replaces the .ui's palette with
+	 * recolor()'s, 27 is what actually ships, and has all along. One step in
+	 * 255 in one channel of one role is invisible, and the derivation is the
+	 * principled form -- the literal is the approximation here. The claim
+	 * that all four were exact was written in c150c41 and went unchecked
+	 * until test/qt/mainwnd_test.cpp measured it; that test now pins the
+	 * value, so a change to any factor is noticed.
 	 */
 	int const LIGHT_FACTOR    = 150;
 	int const MIDLIGHT_FACTOR = 125;

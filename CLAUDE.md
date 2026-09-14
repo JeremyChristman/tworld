@@ -472,11 +472,14 @@ misreading in the parser is faithfully reproduced and never caught.
   toggles apart, and `mslogic.c:234` gates `FIX_KEEPSLOT_OCCUPANT` in a way that suggests
   `NO_FIX_KEEPSLOT_BLOCK_OCCUPANT` may be **subsumed** by it rather than independent. Worth an hour
   before anyone trusts that matrix row as two separate witnesses.
-- **No WIDGET is tested**, still — the score table's column spans, the color picker, the tileset
-  menu, the death counter are all verified by hand, because each needs a `QApplication` and a paint
-  device and asserting on painted pixels is a much weaker test than it looks. **2 of `oshw-qt/`'s 8
-  files are covered**, and both were picked on the same principle: cover the ones that are *not*
-  widgets.
+- **No PAINTED PIXEL is asserted on**, and that limit is deliberate — but "no widget is tested" is
+  no longer true. Qt ships an `offscreen` platform plugin, and under it the real `TileWorldMainWnd`
+  constructs, runs and destroys with no display at all, which is what
+  `test/qt/mainwnd_test.cpp` does. **3 of `oshw-qt/`'s 8 files are covered directly**, and
+  `TWTheme.cpp` and `TWApp.cpp` are exercised through the third.
+  - Still verified only by hand: the score table's column spans and legacy styling, the color
+    picker's own dialog, `TWProgressBar`, `TWDisplayWidget`, and anything whose result is a
+    drawn image rather than a decision.
   - `test/qt/ccmetadata_test.cpp` — `CCMetaData.cpp`, the `.ccx` parser, 90 checks. The only parser
     in the tree **no other layer can reach**: `readextensions()` returns immediately when
     `g_pMainWnd` is null, so batch mode, the e2e cases and every fuzz target skip it by construction.
@@ -484,6 +487,16 @@ misreading in the parser is faithfully reproduced and never caught.
     password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
     `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
     `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
+  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 43 checks, the largest file that ships. It links
+    the window against most of the core (27 declared sources; `tworld.c` owns `main()` and is
+    stubbed) and drives it under `QT_QPA_PLATFORM=offscreen`. What it asserts are DECISIONS, never
+    drawings: the jc-37/jc-38 short-message precedence, the death-counter menu, the window title
+    with the `[jc-N]` tag **off by default**, and that a retint always derives from the palette the
+    `.ui` built. ⭐ **It found a false comment on its first run** — `TWTheme.cpp`
+    claimed its factors reproduced the `.ui`'s shade literals exactly, and `Mid` is one off in red
+    (`darker(150)` rounds through HSV, 27 not 26); the shipped value has always been 27.
+    ⚠ It never takes a path that writes a file: `TWTheme::saveBackground()` calls `savesettings()`,
+    so only the live-preview entry (`bSave` false) is exercised. See docs/adr/0005.
   Qt-linked tests need their own runner: `test\run-qt-tests.ps1`.
 - ~~`unslist.c` is never exercised~~ — **closed, and the claim was wrong twice over.** `unslist.c`
   is live and shipped: `res/rc` line 6 sets `UnsolvableList=unslist.txt` and `series.c:404` marks
@@ -1019,9 +1032,12 @@ own agent.** Review diffs to it the way you review code, not the way you skim co
 - **"Does my change affect replay?"**: build the exe and batch-verify a corpus:
   `tworld2.exe -b -r -S <savedir> <set>.dac`, reading **stdout**, from a scratch working directory.
   Remember §3.5: this cannot see input-layer changes.
-- **A GUI question**: essentially no automated coverage — build it, run it, and look. The exception
-  is `CCMetaData.cpp` (`test/qt/ccmetadata_test.cpp`, run by `test/run-qt-tests.ps1`); if what you
-  are touching is Qt-linked but not a widget, that runner is where a test can go.
+- **A GUI question**: if it is a DECISION the window makes — what the message bar shows, which menu
+  items are visible, what the title reads, what a palette role becomes — `test/qt/mainwnd_test.cpp`
+  can assert it, because the real window runs there under the offscreen platform. If it is how
+  something is DRAWN, there is still no automated coverage: build it, run it, and look. Either way
+  `test/run-qt-tests.ps1` is the runner, and a test declares the sources, `.ui`, `moc` headers and
+  pkg-config modules it needs in `TESTSRC:`/`TESTUIC:`/`TESTMOC:`/`TESTPKG:` comments of its own.
 - **Driving the GUI for a playtest**: press-and-hold opens a menu but releasing on an item does not
   pick it, and arrow keys inside an open menu do nothing. What works is clicking the menu title
   (down+up in place), then a **second separate click** on the item, locating both through UIA
