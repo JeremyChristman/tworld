@@ -29,6 +29,35 @@
 #                            case the fix guards. Closing it needs a deliberate,
 #                            commented escape hatch in the fixture builder.
 #
+# 🔴 THE "A FIXTURE CAN CLOSE MOST OF THESE" ESTIMATE WAS TOO OPTIMISTIC, AND
+# HERE IS THE DIVIDING LINE, MEASURED. Four toggles are now guarded by named unit
+# cases, and every one of them is a LOAD-TIME or SINGLE-MOVE fix:
+#   FIX_CHIP_PICKUP_ON_BLOCK · FIX_CHIP_START_FOREGROUND
+#   FIX_CHIP_ONTO_BURIED_BLOCK · FIX_MONSTERLIST_CHIP_TILES
+# Three more were attempted and withdrawn, and all three fail for the same
+# reason: their effect is INTRA-TICK, and the observable state converges before
+# any assertion can run.
+#
+#   NO_FIX_SLIDE_FACING      ⚠ ATTEMPTED AND WITHDRAWN. It re-faces a creature
+#                            arriving on ice or a force floor. But the force
+#                            floor's own push already sets that direction, so
+#                            both forms agree: swept ticks 3-6 with a ball
+#                            crossing a south force floor and the state is
+#                            IDENTICAL at every one -- (5,10) dir=8 then (6,11)
+#                            dir=4, in both builds. The creature never observably
+#                            rests on the tile. The fork measured this fix over a
+#                            real corpus (40 of 108 navy levels), which is the
+#                            scale at which it shows.
+#
+#   NO_FIX_TELEPORT_EXIT_CHIP_TILE
+#                            ⚠ ATTEMPTED AND WITHDRAWN. Reads as a clean
+#                            positional difference -- Tile World skipped to a
+#                            later teleport -- but the guard is scoped to
+#                            CMM_TELEPORTPUSH, i.e. a BLOCK being pushed through
+#                            a teleport, not ordinary exit selection. A three
+#                            teleport fixture with a decorative Chip tile on the
+#                            exit sends Chip to the same cell in both builds.
+#
 #   NO_FIX_TRAP_SHUT_BEHIND  ⚠ ATTEMPTED AND WITHDRAWN, 2026-09-13. Its effect
 #                            lasts ONE TICK: stepping off a brown button into
 #                            that button's own trap clears CS_RELEASED, and the
