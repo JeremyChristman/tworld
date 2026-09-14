@@ -490,7 +490,7 @@ jobs:
       # 🔴 THE RUNNER SKIPS WHEN QT IS MISSING, which is right for a developer
       # machine and would be a silent hole here -- so this step asserts it
       # actually RAN rather than trusting the exit code.
-      - name: Qt tests (oshw-qt, the .ccx parser)
+      - name: Qt tests (oshw-qt -- the .ccx parser and the main window)
         run: |
           # See corpus.yml's cleanup step: capturing a native command's stderr
           # under EAP="Stop" turns each line into a terminating NativeCommandError,
