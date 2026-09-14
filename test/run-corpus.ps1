@@ -91,7 +91,10 @@ param(
     # Reuse an already-copied scratch corpus instead of copying again. The copy
     # is the slow part; this makes a second build's run much faster.
     [string]$ScratchCorpus,
-    [switch]$KeepScratch
+    [switch]$KeepScratch,
+    # Exercises Compare-Runs against synthesized recordings. Needs NO corpus,
+    # which is the point: it is the one part of this script CI can run.
+    [switch]$SelfTest
 )
 $ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -128,17 +131,37 @@ function Compare-Runs([string]$a, [string]$b) {
     Write-Host "########## corpus comparison ##########"
     Write-Host ("  {0,-28} {1,4} sets  {2,6} valid  {3,5} invalid" -f (Split-Path -Leaf $a), $ta.sets, $ta.valid, $ta.invalid)
     Write-Host ("  {0,-28} {1,4} sets  {2,6} valid  {3,5} invalid" -f (Split-Path -Leaf $b), $tb.sets, $tb.valid, $tb.invalid)
+    if ($ta.sets -ne $tb.sets) {
+        Write-Host ("  THESE TWO RUNS DID NOT COVER THE SAME SETS ({0} vs {1})." -f $ta.sets, $tb.sets) -ForegroundColor Red
+        Write-Host "     A comparison across different set lists is not a differential. Every set" -ForegroundColor Red
+        Write-Host "     present in only one of the two runs is listed as a difference below." -ForegroundColor Red
+    }
 
     $differing = @()
     # The per-set stdout is the real comparison: it names WHICH levels were
     # judged invalid, so a swap of one valid for one invalid -- which the totals
     # would hide completely -- shows up here.
-    foreach ($f in (Get-ChildItem -LiteralPath $a -Filter *.out -File)) {
-        $other = Join-Path $b $f.Name
-        if (-not (Test-Path $other)) { $differing += "$($f.Name) (missing in the other run)"; continue }
-        $ha = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
-        $hb = (Get-FileHash -LiteralPath $other -Algorithm SHA256).Hash
-        if ($ha -ne $hb) { $differing += $f.Name }
+    #
+    # 🔴 THE UNION OF BOTH LISTINGS, NOT $a's ALONE. This loop used to walk only
+    # $a, which left it blind in one direction: a set recorded by the NEW run but
+    # absent from the baseline was never looked at, and the run still printed
+    # "IDENTICAL ... No recorded solution changed its verdict."
+    #
+    # Found 2026-09-14 while rehearsing the corpus CI job, by accident -- a
+    # 6-set baseline compared against a 289-set head run reported IDENTICAL
+    # over 6. The set totals are printed directly above and were never compared
+    # to each other. -SelfTest now covers both directions.
+    $aOut = @(Get-ChildItem -LiteralPath $a -Filter *.out -File | ForEach-Object { $_.Name })
+    $bOut = @(Get-ChildItem -LiteralPath $b -Filter *.out -File | ForEach-Object { $_.Name })
+    $names = @($aOut + $bOut | Sort-Object -Unique)
+    foreach ($name in $names) {
+        $fa = Join-Path $a $name
+        $fb = Join-Path $b $name
+        if (-not (Test-Path $fb)) { $differing += "$name (recorded only in $(Split-Path -Leaf $a))"; continue }
+        if (-not (Test-Path $fa)) { $differing += "$name (recorded only in $(Split-Path -Leaf $b))"; continue }
+        $ha = (Get-FileHash -LiteralPath $fa -Algorithm SHA256).Hash
+        $hb = (Get-FileHash -LiteralPath $fb -Algorithm SHA256).Hash
+        if ($ha -ne $hb) { $differing += $name }
     }
 
     # The per-set STDERR, compared separately and advisorily. It carries the
@@ -159,17 +182,22 @@ function Compare-Runs([string]$a, [string]$b) {
     # and failing a release over a reworded message would train people to ignore
     # this script. Read it, explain it, then ship.
     $errDiffering = @()
-    foreach ($f in (Get-ChildItem -LiteralPath $a -Filter *.err -File)) {
-        $other = Join-Path $b $f.Name
-        if (-not (Test-Path $other)) { $errDiffering += "$($f.Name) (missing in the other run)"; continue }
-        $na = ((Get-Content -LiteralPath $f.FullName -Raw) -replace '\[[^\]]*\.c:\d+\]', '[SRC]') -replace 'tworld-corpus-[0-9a-f]{32}', 'tworld-corpus-SCRATCH'
-        $nb = ((Get-Content -LiteralPath $other   -Raw) -replace '\[[^\]]*\.c:\d+\]', '[SRC]') -replace 'tworld-corpus-[0-9a-f]{32}', 'tworld-corpus-SCRATCH'
-        if ($na -ne $nb) { $errDiffering += $f.Name }
+    $aErr = @(Get-ChildItem -LiteralPath $a -Filter *.err -File | ForEach-Object { $_.Name })
+    $bErr = @(Get-ChildItem -LiteralPath $b -Filter *.err -File | ForEach-Object { $_.Name })
+    $errNames = @($aErr + $bErr | Sort-Object -Unique)
+    foreach ($name in $errNames) {
+        $fa = Join-Path $a $name
+        $fb = Join-Path $b $name
+        if (-not (Test-Path $fb)) { $errDiffering += "$name (recorded only in $(Split-Path -Leaf $a))"; continue }
+        if (-not (Test-Path $fa)) { $errDiffering += "$name (recorded only in $(Split-Path -Leaf $b))"; continue }
+        $na = ((Get-Content -LiteralPath $fa -Raw) -replace '\[[^\]]*\.c:\d+\]', '[SRC]') -replace 'tworld-corpus-[0-9a-f]{32}', 'tworld-corpus-SCRATCH'
+        $nb = ((Get-Content -LiteralPath $fb -Raw) -replace '\[[^\]]*\.c:\d+\]', '[SRC]') -replace 'tworld-corpus-[0-9a-f]{32}', 'tworld-corpus-SCRATCH'
+        if ($na -ne $nb) { $errDiffering += $name }
     }
-    $errCount = (Get-ChildItem -LiteralPath $a -Filter *.err -File).Count
+    $errCount = $errNames.Count
     Write-Host ""
     if ($differing.Count -eq 0) {
-        Write-Host ("  IDENTICAL: 0 of {0} per-set outputs differ" -f (Get-ChildItem -LiteralPath $a -Filter *.out -File).Count) -ForegroundColor Green
+        Write-Host ("  IDENTICAL: 0 of {0} per-set outputs differ" -f $names.Count) -ForegroundColor Green
         Write-Host "  No recorded solution changed its verdict."
     Write-Host ""
     if ($errDiffering.Count -eq 0) {
@@ -217,6 +245,123 @@ function Compare-Runs([string]$a, [string]$b) {
     }
 
     return 1
+}
+
+# ---------------------------------------------------------------- self test --
+#
+# 🔴 WHY THIS EXISTS. Compare-Runs walked only $a's listing, so a set recorded
+# by the NEW run but absent from the baseline was never examined -- and the run
+# still printed "IDENTICAL ... No recorded solution changed its verdict." A
+# 6-set baseline compared against a 289-set head run reported IDENTICAL over 6,
+# with the two set totals printed one line above each other and never compared.
+# Case 4 below is that exact bug. Found 2026-09-14 by rehearsing the corpus CI
+# job, and only by accident: the second recording was run without -Filter.
+#
+# This is a gate that reports on gates, so it gets its own tests.
+
+if ($SelfTest) {
+    $root = Join-Path $env:TEMP ("run-corpus-selftest-" + [guid]::NewGuid().ToString("N"))
+
+    function New-FakeRun([string]$dir, [hashtable]$sets) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $lines = @()
+        foreach ($k in @($sets.Keys | Sort-Object)) {
+            $s = $sets[$k]
+            [IO.File]::WriteAllText((Join-Path $dir "$k.out"), $s.out)
+            [IO.File]::WriteAllText((Join-Path $dir "$k.err"), $s.err)
+            $lines += ("{0}`t{1}`t{2}`t0" -f $k, $s.valid, $s.invalid)
+        }
+        [IO.File]::WriteAllText((Join-Path $dir "summary.tsv"), (($lines -join "`r`n") + "`r`n"))
+    }
+    function Rec([string]$out, [string]$err, [int]$valid, [int]$invalid) {
+        return @{ out = $out; err = $err; valid = $valid; invalid = $invalid }
+    }
+
+    $okOut  = "  Valid solutions: 149`r`nInvalid solutions:   0`r`n"
+    $badOut = "  Valid solutions: 148`r`nInvalid solutions:   1`r`n"
+    $hexA   = "a" * 32
+    $hexB   = "b" * 32
+
+    # -Compare is the OLDER run and -Against the newer, matching the recording
+    # path's own `Compare-Runs (Resolve-Out $Against) $outDir`. So in every case
+    # here $a is "baseline" and $b is "head".
+    $cases = @(
+        @{ name = "identical runs pass"
+           a = @{ "S1" = (Rec $okOut "warn`r`n" 149 0); "S2" = (Rec $okOut "" 38 0) }
+           b = @{ "S1" = (Rec $okOut "warn`r`n" 149 0); "S2" = (Rec $okOut "" 38 0) }
+           code = 0; expect = "IDENTICAL: 0 of 2 per-set outputs differ" },
+
+        @{ name = "a changed verdict fails"
+           a = @{ "S1" = (Rec $okOut  "" 149 0) }
+           b = @{ "S1" = (Rec $badOut "" 148 1) }
+           code = 1; expect = "1 set(s) DIFFER" },
+
+        @{ name = "a set the NEW run did not record fails"
+           a = @{ "S1" = (Rec $okOut "" 149 0); "S2" = (Rec $okOut "" 38 0) }
+           b = @{ "S1" = (Rec $okOut "" 149 0) }
+           code = 1; expect = "S2.out (recorded only in baseline)" },
+
+        @{ name = "a set ONLY the new run recorded fails (the 2026-09-14 regression)"
+           a = @{ "S1" = (Rec $okOut "" 149 0) }
+           b = @{ "S1" = (Rec $okOut "" 149 0); "S2" = (Rec $okOut "" 38 0) }
+           code = 1; expect = "S2.out (recorded only in head)" },
+
+        @{ name = "the same gap is reported for the warning stream too"
+           a = @{ "S1" = (Rec $okOut "" 149 0) }
+           b = @{ "S1" = (Rec $okOut "" 149 0); "S2" = (Rec $okOut "" 38 0) }
+           code = 1; expect = "S2.err (recorded only in head)" },
+
+        @{ name = "mismatched set counts are called out by name"
+           a = @{ "S1" = (Rec $okOut "" 149 0) }
+           b = @{ "S1" = (Rec $okOut "" 149 0); "S2" = (Rec $okOut "" 38 0) }
+           code = 1; expect = "THESE TWO RUNS DID NOT COVER THE SAME SETS (1 vs 2)" },
+
+        @{ name = "differing warnings are advisory, not a verdict"
+           a = @{ "S1" = (Rec $okOut "bad tile at 4,5`r`n" 149 0) }
+           b = @{ "S1" = (Rec $okOut "bad tile at 6,7`r`n" 149 0) }
+           code = 0; expect = "warnings: 1 of 1 set(s) print something different" },
+
+        @{ name = "a moved __LINE__ is normalized away"
+           a = @{ "S1" = (Rec $okOut "[C:/r/mslogic.c:4416] bad tile`r`n" 149 0) }
+           b = @{ "S1" = (Rec $okOut "[C:/r/mslogic.c:4501] bad tile`r`n" 149 0) }
+           code = 0; expect = "warnings: identical across all 1 set(s)" },
+
+        @{ name = "the scratch directory name is normalized away"
+           a = @{ "S1" = (Rec $okOut "cannot read tworld-corpus-$hexA\x.dat`r`n" 149 0) }
+           b = @{ "S1" = (Rec $okOut "cannot read tworld-corpus-$hexB\x.dat`r`n" 149 0) }
+           code = 0; expect = "warnings: identical across all 1 set(s)" }
+    )
+
+    Write-Host ""
+    Write-Host "########## run-corpus self test ##########"
+    $failures = 0
+    $i = 0
+    foreach ($c in $cases) {
+        $i++
+        $da = Join-Path $root ("case$i\baseline")
+        $db = Join-Path $root ("case$i\head")
+        New-FakeRun $da $c.a
+        New-FakeRun $db $c.b
+        $text = (& powershell -ExecutionPolicy Bypass -File $PSCommandPath -Compare $da -Against $db 2>&1 | Out-String)
+        $code = $LASTEXITCODE
+        if ($code -eq $c.code -and $text.Contains($c.expect)) {
+            Write-Host ("  ok    {0}" -f $c.name) -ForegroundColor Green
+        } else {
+            $failures++
+            Write-Host ("  FAIL  {0}" -f $c.name) -ForegroundColor Red
+            Write-Host ("        expected exit {0}, got {1}" -f $c.code, $code) -ForegroundColor Red
+            Write-Host ("        expected to see: {0}" -f $c.expect) -ForegroundColor Red
+            Write-Host $text
+        }
+    }
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host ""
+    if ($failures) {
+        Write-Host ("  {0} of {1} self test(s) FAILED" -f $failures, $cases.Count) -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ("  all {0} self test(s) passed" -f $cases.Count) -ForegroundColor Green
+    exit 0
 }
 
 if ($Compare) {

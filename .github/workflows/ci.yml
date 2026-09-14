@@ -90,6 +90,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # The corpus differential is the gate that decides a release, and it is
+      # dispatch-only because the collection cannot travel with the repository
+      # (docs/adr/0005). Its COMPARISON logic needs no corpus at all, so it is
+      # tested here against synthesized recordings: it used to walk only one of
+      # the two runs' listings and printed "IDENTICAL ... No recorded solution
+      # changed its verdict" over a 6-set-versus-289-set mismatch. No compiler
+      # needed, so it runs before the toolchain install and fails in seconds.
+      - name: The corpus comparison can still see a missing set
+        run: powershell -ExecutionPolicy Bypass -File test\run-corpus.ps1 -SelfTest
+
       # NO THIRD-PARTY ACTION HERE, deliberately. windows-latest ALREADY ships
       # MSYS2 at C:\msys64 -- which is exactly where build.ps1 and
       # test\run-tests.ps1 look by default, so CI exercises the same path

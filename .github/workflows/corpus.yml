@@ -121,7 +121,11 @@ jobs:
         if: steps.probe.outputs.present == 'True'
         run: |
           $ref = "${{ inputs.baseline_ref }}"
-          git worktree add ..\tworld-baseline $ref
+          # --detach, because actions/checkout leaves local branch `main` checked
+          # out here: a baseline_ref of plain "main" would otherwise die with
+          # "fatal: 'main' is already used by worktree". Verified both ways.
+          # Nothing is ever committed in the baseline tree, so detached is right.
+          git worktree add --detach ..\tworld-baseline $ref
           if ($LASTEXITCODE -ne 0) { throw "could not check out baseline ref '$ref'" }
           Push-Location ..\tworld-baseline
           try {
@@ -164,17 +168,29 @@ jobs:
 
       # 🔴 THIS STEP RUNS ON THE SKIP PATH TOO, WHERE THERE IS NO WORKTREE TO
       # REMOVE, and that is how it failed the first time it was dispatched
-      # (run 34840809524). `git worktree remove` writes "fatal: '..' is not a
-      # working tree" to STDERR; GitHub runs the `powershell` shell with
-      # $ErrorActionPreference = "Stop", under which a native command's stderr
-      # becomes a terminating NativeCommandError -- so `exit 0` never ran and a
-      # correct skip reported failure. `2>$null` does not help; the redirection
-      # is what wraps each stderr line in an ErrorRecord to begin with. This is
-      # the same trap test\run-nofix.ps1 documents in its own header.
+      # (run 34840809524). The body was `git worktree remove .. --force 2>$null`
+      # followed by `exit 0`, and the exit never ran.
+      #
+      # THE MEASURED RULE, because the obvious explanation is wrong. It is the
+      # REDIRECTION that is fatal, not the stderr and not the exit code. Under
+      # $ErrorActionPreference = "Stop" -- which is what GitHub's `powershell`
+      # shell sets -- redirecting a native command's stderr inside PowerShell
+      # (2>$null, 2>&1) wraps each line in a NativeCommandError ErrorRecord,
+      # and that is terminating. Left unredirected the same stderr passes
+      # straight through and nothing throws. Tested all four combinations of
+      # {redirected, not} x {exit 0, exit 128} against this exact wrapper:
+      # only the two redirected cases throw.
+      #
+      # The corollary is why every step above ends in an explicit $LASTEXITCODE
+      # check: a native command exiting 128 does NOT fail a PowerShell step on
+      # its own. It printed "fatal:", returned 128, and the step was green.
+      #
+      # So the fix is simply not to run the command when there is nothing to
+      # remove. `exit 0` stays as the backstop. test\run-nofix.ps1 documents
+      # this same trap in its own header.
       - name: Remove the baseline worktree
         if: always()
         run: |
-          $ErrorActionPreference = "Continue"
           if (Test-Path -LiteralPath ..\tworld-baseline) {
               git worktree remove ..\tworld-baseline --force
           }
