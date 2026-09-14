@@ -391,10 +391,13 @@ try {
             Write-Host ""
             Write-Host "these files are in the baseline but were NOT measured:" -ForegroundColor Red
             foreach ($m in $unmeasured) { Write-Host "  - $m" -ForegroundColor Red }
-            Write-Host "  Either the layer that covers them did not run -- the Qt layer SKIPS when" -ForegroundColor Yellow
-            Write-Host "  Qt5 is not installed, and the oshw-qt rows come only from it -- or the" -ForegroundColor Yellow
-            Write-Host "  file is gone. Absent is not the same as uncovered, so this is not scored" -ForegroundColor Yellow
-            Write-Host "  as a regression; it is reported as an unanswered question." -ForegroundColor Yellow
+            Write-Host "  Causes, in order of likelihood: -Filter was given, so this run measured" -ForegroundColor Yellow
+            Write-Host "  only part of the suite and cannot check a whole baseline; or the layer that" -ForegroundColor Yellow
+            Write-Host "  covers them did not run -- the Qt layer SKIPS when Qt5 is absent, and the" -ForegroundColor Yellow
+            Write-Host "  oshw-qt rows come only from it; or the file is gone." -ForegroundColor Yellow
+            Write-Host "  Absent is not the same as uncovered, so this is NOT scored as a regression." -ForegroundColor Yellow
+            Write-Host "  It is reported as an unanswered question, because -CheckBaseline exists so a" -ForegroundColor Yellow
+            Write-Host "  release can assert these numbers, and a number nobody measured is not one." -ForegroundColor Yellow
             exit 1
         }
         if ($regressed.Count -gt 0) {

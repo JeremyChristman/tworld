@@ -1,13 +1,30 @@
-# Coverage baseline, unit layer only. Regenerate with coverage.ps1 -UpdateBaseline.
+# Coverage baseline. Regenerate with coverage.ps1 -UpdateBaseline.
 # A FLOOR, not a grade. Raising a number here is progress; lowering one needs a reason.
+#
+# The UNIT layer, plus the Qt layer for the oshw-qt/ rows -- nothing else reaches
+# those, and the Qt run does NOT instrument the core, so every other row still
+# means exactly what it always did. The end-to-end tests run an uninstrumented
+# build and are not counted anywhere here.
 file	lines	linesHit	branches	branchesHit
-encoding.c	139	127	87	75
-fileio.c	242	120	150	60
+encoding.c	139	131	87	77
+fileio.c	242	131	150	67
 generic/dirinput.c	33	33	45	44
 generic/in.c	167	93	167	85
-generic/tile.c	609	261	289	113
-lxlogic.c	1073	594	1008	467
-mslogic.c	1654	743	1494	503
+generic/tile.c	609	261	289	115
+lxlogic.c	1073	631	1008	505
+mslogic.c	1654	997	1494	733
+oshw-qt/CCMetaData.cpp	114	105	174	100
+oshw-qt/CCMetaData.h	9	9	0	0
+oshw-qt/oshwbind.cpp	173	10	138	7
+oshw-qt/oshwbind.h	10	1	0	0
+oshw-qt/TWApp.cpp	71	24	62	2
+oshw-qt/TWDisplayWidget.cpp	16	5	14	2
+oshw-qt/TWMainWnd.cpp	1118	322	1811	293
+oshw-qt/TWMainWnd.h	1	1	0	0
+oshw-qt/TWProgressBar.cpp	50	14	70	3
+oshw-qt/TWProgressBar.h	6	0	0	0
+oshw-qt/TWTextCoder.cpp	22	20	28	20
+oshw-qt/TWTheme.cpp	64	53	84	36
 play.c	297	79	130	44
 random.c	43	43	8	8
 res.c	199	82	178	73
