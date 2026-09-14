@@ -523,6 +523,7 @@ if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and -not $Sanitize -
     # wrong in test\run-sanitizers.sh, which asks the same question on the other
     # platform.
     $floorProblems = @()
+    $floorsChecked = 0
     foreach ($r in $runs) {
         if ($r.status -ne 'passed') { continue }
         $floor = $null
@@ -540,6 +541,8 @@ if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and -not $Sanitize -
         } elseif ($floor -ne $r.checks) {
             $floorProblems += ("{0} [{1}] floor is {2} but the run reported {3} ({4} of slack)" -f
                 $r.test, $r.language, $floor, $r.checks, ($r.checks - $floor))
+        } else {
+            $floorsChecked++
         }
     }
     if ($floorProblems.Count -gt 0) {
@@ -549,6 +552,11 @@ if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and -not $Sanitize -
         Write-Host "  Raise each floor to the count beside it. Slack in a floor is somewhere"
         Write-Host "  a deleted test can hide -- see the note above this check."
         $failed += $floorProblems.Count
+    } else {
+        # Said out loud on purpose. A check whose success is invisible cannot be
+        # told apart from one that silently stopped running, and this file is
+        # full of notes about exactly that failure.
+        Write-Host ("  {0} check floor(s) verified exact" -f $floorsChecked)
     }
 }
 

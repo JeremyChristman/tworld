@@ -105,6 +105,7 @@ ran=0
 # the first tw_expect_atleast() would read the Windows one from a Linux run.
 floorbad=""
 floorfail=0
+floorok=0
 
 for test in test/*_test.c; do
     name="$(basename "$test" .c)"
@@ -152,6 +153,8 @@ for test in test/*_test.c; do
                 floorbad="$floorbad
   $name [$lang] floor is $floor but the run reported ${checks:-?} ($((${checks:-0} - floor)) of slack)"
                 floorfail=$((floorfail + 1))
+            else
+                floorok=$((floorok + 1))
             fi
         else
             echo "=== $name [$lang] : FAILED ==="
@@ -188,8 +191,9 @@ if [ "$fail" -gt 0 ]; then
     exit 1
 fi
 if [ -n "$SAN" ]; then
-    echo "$ran run(s) clean under $WHAT"
+    echo "$ran run(s) clean under $WHAT, $floorok check floor(s) verified exact"
 else
-    echo "$ran run(s) passed, but WITHOUT SANITIZERS -- this proves nothing about memory safety"
+    echo "$ran run(s) passed and $floorok check floor(s) verified exact, but WITHOUT"
+    echo "SANITIZERS -- this proves nothing about memory safety"
 fi
 exit 0
