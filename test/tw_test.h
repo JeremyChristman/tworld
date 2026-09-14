@@ -36,7 +36,7 @@
  * and one for the run:
  *
  *     TWCASE<TAB>ok|fail|skip<TAB>case name<TAB>first failure message
- *     TWSUMMARY<TAB>suite<TAB>checks<TAB>failures<TAB>skipped
+ *     TWSUMMARY<TAB>suite<TAB>checks<TAB>failures<TAB>skipped<TAB>floor
  *
  * test/run-tests.ps1 parses those into JUnit XML and JSON. The markers are on
  * stdout rather than in a file the test opens, because these binaries run under
@@ -266,7 +266,15 @@ static inline int tw_end(void)
 	 * same way one in a case name would. */
 	fputs("TWSUMMARY\t", stdout);
 	tw_emitfield_(tw_suite_);
-	printf("\t%d\t%d\t%d\n", tw_checks_, tw_failures_, tw_skipped_);
+	/* THE FLOOR IS REPORTED BY THE BINARY, not read back out of the source,
+	 * because it is the binary that knows which one applies. A floor may sit
+	 * behind an #ifdef -- settings_test.c declares 183 on Windows and 177 on
+	 * POSIX -- and a runner that greps the file for the first
+	 * tw_expect_atleast() gets the right answer on one platform by luck of
+	 * ordering and the wrong one on the other. Emitting it closes that gap for
+	 * every runner at once, and there is now more than one runner. 0 means the
+	 * file declared no floor. */
+	printf("\t%d\t%d\t%d\t%d\n", tw_checks_, tw_failures_, tw_skipped_, tw_floor_);
     }
 
     /* Zero checks is a failure, not a pass. See the header. */

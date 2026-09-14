@@ -90,6 +90,22 @@ esac
 fail=0
 ran=0
 
+# 🔴 THE CHECK FLOORS ARE VERIFIED HERE TOO, AND THAT IS WHY THIS EXISTS.
+#
+# tw_expect_atleast(N) only catches a test function that stopped being called
+# while N is EXACT. test\run-tests.ps1 has enforced that on Windows for a while;
+# nothing enforced it on POSIX, so a case could stop running here and, as long
+# as the count stayed above the floor, every job stayed green. That is the same
+# hole the Windows check was built to close, left open on the other platform --
+# and the platforms do drift: settings_test.c reports 183 checks on Windows and
+# 177 here, because its locked-destination block is Windows-only.
+#
+# The floor is taken from TWSUMMARY's sixth field, i.e. from the BINARY, not
+# from the source. A floor may sit behind an #ifdef, and grepping the file for
+# the first tw_expect_atleast() would read the Windows one from a Linux run.
+floorbad=""
+floorfail=0
+
 for test in test/*_test.c; do
     name="$(basename "$test" .c)"
     if [ -n "$FILTER" ] && [ "${name#*"$FILTER"}" = "$name" ]; then continue; fi
@@ -114,8 +130,29 @@ for test in test/*_test.c; do
 
         ran=$((ran + 1))
         if "$exe" > "$OUT/$name.out" 2> "$OUT/$name.err"; then
-            checks="$(sed -n 's/^\([0-9]*\) checks.*/\1/p' "$OUT/$name.out" | head -1)"
+            # TWSUMMARY<TAB>suite<TAB>checks<TAB>failures<TAB>skipped<TAB>floor.
+            # input_test.c and dirinput_test.c predate tw_test.h, emit no marker
+            # and spell the guard by hand, so they fall back to the source --
+            # neither has an #ifdef in it.
+            summary="$(grep -m1 $'^TWSUMMARY\t' "$OUT/$name.out")"
+            if [ -n "$summary" ]; then
+                checks="$(printf '%s' "$summary" | cut -f3)"
+                floor="$(printf '%s' "$summary" | cut -f6)"
+            else
+                checks="$(sed -n 's/^\([0-9]*\) checks.*/\1/p' "$OUT/$name.out" | head -1)"
+                floor="$(sed -n 's@.*if[[:space:]]*([[:space:]]*checks[[:space:]]*<[[:space:]]*\([0-9][0-9]*\).*@\1@p' "$test" | head -1)"
+            fi
             echo "  ok    $name [$lang]  ${checks:-?} checks, clean under $WHAT"
+
+            if [ -z "$floor" ] || [ "$floor" = "0" ]; then
+                floorbad="$floorbad
+  $name [$lang] declares no check floor at all"
+                floorfail=$((floorfail + 1))
+            elif [ -z "$checks" ] || [ "$floor" != "$checks" ]; then
+                floorbad="$floorbad
+  $name [$lang] floor is $floor but the run reported ${checks:-?} ($((${checks:-0} - floor)) of slack)"
+                floorfail=$((floorfail + 1))
+            fi
         else
             echo "=== $name [$lang] : FAILED ==="
             # A sanitizer report goes to stderr and is the whole point of the run,
@@ -131,6 +168,15 @@ for test in test/*_test.c; do
         fi
     done
 done
+
+if [ "$floorfail" -gt 0 ]; then
+    echo ""
+    echo "########## CHECK FLOORS ARE STALE ##########"
+    printf '%s\n' "$floorbad" | sed '/^$/d'
+    echo "  Raise each floor to the count beside it. Slack in a floor is somewhere"
+    echo "  a deleted test can hide. A floor behind an #ifdef needs BOTH branches."
+    fail=$((fail + floorfail))
+fi
 
 echo ""
 if [ "$ran" -eq 0 ]; then

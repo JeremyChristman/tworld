@@ -373,6 +373,10 @@ that runs on from it.
 executed. A test function that stops being called — an early return, a case commented out during
 debugging and never restored — removes coverage while leaving the suite green. **Raise the number
 when you add cases; never lower it to make a run pass.** Lowering it is the bug it exists to report.
+Both runners additionally require the floor to be EXACT — `run-tests.ps1` on Windows and
+`run-sanitizers.sh` on POSIX — because slack in a floor is somewhere a deleted case can hide. A
+count that differs by platform declares both floors behind an `#ifdef`; the binary reports whichever
+one it compiled, as the sixth field of `TWSUMMARY`, so neither runner has to guess.
 
 `run-tests.ps1` sets `TW_TEST_MACHINE`, which turns on `TWCASE`/`TWSUMMARY` marker lines that the
 runner parses into JUnit XML and JSON. Run a test binary by hand and you get clean output instead.

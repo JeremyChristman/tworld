@@ -46,6 +46,9 @@ Conventions that are not negotiable:
 - **Every test declares `tw_expect_atleast(N)`**, and N is the exact number of checks it runs.
   Raise it when you add cases. **Never lower it to make a run pass** — a shrinking count means cases
   have stopped running, which is the whole reason the floor exists.
+  Both runners check exactness — `run-tests.ps1` on Windows, `run-sanitizers.sh` on POSIX. If a
+  count differs by platform, declare BOTH floors behind the same `#ifdef` the differing cases use:
+  one number cannot be exact on both, and slack in either is somewhere a deleted case can hide.
 - **A case that asserts nothing fails.** If a case is deliberately empty, `tw_skip("why")` it.
 - **Tests are built as C *and* C++** unless the file declares `TESTLANG:` and says why
   ([ADR 0004](../docs/adr/0004-every-test-is-built-as-c-and-as-cpp.md)).

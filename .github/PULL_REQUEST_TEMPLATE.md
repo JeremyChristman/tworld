@@ -11,7 +11,7 @@
       catch. (Three cases in this suite passed against a deliberately broken engine before anyone
       checked — see CONTRIBUTING.md.)
 - [ ] Any new test declares `tw_expect_atleast(N)` with the exact check count, and no existing floor
-      was **lowered**.
+      was **lowered**. A platform-dependent count declares both floors behind an `#ifdef`.
 - [ ] No level set, `.tws`, `save/` or `tw_settings.ini` is committed. Fixtures are synthesized.
 - [ ] No PowerShell 7 syntax (`&&`, `||`, ternary, `??`); the target is Windows PowerShell 5.1.
 - [ ] American English throughout.

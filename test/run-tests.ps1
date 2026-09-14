@@ -348,11 +348,14 @@ foreach ($test in $tests) {
         foreach ($line in $output) {
             if ($line -match '^TWCASE\t([^\t]*)\t([^\t]*)\t(.*)$') {
                 $record.cases += [ordered]@{ status = $Matches[1]; name = $Matches[2]; message = $Matches[3] }
-            } elseif ($line -match '^TWSUMMARY\t([^\t]*)\t(\d+)\t(\d+)\t(\d+)$') {
+            } elseif ($line -match '^TWSUMMARY\t([^\t]*)\t(\d+)\t(\d+)\t(\d+)\t(\d+)$') {
                 $record.suite = $Matches[1]
                 $record.checks = [int]$Matches[2]
                 $record.failures = [int]$Matches[3]
                 $record.skipped = [int]$Matches[4]
+                # The floor the BINARY applied. Authoritative over anything read
+                # out of the source: see tw_end() in tw_test.h for why.
+                $record.floor = [int]$Matches[5]
             }
         }
 
@@ -506,21 +509,32 @@ if (-not $Filter -and $Lang -eq "both" -and -not $Coverage -and -not $Sanitize -
     # ⚠ THE SAME AUDIT FOUND THE OPPOSITE FAILURE TOO: five floors were raised by
     # hand in one sitting and a sixth, in a file that sitting had not touched,
     # was not -- because the fix was applied to the files in front of the author
-    # rather than to the class. That is what this check is for. It costs one
-    # regex per test file on a complete run, and it removes the need for anyone
-    # to remember.
+    # rather than to the class. That is what this check is for: it costs nothing
+    # on a complete run and removes the need for anyone to remember.
     #
     # input_test.c and dirinput_test.c predate tw_test.h and spell the same guard
-    # by hand as `if (checks < N)`, so both forms are read.
+    # by hand as `if (checks < N)`. They emit no TWSUMMARY, so their floor is the
+    # only one still read out of the source -- and neither has an #ifdef in it.
+    #
+    # 🔴 EVERY OTHER FLOOR COMES FROM THE BINARY, via TWSUMMARY's fifth field.
+    # Reading it from the source was correct only while no floor sat behind an
+    # #ifdef. settings_test.c now declares 183 on Windows and 177 on POSIX, and
+    # a first-match regex picks 183 on both -- right here by luck of ordering,
+    # wrong in test\run-sanitizers.sh, which asks the same question on the other
+    # platform.
     $floorProblems = @()
     foreach ($r in $runs) {
         if ($r.status -ne 'passed') { continue }
-        $src = Join-Path $PSScriptRoot $r.test
-        if (-not (Test-Path -LiteralPath $src)) { continue }
-        $text = Get-Content -LiteralPath $src -Raw
         $floor = $null
-        if ($text -match 'tw_expect_atleast\s*\(\s*(\d+)\s*\)') { $floor = [int]$Matches[1] }
-        elseif ($text -match 'if\s*\(\s*checks\s*<\s*(\d+)\s*\)') { $floor = [int]$Matches[1] }
+        if ($r.Contains('floor')) {
+            $floor = $r.floor
+            if ($floor -eq 0) { $floor = $null }
+        } else {
+            $src = Join-Path $PSScriptRoot $r.test
+            if (-not (Test-Path -LiteralPath $src)) { continue }
+            $text = Get-Content -LiteralPath $src -Raw
+            if ($text -match 'if\s*\(\s*checks\s*<\s*(\d+)\s*\)') { $floor = [int]$Matches[1] }
+        }
         if ($null -eq $floor) {
             $floorProblems += "$($r.test) declares no check floor at all"
         } elseif ($floor -ne $r.checks) {
