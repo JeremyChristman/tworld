@@ -317,7 +317,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(260);
+    tw_expect_atleast(265);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1118,6 +1118,54 @@ int main(void)
 	/* And the array really is a row longer than the grid, which is what
 	 * makes 1024 an in-bounds index rather than an overrun. */
 	CHECK_INT((int)(sizeof teststate.map / sizeof *teststate.map), POS_INVALID);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 two monster-list entries for one cell make TWO creatures, both alive");
+    {
+	/* FIX_STACKED_CREATURE_CULL (`mslogic.c:213`), unguarded until now.
+	 *
+	 * SuperCC's monster list is AUTHORITATIVE -- a creature exists because it
+	 * is in the list, not because a tile says so. Tile World tied creatures
+	 * to map tiles, so when two entries name the SAME cell (both engines duly
+	 * create two creatures) and the first one moves off, the tile leaves with
+	 * it and the second is left tile-less -- and was then culled.
+	 *
+	 * Measured on A_Strange_Journey#60 "DeathSwap", whose list names (27,13)
+	 * twice and (27,11) twice: at t=5 SuperCC still has four tanks, Tile World
+	 * had three.
+	 *
+	 * ⚠ COUNT THE LIVING, NOT THE LIST. creaturecount does not shrink -- the
+	 * cull HIDES a creature rather than removing it -- so the oracle is how
+	 * many are not hidden after the first one has moved off the shared cell.
+	 */
+	int	n, alive;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 2, 2, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 10, 10, 0x4F);		/* a Tank, facing east  */
+	fix_addcreature(&lv, 10, 10);
+	fix_addcreature(&lv, 10, 10);		/* the SAME cell, twice */
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount == 3,
+		  "two list entries for one cell must make two creatures plus"
+		  " Chip; got %d", creaturecount);
+
+	runticks(12, NIL);
+	alive = 0;
+	for (n = 0 ; n < creaturecount ; ++n)
+		if (!creatures[n]->hidden) ++alive;
+	CHECK_MSG(alive == 3,
+		  "%d of %d creatures are still alive. The tank left tile-less when"
+		  " its twin moved off the shared cell was CULLED -- the monster list"
+		  " is what makes a creature exist, not the tile", alive, creaturecount);
+	CHECK_MSG(!creatures[2]->hidden,
+		  "the second entry for (10,10) was hidden; it is a real creature and"
+		  " SuperCC still has it");
+	CHECK_MSG(creatures[1]->pos != creatures[2]->pos,
+		  "both tanks are still on the shared cell, so neither was ever left"
+		  " tile-less and this case exercised nothing");
     }
 
     /* ================================================================== */

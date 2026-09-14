@@ -29,14 +29,31 @@
 #                            case the fix guards. Closing it needs a deliberate,
 #                            commented escape hatch in the fixture builder.
 #
-# 🔴 THE "A FIXTURE CAN CLOSE MOST OF THESE" ESTIMATE WAS TOO OPTIMISTIC, AND
-# HERE IS THE DIVIDING LINE, MEASURED. Four toggles are now guarded by named unit
-# cases, and every one of them is a LOAD-TIME or SINGLE-MOVE fix:
-#   FIX_CHIP_PICKUP_ON_BLOCK · FIX_CHIP_START_FOREGROUND
-#   FIX_CHIP_ONTO_BURIED_BLOCK · FIX_MONSTERLIST_CHIP_TILES
-# Three more were attempted and withdrawn, and all three fail for the same
-# reason: their effect is INTRA-TICK, and the observable state converges before
-# any assertion can run.
+# 🔴 THE DIVIDING LINE, MEASURED: IS THE FIX'S EFFECT INTRA-TICK OR PERSISTENT?
+#
+# Apply this BEFORE writing a fixture -- and read the GUARDED CODE, not the
+# header comment. The headers here describe the DESYNC (which level, which tick,
+# what diverged); they do not say when the guard acts, and twice that cost an
+# hour each.
+#
+#   PERSISTENT effect (a field that survives the tick: cr->dir, cr->hidden, a
+#   slip-list slot, a start position) -> a fixture CAN reach it. Five toggles are
+#   guarded this way now:
+#     FIX_CHIP_PICKUP_ON_BLOCK · FIX_CHIP_START_FOREGROUND
+#     FIX_CHIP_ONTO_BURIED_BLOCK · FIX_MONSTERLIST_CHIP_TILES
+#     FIX_STACKED_CREATURE_CULL
+#
+#   INTRA-TICK effect -> a fixture CANNOT reach it. The observable state
+#   converges before any assertion can run, and no tick count helps. Three were
+#   attempted and withdrawn on this ground; each is recorded below with its
+#   measurement.
+#
+# ⚠ A PERSISTENT EFFECT STILL NEEDS THE RIGHT TRIGGER, and that is a separate
+# difficulty. FIX_STACKED_CREATURE_CULL took three fixtures: two balls drift
+# apart and never share a cell, two tanks facing a WALL both stall and neither
+# vacates the tile, and only two tanks facing OPEN FLOOR produce the asymmetry
+# the fix is about -- the first moves, the second finds the cell taken, stalls,
+# and is left tile-less.
 #
 #   NO_FIX_SLIDE_FACING      ⚠ ATTEMPTED AND WITHDRAWN. It re-faces a creature
 #                            arriving on ice or a force floor. But the force
