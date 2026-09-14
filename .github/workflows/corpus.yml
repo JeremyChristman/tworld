@@ -1,0 +1,169 @@
+# The corpus differential — the gate that actually decides a release.
+#
+# WHY THIS WORKFLOW EXISTS. A blind adversarial audit disabled a shipped engine
+# fix (mslogic.c:1832, FIX_CHIP_PICKUP_ON_BLOCK) and every one of the six local
+# layers stayed green, golden's 1,806 digests over 903 levels included. Only
+# test\run-corpus.ps1 noticed, and it was invoked nowhere in CI — ci.yml:276
+# mentioned it in a COMMENT and that was all. Fourteen of the thirty-two
+# NO_FIX_* toggles were in that state; six now have named unit cases, and this
+# job is what covers the rest.
+#
+# 🔴 WHY IT IS DISPATCH-ONLY RATHER THAN PART OF CI. The corpus is the
+# maintainer's own solution collection: tens of thousands of recorded .tws
+# solutions across ~528 sets. docs/adr/0005 forbids committing .tws files at all
+# and CI fails on any tracked one, so the collection cannot travel with the
+# repository and a GitHub-hosted runner can never have it. That is a licensing
+# and privacy decision, not an oversight, and it is why this is opt-in.
+#
+# ⚠ AND A SKIP HERE IS NOT A PASS. When the corpus is absent this job says so in
+# the run summary in as many words and does no work. That is safe ONLY because
+# this workflow is never a required check and never runs on push or pull_request
+# — nothing else in the repository can mistake its green tick for the gate
+# having run. If it is ever wired into a branch protection rule, flip
+# `require_corpus` to true first, or it becomes precisely the false green the
+# rest of this repository is built to prevent.
+
+name: Corpus differential
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner label. Must be a Windows machine that HAS the corpus; windows-latest never does."
+        type: string
+        default: "self-hosted"
+      baseline_ref:
+        description: "Git ref to diff against. The question is always 'did any recorded solution stop replaying since X'."
+        type: string
+        default: "origin/main"
+      corpus_path:
+        description: "Path to the solution collection. Empty uses run-corpus.ps1's own default."
+        type: string
+        default: ""
+      require_corpus:
+        description: "Fail if the corpus is absent instead of skipping. Turn this ON if this job ever becomes a required check."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  corpus:
+    runs-on: ${{ inputs.runner }}
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      # fetch-depth: 0 — the whole point is a differential against another ref,
+      # and a shallow clone cannot check one out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Is the corpus actually here?
+        id: probe
+        run: |
+          $p = "${{ inputs.corpus_path }}"
+          if (-not $p) {
+              # run-corpus.ps1 owns the default. Read it from the script rather
+              # than repeating it here: two copies of a path would disagree.
+              $line = Select-String -Path test\run-corpus.ps1 -Pattern '\[string\]\$Corpus\s*=\s*"([^"]+)"' | Select-Object -First 1
+              if ($line) { $p = $line.Matches[0].Groups[1].Value }
+          }
+          Write-Host "corpus path: $p"
+          $present = $p -and (Test-Path -LiteralPath $p)
+          "path=$p"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "present=$present" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (-not $present) {
+              $msg = @(
+                "## The corpus gate DID NOT RUN",
+                "",
+                "No solution collection at ``$p``, so nothing was verified here.",
+                "",
+                "**This tick is not a pass.** It means the check was skipped. The corpus is the",
+                "only instrument that can see a recorded solution stop replaying -- the six local",
+                "layers cannot, which is the whole reason this workflow exists.",
+                "",
+                "Run it on a machine that has the collection, or pass ``corpus_path``."
+              ) -join "`n"
+              $msg | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              Write-Host "################################################################"
+              Write-Host "  CORPUS ABSENT -- THE GATE DID NOT RUN. This is not a pass."
+              Write-Host "################################################################"
+          }
+
+      # Deliberately a separate step so the failure is attributable, and so the
+      # skip path above stays readable.
+      - name: Refuse to skip, if asked
+        if: steps.probe.outputs.present != 'True' && inputs.require_corpus
+        run: |
+          throw "the corpus is absent and require_corpus was set. Nothing was verified."
+
+      - name: Install the toolchain packages
+        if: steps.probe.outputs.present == 'True'
+        run: powershell -ExecutionPolicy Bypass -File .github/install-toolchain.ps1
+
+      - name: Build this revision
+        if: steps.probe.outputs.present == 'True'
+        run: |
+          powershell -ExecutionPolicy Bypass -File build.ps1
+          if ($LASTEXITCODE -ne 0) { throw "the build of HEAD failed" }
+          Copy-Item build-static\tworld2.exe head.exe -Force
+
+      # A worktree rather than a second clone: same object store, no refetch, and
+      # it cannot disturb the checkout this job is testing.
+      - name: Build the baseline revision
+        if: steps.probe.outputs.present == 'True'
+        run: |
+          $ref = "${{ inputs.baseline_ref }}"
+          git worktree add ..\tworld-baseline $ref
+          if ($LASTEXITCODE -ne 0) { throw "could not check out baseline ref '$ref'" }
+          Push-Location ..\tworld-baseline
+          try {
+              powershell -ExecutionPolicy Bypass -File build.ps1
+              if ($LASTEXITCODE -ne 0) { throw "the build of '$ref' failed" }
+          } finally { Pop-Location }
+          Copy-Item ..\tworld-baseline\build-static\tworld2.exe baseline.exe -Force
+
+      # ⚠ TWO FULL RECORDINGS, AND THE SECOND ONE IS THE COMPARISON. run-corpus
+      # exits nonzero when any set's .out differs, which is the desync check;
+      # .err differences are advisory and do not fail it. See the script header.
+      - name: Record the baseline
+        if: steps.probe.outputs.present == 'True'
+        run: |
+          powershell -ExecutionPolicy Bypass -File test\run-corpus.ps1 `
+            -Exe baseline.exe -Corpus "${{ steps.probe.outputs.path }}" -Out corpus-baseline
+          if ($LASTEXITCODE -ne 0) { throw "the baseline corpus run failed" }
+
+      - name: Did any recorded solution stop replaying?
+        if: steps.probe.outputs.present == 'True'
+        run: |
+          powershell -ExecutionPolicy Bypass -File test\run-corpus.ps1 `
+            -Exe head.exe -Corpus "${{ steps.probe.outputs.path }}" `
+            -Out corpus-head -Against corpus-baseline
+          if ($LASTEXITCODE -ne 0) { throw "a recorded solution changed verdict against ${{ inputs.baseline_ref }}" }
+          "## The corpus gate ran and passed`n`nNo set's verdict differs from ``${{ inputs.baseline_ref }}``." |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      # The recordings are the evidence, and they are small: stdout and stderr
+      # per set, no level data and no solutions. Worth keeping when a run fails.
+      - name: Keep the recordings
+        if: always() && steps.probe.outputs.present == 'True'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: corpus-recordings
+          path: |
+            corpus-baseline
+            corpus-head
+          if-no-files-found: warn
+
+      - name: Remove the baseline worktree
+        if: always()
+        run: |
+          git worktree remove ..\tworld-baseline --force 2>$null
+          exit 0

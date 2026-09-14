@@ -260,6 +260,10 @@ layers that can see an engine behavior change**, so run them after any edit to `
   ⚠ **Know its reach before quoting it: 2 of 32 `NO_FIX_*` toggles, measured** — and neither more
   ticks nor more walks helps. It catches gross change (a mutation to Chip's idle timer moved 577 of
   1,806 rows). It is a smoke alarm, not an audit, and **`run-corpus.ps1` still decides a release.**
+  It now has a CI job of its own — [`.github/workflows/corpus.yml`](.github/workflows/corpus.yml),
+  dispatch-only, because ADR 0005 keeps the collection off GitHub. ⚠ **A skip there is not a pass**:
+  with no corpus the job says so in the run summary and verifies nothing, which is safe only while
+  it is not a required check.
   Read the header of `test/golden/golden.c` before changing anything there; `-Update` rewrites the
   baseline and is a deliberate act, not a way to make a red run go green.
 

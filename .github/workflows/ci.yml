@@ -274,7 +274,11 @@ jobs:
   # ⚠ Know what it does NOT cover before trusting it: measured, it detects 2 of
   # the 32 NO_FIX_* engine toggles, and raising the tick or walk count was tried
   # and bought nothing. See test/golden/golden.c. run-corpus.ps1, over the
-  # maintainer's real solution collection, is still what decides a release.
+  # maintainer's real solution collection, is still what decides a release --
+  # and it now HAS a job: .github/workflows/corpus.yml, dispatch-only because
+  # ADR 0005 keeps the collection off GitHub. This comment used to be the only
+  # mention of run-corpus.ps1 anywhere in .github/, which a blind audit found by
+  # disabling a shipped engine fix and watching all six layers stay green.
   golden:
     runs-on: ubuntu-latest
     steps:
