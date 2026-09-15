@@ -66,6 +66,20 @@ were closed where they occurred, and the stop rule recorded 2026-09-14 still hol
 exit-0 skip (a missing setup is not a defect, and CI throws on it); fifteen `TODO`s in upstream's
 GUI code (not this fork's to reformat).
 
+### Fixed — three scripts that exited 0 after aborting
+
+Found refreshing the mutation baseline: a complete census **wrote no baseline and exited 0**. A
+`\r` escape had collapsed into a real carriage return inside a `mutate.ps1` comment on 2026-09-13;
+PowerShell reads a bare CR as a line break, so the comment's tail ran as a command and failed.
+Under `$ErrorActionPreference = "Continue"` a statement-terminating error inside a `try` with no
+`catch` jumps to `finally` and resumes **after** the try. Sweeping every script for that shape found
+two more, each reproduced by planting one failing statement: `test/run-e2e.ps1` printed "0 case(s)
+… all end-to-end cases passed", and `coverage.ps1 -CheckBaseline` exited 0 having compared nothing.
+All three `catch` and exit 1 now; `run-e2e.ps1` also refuses a run with zero cases; CI's hygiene job
+refuses a bare CR in any tracked text file (validated against the commit that still had one).
+⚠ Not yet swept: scripts under "Continue" with no `try` at all, where a failed statement is simply
+skipped. A different and fuzzier shape; left for the next audit rather than guessed at.
+
 ### Added — `-Split`: the survivor list is two problems, not one
 
 "Nothing noticed this mutation" has two causes with different fixes and very different costs, and

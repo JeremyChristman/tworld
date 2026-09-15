@@ -977,6 +977,17 @@ exact, free, and the thing actually meant. **Ask what you are really asserting: 
 happened" is a count, and a count that has to be inferred from a clock is a count you should just
 keep.**
 
+**🔴 UNDER `$ErrorActionPreference = "Continue"`, A `try` WITH NO `catch` FAILS OPEN.** A
+statement-terminating error — a mistyped command, a failed .NET call — jumps to `finally`, is
+printed, and execution **resumes after the try**. Measured 2026-09-15 in three scripts at once:
+`mutate.ps1` finished a half-hour census, wrote no baseline and exited 0 (the cause was a bare
+carriage return inside a comment, which PowerShell reads as a line break); `run-e2e.ps1` printed
+"0 case(s) … all end-to-end cases passed"; `coverage.ps1 -CheckBaseline` exited 0 having compared
+nothing. `throw` is different — it is script-terminating and did exit nonzero — which is why the
+refusal guards looked fine. All three now `catch` and exit 1, and CI refuses a bare CR in any
+tracked text file. ⚠ A flag checked after the failing line but inside the same `try` never runs
+either; that was tried first and measured useless. **Any new script with a `try` gets a `catch`.**
+
 **⚠ A shadowed parameter does not fail; it answers wrongly, somewhere else.** `foreach ($lang in
 ...)` in `test/run-tests.ps1` **is** the `-Lang` parameter, because PowerShell variable names are
 case-insensitive, and it had been overwriting the caller's argument since the file was written. The

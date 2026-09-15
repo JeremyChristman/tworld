@@ -409,6 +409,17 @@ try {
         }
         Write-Host "coverage is at or above the recorded baseline" -ForegroundColor Green
     }
+} catch {
+    # 🔴 WITHOUT THIS, -CheckBaseline COULD PASS HAVING COMPARED NOTHING.
+    # Measured 2026-09-15: one failing statement planted at the top of this block
+    # and `coverage.ps1 -CheckBaseline` exited 0. A statement-terminating error
+    # inside a try with no catch jumps to `finally` and resumes after the try,
+    # under this script's "Continue" preference -- and after the try is `exit 0`.
+    # mutate.ps1 silently lost a census baseline to exactly this shape.
+    Write-Host ""
+    Write-Host ("coverage.ps1 FAILED: " + $_.Exception.Message) -ForegroundColor Red
+    if ($_.InvocationInfo) { Write-Host ("  at " + $_.InvocationInfo.PositionMessage) -ForegroundColor Red }
+    exit 1
 } finally {
     if (Test-Path $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     # gcov drops these in the repository root; make sure a failure partway does

@@ -426,6 +426,16 @@ Add-Check ($added.Count -eq 0) `
     ("the run generated $($added.Count) file(s) in the repository's sets\: " + ($added -join ', ') +
      ". createallmissingseries() writes a .dac for any .dat lacking one, so -L must never point at the working tree.")
 
+} catch {
+    # 🔴 WITHOUT THIS, AN ABORTED RUN PRINTED "all end-to-end cases passed".
+    # Measured 2026-09-15: one failing statement planted at the top of this block
+    # gave "0 case(s), 0 checks, 0 failures" and exit 0. A statement-terminating
+    # error (a mistyped command, a failed .NET call) inside a try with no catch
+    # jumps to `finally` and then RESUMES AFTER THE TRY, under this script's
+    # "Continue" preference -- straight into a summary that only counts failures
+    # it saw. mutate.ps1 lost a half-hour census's baseline to the same shape.
+    if (-not $script:currentCase) { Start-Case "(the end-to-end run itself)" }
+    Add-Check $false ("the run ABORTED here, so every case after this point did not run: " + $_.Exception.Message)
 } finally {
     if ($script:currentCase) { $script:cases += $script:currentCase }
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
@@ -471,6 +481,10 @@ if ($ResultsPath) {
 
 if ($script:failures -gt 0) {
     Write-Host "END-TO-END TESTS FAILED" -ForegroundColor Red
+    exit 1
+}
+if ($script:cases.Count -eq 0 -or $script:checks -eq 0) {
+    Write-Host "no end-to-end case ran -- refusing to report a pass" -ForegroundColor Red
     exit 1
 }
 Write-Host "all end-to-end cases passed" -ForegroundColor Green

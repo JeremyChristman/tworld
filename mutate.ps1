@@ -1420,13 +1420,34 @@ try {
             $out += ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}" -f $f, ($Operator -join ","),
                 (& $g "KILLED"), (& $g "SURVIVED"), (& $g "INVALID"), (& $g "TIMEOUT"), (& $g "FLAKY"), (& $g "ERROR"))
         }
-        # LF explicitly; see the note in testun-tests.ps1 about WriteAllLines.
+        # LF explicitly; see the note in test\run-tests.ps1 about WriteAllLines.
         [IO.File]::WriteAllText($bl, (($out -join "`n") + "`n"), $utf8NoBom)
         Write-Host "  baseline written: $bl"
     }
 
     if ($tot.ERROR -gt 0) { exit 1 }
     exit 0
+} catch {
+    # 🔴 WITHOUT THIS CATCH, A FAILED STATEMENT ANYWHERE ABOVE EXITED 0.
+    #
+    # Found 2026-09-15, the hard way. From 2026-09-13 the comment beside the
+    # baseline write held a literal CARRIAGE RETURN where "test\run" was meant (a
+    # `\r` escape collapsed on the way in). PowerShell reads a bare CR as a line
+    # break, so "un-tests.ps1 about WriteAllLines." ran as a command. That is a
+    # STATEMENT-terminating error, not a script-terminating one like `throw`:
+    # inside a try with no catch it jumps to `finally`, is printed, and execution
+    # RESUMES AFTER THE TRY -- which is the end of the file. So a complete census
+    # wrote no baseline and returned exit 0, and the only sign was one red
+    # paragraph under a table of results. Measured, not reasoned: a flag checked
+    # after the write, still inside the try, never ran either.
+    #
+    # Every such error now lands here and fails the run. (`throw` already exited
+    # nonzero; it lands here too, so both read the same way.) CI's hygiene job
+    # also refuses a bare CR in any tracked text file.
+    Write-Host ""
+    Write-Host ("mutate.ps1 FAILED: " + $_.Exception.Message) -ForegroundColor Red
+    if ($_.InvocationInfo) { Write-Host ("  at " + $_.InvocationInfo.PositionMessage) -ForegroundColor Red }
+    exit 1
 } finally {
     # 🔴 DELETE THE TREE AND THE OBJECTS, NEVER $runDir ITSELF. The default
     # -ResultsPath lives under $runDir, and a `finally` that removed the whole

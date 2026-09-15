@@ -75,6 +75,31 @@ jobs:
       # witness count sitting stale in one paragraph while three other places in
       # the same file were correct. Corrections propagated to CLAUDE.md and
       # stopped there. See verify-docs.ps1's header.
+      # 🔴 A BARE CARRIAGE RETURN IS A LINE BREAK TO POWERSHELL AND INVISIBLE IN
+      # A DIFF. One sat inside a mutate.ps1 comment for two days -- a `\r` escape
+      # collapsed to the real byte -- splitting the comment so its tail ran as a
+      # command. That silently disabled -UpdateBaseline, which still exited 0.
+      # .gitattributes normalizes CRLF; nothing caught a CR on its own. The fuzz
+      # corpus and level packs are exempt: their bytes are data, not text.
+      - name: No tracked text file contains a bare carriage return
+        run: |
+          set +e
+          hits="$(git grep -lIP '\r(?!$)' -- . ':!test/fuzz/corpus' ':!data' ':!sets')"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::bare carriage return (CR not followed by LF) in:"
+            echo "$hits"
+            exit 1
+          fi
+          # 1 means no match. Anything else -- e.g. a git without PCRE -- means
+          # the check did not run, which must not read as a pass.
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::git grep failed with exit $rc; the bare-CR check could not run"
+            exit 1
+          fi
+          echo "no bare carriage returns in tracked text files"
+
       - name: The documentation still agrees with the code
         shell: pwsh
         run: pwsh -File verify-docs.ps1
