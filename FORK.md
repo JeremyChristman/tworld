@@ -1432,6 +1432,100 @@ exactly what's mine:
    `test/nofix/nofix.c`'s "the remaining 19 toggles" now reads as the mid-narrative figure it always
    was rather than a present-tense count.
 
+41. **jc-58: the `.ccx` table was indexed by an unchecked level number** (`oshw-qt/TWMainWnd.cpp`,
+   `oshw-qt/TWMainWnd.h`, `test/qt/mainwnd_test.cpp`). Upstream's.
+
+   `DisplayGame()` (the author fallback and the prologue/epilogue menu state), the level-compatibility
+   message, and `Narrate()` all read `m_ccxLevelset.vecLevels[m_nLevelNum]` -- and `Narrate()` then
+   writes `bSeen` through it. `m_nLevelNum` is `game->number`, a 16-bit field copied out of the `.dat`
+   by `readleveldata()` with no relationship to the set's level count, while the vector is sized
+   `count + 1` by `CCX::Levelset::ReadFile()` (on every path, including a failed read -- which is what
+   `ccmetadata_test.cpp` pins from the parser's side).
+
+   🔴 **MEASURED: IT CRASHES THE SHIPPED jc-57.** `data/CCLP1.dat` with its first level's number field
+   patched to 60000, opened in the GUI: jc-57 (the deployed binary) put up its window titled "Key
+   Pyramid" and died with `0xC0000005`; jc-58 opened the same file and was still running after eight
+   seconds. Control: jc-57 on the unpatched `CCLP1.dat` also ran for eight seconds. (The audit had
+   tried a headless launch and could not confirm the display path was reached; a GUI launch reaches
+   it.)
+
+   ⚠ **And a stock file reaches it by one element**, from the code: `undomschanges()` runs for a
+   `.dac` with `fixlynx=y` -- the stock `sets/cc-fixlynx.dac` is one -- and deletes CHIPS.DAT's level
+   145 by shifting the next four down **without renumbering them**, leaving `count == 148` and a last
+   level numbered 149, one past a 149-element vector. **Not reproduced at runtime**: the CHIPS.DAT
+   copy available (MSCC's) is not the exact original the fixups accept, so the repair refused it and
+   the set kept all 149 levels -- measured by listing it.
+
+   Found by an adversarial audit that built the window test with `-D_GLIBCXX_ASSERTIONS` and watched
+   `operator[]` abort at number 149 in a 148-level set. Fixed by routing every lookup through one
+   accessor, `CCXLevel(int)`, which returns `nullptr` out of range; each site then behaves exactly as a
+   set with no `.ccx` does (no author override, no prologue/epilogue, compatibility UNKNOWN). No
+   direct index remains in `oshw-qt/`.
+
+   **Verified:** the new cases fail under three separate mutations of the accessor's bound (`>=` to
+   `>`, the negative check removed, no bound at all), and pass on the fix. ⚠ They assert on the
+   accessor, not on `DisplayGame()` itself, which needs a loaded tileset the offscreen test does not
+   have -- so a future edit that reintroduces a direct `vecLevels[...]` index at a call site would not
+   be caught by them. A grep for `vecLevels[` in `oshw-qt/` is the guard for that.
+   ⚠ And the eight `CHECK_MSG(true, "survived")` checks the audit counted as padding: five are now
+   real assertions on what the vector holds; three are kept, because their failure mode genuinely IS
+   a crash (a null `g_pMainWnd`, a faulting destructor), and the file says why.
+
+42. **Two blind audits' worth of gates that could be walked past, and the guards they never
+   reached** (`verify-docs.ps1`, `test/run-nofix.ps1`/`.sh`, `run-tests.ps1`, `test/run-tests.ps1`,
+   `test/run-e2e.ps1`, `coverage.ps1`, `mutate.ps1`, `.github/check-floor-ratchet.sh`, CI, and five
+   test files). Not shipped code; it rides with jc-58 per `.github/RELEASING.md`.
+
+   **Gates that reported success without doing their job, each reproduced before being fixed:**
+   `verify-docs.ps1` passed a reworded retired claim and a fact no document asserted (now: probes per
+   claim, a failing unasserted fact, and `-SelfTest`, which runs the real script against a scratch copy
+   with one planted defect per check class after a clean control -- CI runs it, and mutating the gate
+   four ways turns it red each time); a blanked `NO_FIX_*` witness row stayed green (now an exact
+   `#!EXPECT` ratchet in both runners, plus a control build, plus -- in the `.sh` CI actually runs --
+   the unit-guard oracle it never had); `run-nofix.ps1` threw a .NET index exception when the shipped
+   engine crashed; `run-tests.ps1` said "all green" over a skipped Qt layer and ran e2e against a
+   STALE executable, and before that could fall back to a jc-43 binary; and three scripts --
+   `mutate.ps1`, `run-e2e.ps1`, `coverage.ps1` -- **exited 0 after aborting**, because under
+   `$ErrorActionPreference = "Continue"` a statement-terminating error inside a `try` with no `catch`
+   resumes after the try. `mutate.ps1 -UpdateBaseline` had been silently dead for two days that way,
+   from a bare carriage return inside a comment; CI now refuses one in any tracked text file.
+
+   **Hangs and deletions.** No runner or CI job had a timeout; a loop mutation hung the suite until
+   killed from outside. Every CI job has `timeout-minutes`, every unit binary a deadline, and every
+   layer of `run-tests.ps1` a ceiling -- each proven on the audit's exact hang. And the audit's
+   cheapest defeat -- delete jc-50's guard case, lower its floor, edit one prose count -- is now
+   visible: `.github/check-floor-ratchet.sh` fails any push whose floors, witnesses or guards went down
+   unless a commit says why in a `Test-Floor-Lowered:` trailer. It cannot judge the reason; it makes
+   the easy path declared.
+
+   **Guards nothing noticed loosening by one byte.** The audit loosened, and every layer survived:
+   every size bound in `series.c`'s `readleveldata()` (the first code to touch a downloaded `.dat`),
+   `undomschanges()`'s fixup write bound, `encoding.c`'s header size and both `+ 2` layer
+   reservations, `openfileindir()`'s stack-buffer guard, `solution.c`'s ruleset check and the move
+   encoder's three thresholds (format 3's `delta == 3` corrupted recordings: "wrote when=4, read back
+   when=3"), and the surplus-chip guard in `mslogic.c`. All sixteen were reproduced. **Fourteen now
+   die, every one on the plain unit pass** -- one of them, `readleveldata()`'s field clamp, only when
+   the heap byte past the record happens to be non-zero, which is why the Linux ASan job is its real
+   oracle and its test says so; the other two are equivalent mutants and
+   recorded as such in the test file (`series.c`'s upper-layer `>=` reads in bounds either way; its
+   password loop writes a 256-byte buffer either way). The recurring oracle was not the return value --
+   both forms refuse -- but what was written or read first: a poisoned field, a warning only the wrong
+   path reaches, a map cell decoded before refusal, a path that reached `fileopen()`. The existing
+   encoder round-trip also had its own boundary wrong by one: it tested GAPS 2047 and 2048, which are
+   DELTAS 2046 and 2047.
+
+   **Documents.** Coverage percentages quoted inside the section that promises no copies of them
+   (all stale: `mslogic.c` quoted at 44.8% against 60.3%) were removed rather than updated; "every
+   guard on the untrusted path dies" is a retired claim now; `CLAUDE.md` says how to read itself in
+   pages, since it is longer than one read of a file tool.
+
+   **Defended, with reasons:** a self-test for every remaining script (the stop rule of 2026-09-14);
+   GUI message-bar and end-dialog survivors (cosmetic, and the tier the maintainer notices on first
+   play); the unit tests building the debug engine rather than `-DNDEBUG` (the audit itself measured
+   golden identical in both configurations); novel false claims in prose (the verifier's documented
+   limit); and golden `-Update` accepting an engine change, which is what it is for -- it now says,
+   when it rewrites the baseline, that only the corpus differential can speak to replay.
+
 
 ## Testing
 

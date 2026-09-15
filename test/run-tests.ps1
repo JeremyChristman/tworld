@@ -8,8 +8,9 @@ Runs the Tile World UNIT tests.
 
 For the end-to-end layer as well, use the runner at the repository root:
 `run-tests.ps1`. This script is the unit layer only, and is what package.ps1 gates
-on. There are TWO layers, not three -- some unit tests here link more than one
-module (series_test.c compiles fileio.c in alongside series.c), which is
+on. (This line used to say "there are TWO layers"; there are six now, plus the
+docs check -- see the root runner's header.) Some unit tests here link more than
+one module (series_test.c compiles fileio.c in alongside series.c), which is
 integration-flavored, but there is no separate integration runner and nothing
 should claim one.
 
@@ -59,7 +60,12 @@ param(
     # agree with this file forever. Two hand-maintained tables that must agree,
     # with nothing checking that they do, will disagree; that lesson is written
     # down in CLAUDE.md section 8.1 and it applies to runners too.
-    [switch]$Sanitize
+    [switch]$Sanitize,
+
+    # Seconds any one test binary may run before it is killed and failed. The
+    # whole unit layer takes about six seconds; this is a hang detector, not a
+    # performance budget.
+    [int]$TimeoutSec = 120
 )
 # Native tools write notes to stderr; under "Stop" PowerShell 5.1 turns those into
 # terminating NativeCommandErrors even on success. Exit codes are checked explicitly.
@@ -337,13 +343,54 @@ foreach ($test in $tests) {
         }
         $record.compiled = $true
 
-        # stdout only, deliberately. On PowerShell 5.1, redirecting a native command's
-        # stderr with 2>&1 wraps every line in a NativeCommandError; the tests print
-        # their markers to stdout, and letting stderr flow straight to the console is
-        # both simpler and closer to what a person running the binary would see.
-        $output = & $exe
-        $exit = $LASTEXITCODE
+        # 🔴 A DEADLINE PER TEST BINARY. This used to be `$output = & $exe`, which
+        # waits forever: an adversarial audit removed one `++n` from an engine
+        # loop and the unit layer simply never came back -- only an external
+        # `timeout 120` ended it. An agent's tool call has its own limit and would
+        # report a mysterious abort instead of a failing test; CI would burn its
+        # whole job budget. Same shape mutate.ps1 already uses: Start-Process
+        # WITHOUT -Wait (which has no deadline), kill the tree by PID, and a
+        # second argument-less WaitForExit() so ExitCode reads back reliably
+        # (see CLAUDE.md section 3.1 on why it can come back empty otherwise).
+        #
+        # ⚠ Redirected to FILES, not `2>&1`: on PowerShell 5.1 that would wrap each
+        # stderr line in a NativeCommandError. Read back as UTF-8, which is what
+        # the tests write -- their case names carry emoji.
+        $outFile = "$exe.stdout.txt"
+        $errFile = "$exe.stderr.txt"
+        $proc = Start-Process -FilePath $exe -WorkingDirectory (Get-Location).Path -NoNewWindow -PassThru `
+                              -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        # 🔴 TOUCH THE HANDLE NOW, OR ExitCode READS BACK EMPTY. Measured on the
+        # first version of this block: all 19 runs reported 0 failures and were
+        # scored FAILED, because $proc.ExitCode was $null and `$null -ne 0` is
+        # true. The argument-less WaitForExit() below did NOT fix it on its own
+        # (mutate.ps1's comment claims it does, for a use that never reads the
+        # code). Caching the handle before the process can exit is what keeps
+        # .NET able to ask for its exit status.
+        $null = $proc.Handle
+        $timedOut = $false
+        if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+            $timedOut = $true
+            & taskkill /T /F /PID $proc.Id 2>&1 | Out-Null
+            $proc.WaitForExit(10000) | Out-Null
+        } else {
+            $proc.WaitForExit()
+        }
+        $exit = $proc.ExitCode
+        $output = @()
+        if (Test-Path -LiteralPath $outFile) { $output = @([IO.File]::ReadAllLines($outFile, [Text.Encoding]::UTF8)) }
         $output | ForEach-Object { if ($_ -notmatch '^TW(CASE|SUMMARY)\t') { Write-Host $_ } }
+        if (Test-Path -LiteralPath $errFile) {
+            foreach ($l in [IO.File]::ReadAllLines($errFile, [Text.Encoding]::UTF8)) { Write-Host $l }
+        }
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+        if ($timedOut) {
+            Write-Host ("TIMED OUT after {0}s and killed -- a test that never returns is a failure, not a slow pass" -f $TimeoutSec) -ForegroundColor Red
+            $record.status = "timed-out"
+            $failed++
+            $runs += $record
+            continue
+        }
 
         foreach ($line in $output) {
             if ($line -match '^TWCASE\t([^\t]*)\t([^\t]*)\t(.*)$') {

@@ -23,6 +23,43 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+Nothing yet.
+
+## jc-58 — 2026-09-15
+
+**One shipped fix and a great deal of proof.** Two more double-blind adversarial audits ran against
+this repository. The first judged the verification system world-class and agent-ready with caveats;
+the second, after that round's fixes, judged both claims false — and found the one real
+memory-safety defect below, plus sixteen guards that could be loosened by a byte with every layer
+green. Every finding was reproduced before it was conceded, and what was defended is recorded with
+its reason in `FORK.md` items 41–42.
+
+### Fixed — the `.ccx` table was indexed by an unchecked level number (shipped)
+
+The main window looked up a level's `.ccx` entry — author, prologue, epilogue, ruleset notes — by
+`game->number`, straight from the `.dat`, in a table sized by the set's level count. Out-of-bounds
+read in `DisplayGame()` and the compatibility message, and a write in `Narrate()`. **Measured: a
+`CCLP1.dat` with one level renumbered to 60000 crashes jc-57 (`0xC0000005`) and opens in jc-58.**
+From the code, a stock file reaches it by one element too — `sets/cc-fixlynx.dac` renumbers nothing
+when it removes the original CHIPS.DAT's level 145 — though that case was not reproduced here. Every
+lookup now goes through `CCXLevel()`, which returns nothing out of range; the new cases fail under
+three mutations of its bound. Upstream's.
+
+### Fixed — sixteen guards nothing noticed loosening by one byte
+
+Every size bound in `readleveldata()`, the Lynx fixup write bound, `encoding.c`'s header and layer
+reservations, `openfileindir()`'s stack buffer, the `.tws` ruleset check, the move encoder's three
+thresholds — one of which silently corrupted recordings — and the surplus-chip guard. All reproduced;
+fourteen now fail the plain unit pass, two are equivalent mutants and recorded as such. The existing
+encoder round-trip had its own boundary wrong by one (gaps, not deltas).
+
+### Fixed — no timeouts anywhere, and a deletion that cost one number
+
+Every CI job has `timeout-minutes`; every unit test binary and every `run-tests.ps1` layer has a
+deadline, each proven on a real engine hang. `.github/check-floor-ratchet.sh` fails a push whose check
+floors, `NO_FIX_*` witnesses or unit guards went down unless a commit carries `Test-Floor-Lowered:`.
+`test/run-e2e.ps1` refuses an executable older than the source it would be describing.
+
 ### Fixed — a blind audit's gate defeats: the checks that could be walked past
 
 A double-blind adversarial audit (2026-09-15) ran 28 mutations of operator classes `mutate.ps1` does

@@ -129,7 +129,7 @@ int main(void)
     int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(100);
+    tw_expect_atleast(106);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {
@@ -287,6 +287,84 @@ int main(void)
 	put16(raw + n, 0);      n += 2;    /* an empty optional-fields block */
 	CHECK_MSG(expandraw(raw, n) == TRUE,
 		  "a well-formed record with an empty optional-fields block was refused");
+    }
+
+    /* 🔴 ONE BYTE OF SLACK -- THE ONLY INPUT WHERE `+ 2` AND `+ 1` DISAGREE.
+     *
+     * The cases above pin zero bytes of slack (refused) and two (accepted). An
+     * adversarial audit weakened each layer's `data + size + 2 > dataend` to
+     * `+ 1`, and the header's `levelsize < 10` to `< 9`, and all three survived
+     * every layer: nothing ever handed the decoder exactly ONE spare byte, or a
+     * nine-byte record. Same oracle as above -- what was written before the
+     * refusal -- because both forms still refuse. */
+    tw_case("🔴 an upper layer with ONE byte of slack is refused before it is decoded");
+    {
+	int	cell, touched;
+
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;    /* upper layer: 3 bytes */
+	raw[n++] = FIX_FLOOR; raw[n++] = FIX_FLOOR; raw[n++] = 0xFF;
+	raw[n++] = 40;                     /* the ONE spare byte: read as a count */
+	/* Record ends here. Past it, what the escape's second read would find: */
+	raw[n] = 0x03;                     /* the tile id Water */
+	CHECK_MSG(expandraw(raw, n) == FALSE,
+		  "an upper layer with one byte of slack was accepted");
+	touched = 0;
+	for (cell = 0 ; cell < CXGRID * CYGRID ; ++cell)
+	    if (teststate.map[cell].top.id != 0)
+		++touched;
+	CHECK_MSG(touched == 0,
+		  "the record was refused, but %d cells of the UPPER layer were decoded"
+		  " first -- reading one byte past the record", touched);
+    }
+
+    tw_case("🔴 a lower layer with ONE byte of slack is refused before it is decoded");
+    {
+	int	cell, touched;
+
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 1);      n += 2;    /* upper layer: 1 byte */
+	raw[n++] = FIX_FLOOR;
+	put16(raw + n, 3);      n += 2;    /* lower layer: 3 bytes */
+	raw[n++] = FIX_FLOOR; raw[n++] = FIX_FLOOR; raw[n++] = 0xFF;
+	raw[n++] = 40;                     /* the ONE spare byte */
+	raw[n] = 0x03;                     /* past the record: Water */
+	CHECK_MSG(expandraw(raw, n) == FALSE,
+		  "a lower layer with one byte of slack was accepted");
+	touched = 0;
+	for (cell = 0 ; cell < CXGRID * CYGRID ; ++cell)
+	    if (teststate.map[cell].bot.id != 0)
+		++touched;
+	CHECK_MSG(touched == 0,
+		  "the record was refused, but %d cells of the LOWER layer were decoded"
+		  " first -- reading one byte past the record", touched);
+    }
+
+    tw_case("🔴 a NINE-byte record is refused before its chip count is read");
+    {
+	/* `levelsize < 10`. The header is ten bytes and the chip count sits at
+	 * [4..5]; at nine, the refusal must come before it is assembled. The
+	 * ten-byte case further down pins the other side. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;    /* level number */
+	put16(raw + n, 0);      n += 2;    /* time */
+	put16(raw + n, 7);      n += 2;    /* chips */
+	put16(raw + n, 1);      n += 2;    /* map detail */
+	raw[n++] = 0;                      /* half an upper-layer size */
+	raw[n] = 0;                        /* past the record */
+	teststate.chipsneeded = 0x5A5A;
+	CHECK_MSG(expandraw(raw, n) == FALSE, "a nine-byte level record was accepted");
+	CHECK_MSG(teststate.chipsneeded == 0x5A5A,
+		  "a nine-byte record was refused only AFTER its chip count was read (%d)",
+		  (int)teststate.chipsneeded);
     }
 
     /* ================================================================== *

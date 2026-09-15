@@ -141,11 +141,16 @@ function Invoke-TileWorld {
 # checkout whose current builds were missing tested an AUGUST binary and
 # reported the result as if it described HEAD. Same trap package.ps1's old
 # `-Exe build-jc35` default was. A frozen build is never a fallback.
+$exeWasGiven = [bool]$Exe
 if (-not $Exe) {
-    foreach ($candidate in @("build-dynamic\tworld2.exe", "build-static\tworld2.exe")) {
+    # The NEWER of the two when both exist -- the staleness check below is about
+    # whether the binary describes the current source, so prefer the one most
+    # likely to.
+    $found = @(foreach ($candidate in @("build-dynamic\tworld2.exe", "build-static\tworld2.exe")) {
         $full = Join-Path $repo $candidate
-        if (Test-Path $full) { $Exe = $candidate; break }
-    }
+        if (Test-Path $full) { [pscustomobject]@{ rel = $candidate; time = (Get-Item $full).LastWriteTimeUtc } }
+    })
+    if ($found.Count) { $Exe = ($found | Sort-Object time -Descending | Select-Object -First 1).rel }
 }
 if (-not $Exe) {
     Write-Host "no built executable found. Run:" -ForegroundColor Yellow
@@ -155,6 +160,62 @@ if (-not $Exe) {
 $script:exePath = if ([IO.Path]::IsPathRooted($Exe)) { $Exe } else { Join-Path $repo $Exe }
 if (-not (Test-Path $script:exePath)) { throw "no executable at $script:exePath" }
 Write-Host "executable: $script:exePath"
+
+# 🔴 A STALE EXECUTABLE IS NOT A RESULT ABOUT THIS SOURCE TREE.
+#
+# An adversarial audit ran the documented command after the source had moved on
+# and got "all green" from a build-dynamic\tworld2.exe two days and several
+# shipped-file commits old -- including oshw-qt\TWTheme.cpp. Nothing said the
+# end-to-end verdict described different code. So when the executable was FOUND
+# rather than named, the build that made it must have nothing left to do.
+#
+# 🔴 ASK THE BUILD GRAPH, NOT A LIST OF FILES. The first version compared the
+# exe's timestamp against every tracked source-like file, and two reviews in a
+# row found files that are tracked but never force a relink -- oshw-sdl\ (not
+# built), mklynxcc.c (EXCLUDE_FROM_ALL), a comment in CMakeLists.txt -- each of
+# which would have left e2e skipped forever, because rebuilding does nothing and
+# so clears nothing. `ninja -n tworld2` answers the real question exactly, from
+# the same dependency graph, .ninja_log and depfiles the build itself uses:
+# measured, touching lxlogic.c reports work and touching the other two does not.
+#
+# An explicit -Exe is honored as given; naming an old build on purpose (a
+# baseline) is legitimate. With no build.ninja beside the exe, or no ninja, the
+# freshness cannot be checked, and that is SAID rather than guessed at.
+if (-not $exeWasGiven) {
+    $buildDir = Split-Path -Parent $script:exePath
+    $ninjaExe = Join-Path "C:\msys64\mingw64\bin" "ninja.exe"
+    if (-not (Test-Path $ninjaExe)) { $ninjaExe = (Get-Command ninja -ErrorAction SilentlyContinue).Source }
+    $pending = $null
+    if ($ninjaExe -and (Test-Path (Join-Path $buildDir "build.ninja"))) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $dry = @(& $ninjaExe -C $buildDir -n tworld2 2>&1 | ForEach-Object { "$_" })
+        $ninjaRc = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+        if ($ninjaRc -ne 0) {
+            Write-Host ("  ⚠ could not ask ninja whether {0} is current (exit {1}); running it anyway" -f $Exe, $ninjaRc) -ForegroundColor Yellow
+        } elseif (-not ($dry -match 'no work to do')) {
+            $pending = @($dry | Where-Object { $_ -match '^\[\d+/\d+\]' } | Select-Object -First 1)
+            if (-not $pending) { $pending = @("the build has pending work") }
+        }
+    } else {
+        Write-Host ("  ⚠ cannot check whether {0} is current (no build.ninja beside it, or no ninja)" -f $Exe) -ForegroundColor Yellow
+    }
+    if ($pending) {
+        $why = "{0} is not up to date with the source -- the build would still run: {1}" -f $Exe, $pending[0]
+        Write-Host ""
+        Write-Host "########## end-to-end NOT RUN: the executable is STALE ##########" -ForegroundColor Yellow
+        Write-Host "  $why"
+        Write-Host "  Its results would describe older code. Rebuild, or pass -Build to run-tests.ps1:"
+        Write-Host "    powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic"
+        if ($env:TW_SKIP_REPORT) {
+            # Called from run-tests.ps1: a named skip in its summary, like Qt's.
+            Add-Content -LiteralPath $env:TW_SKIP_REPORT -Value ("e2e (stale executable: {0})" -f $why) -Encoding UTF8
+            exit 0
+        }
+        exit 1
+    }
+}
 
 # A dynamic build needs Qt's DLLs on PATH. Harmless for a static one.
 $mingwBin = "C:\msys64\mingw64\bin"

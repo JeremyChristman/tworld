@@ -64,9 +64,20 @@ void readextensions(gameseries *series) { (void)series; }
 
 static char const *scratchname = "tw_series_test.dat";
 
+/* Like readrecord(), but WITHOUT clearing *game first -- so a case can poison a
+ * field and assert the parser never wrote it. That is the only way to see a
+ * bound whose failure changes nothing but what was written before refusing. */
+static int readrecordinto(unsigned char const *record, int reclen, gamesetup *game);
+
 /* Write raw bytes as a file and run readleveldata() over them. The record must
  * carry its own leading 2-byte length, exactly as it does inside a .dat. */
 static int readrecord(unsigned char const *record, int reclen, gamesetup *game)
+{
+    memset(game, 0, sizeof *game);
+    return readrecordinto(record, reclen, game);
+}
+
+static int readrecordinto(unsigned char const *record, int reclen, gamesetup *game)
 {
     fileinfo file;
     FILE *f;
@@ -80,7 +91,6 @@ static int readrecord(unsigned char const *record, int reclen, gamesetup *game)
     fwrite(record, 1, (size_t)reclen, f);
     fclose(f);
 
-    memset(game, 0, sizeof *game);
     clearfileinfo(&file);
     if (!fileopen(&file, scratchname, "rb", NULL))
 	return -1;
@@ -277,7 +287,7 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(110);
+    tw_expect_atleast(129);
 
     tw_case("every committed fuzz corpus input still reads safely");
     {
@@ -354,6 +364,169 @@ int main(void)
 	put16(raw + n, 0);      n += 2;
 	r = readrecord(raw, n, &game);
 	CHECK_MSG(r == FALSE, "a 4-byte level record was accepted");
+    }
+
+    /* ================================================================== *
+     * 🔴 THE EXACT BOUNDARIES OF readleveldata()'s GUARDS.
+     *
+     * Added after an adversarial audit loosened every guard in this function by
+     * one byte and the whole suite -- unit, sanitize, golden -- stayed green,
+     * which CLAUDE.md contradicted in writing ("every guard on the untrusted
+     * path dies" -- true of readconfigfile(), not of this). Each case below sits
+     * on the one input where the guard and its off-by-one disagree.
+     *
+     * ⚠ AND "REFUSED" IS NOT THE ORACLE. Both forms of every one of these
+     * refuse the record, a line or two apart. What differs is what the parser
+     * READ or WROTE before refusing -- so each case poisons the field that only
+     * the wrong form would write, or counts the warning only it would reach.
+     * Two of the audit's survivors have no such difference and are recorded as
+     * equivalent where they are: `data + 2 >= dataend` at the upper layer reads
+     * in bounds either way, and the password loop's `n < 15` writes into a
+     * 256-byte buffer either way.
+     * ================================================================== */
+    tw_case("🔴 a ONE-byte record is refused before its level number is read");
+    {
+	/* series.c `size < 2`. A lone byte has no second byte for the number,
+	 * so the refusal must come BEFORE `data[0] | (data[1] << 8)`; one byte
+	 * looser and that reads past a one-byte allocation. */
+	memset(&game, 0, sizeof game);
+	game.number = 0x5A5A;
+	raw[0] = 0x07;
+	r = readrecordinto(raw, 1, &game);
+	CHECK_MSG(r == FALSE, "a one-byte level record was accepted");
+	CHECK_MSG(game.number == 0x5A5A,
+		  "a one-byte record was refused only AFTER its level number was read"
+		  " (0x%X) -- one byte past the record", game.number);
+    }
+
+    tw_case("🔴 a NINE-byte record is refused before its time is read; TEN gets further");
+    {
+	/* series.c `size < 10`: the fixed header is ten bytes, and at nine the
+	 * guard must fire before `game->time` is assembled. The ten-byte half is
+	 * what stops a guard that refuses everything from passing -- it is still
+	 * refused, a line later, but only after legitimately reading the time. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;    /* level number */
+	put16(raw + n, 999);    n += 2;    /* time */
+	put16(raw + n, 0);      n += 2;    /* chips */
+	put16(raw + n, 1);      n += 2;    /* map detail */
+	raw[n++] = 0;                      /* half of the upper-layer size */
+	memset(&game, 0, sizeof game);
+	game.time = 0x5A5A;
+	r = readrecordinto(raw, n, &game);
+	CHECK_MSG(r == FALSE, "a nine-byte level record was accepted");
+	CHECK_MSG(game.time == 0x5A5A,
+		  "a nine-byte record was refused only AFTER its time was read (%d)", game.time);
+
+	raw[n++] = 0;                      /* the other half: now a full header */
+	memset(&game, 0, sizeof game);
+	game.time = 0x5A5A;
+	r = readrecordinto(raw, n, &game);
+	CHECK_MSG(r == FALSE, "a header-only record with no map was accepted");
+	CHECK_INT(game.time, 999);
+    }
+
+    tw_case("🔴 a record ending ONE byte into the field-block size word is refused quietly");
+    {
+	/* series.c `data + 2 > dataend`, after the lower layer. The optional
+	 * fields are introduced by a two-byte size word; with one byte of it
+	 * present, the correct guard refuses straight away. One byte looser and
+	 * it reads the second byte from past the allocation, then complains
+	 * about "inconsistent size data" on its way to the same refusal -- a
+	 * warning the correct guard never reaches. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;    /* upper layer: empty */
+	put16(raw + n, 0);      n += 2;    /* lower layer: empty */
+	raw[n++] = 0;                      /* ONE byte of the field-block size */
+	r = readrecord(raw, n, &game);
+	CHECK_MSG(r == FALSE, "a record with half a field-block size word was accepted");
+	CHECK_MSG(warn_count == 0,
+		  "that record was refused only after reading past it: %d warning(s)"
+		  " about a size word the record does not contain", warn_count);
+	CHECK_MSG(errmsg_count == 1, "the refusal was not reported (%d)", errmsg_count);
+    }
+
+    tw_case("a field claiming ONE byte more than remains is clamped to what remains");
+    {
+	/* series.c `if (size > dataend - data) size = dataend - data;`. A name
+	 * field declaring three bytes with two left must copy two. One byte
+	 * looser and the memcpy takes a byte from past the allocation.
+	 *
+	 * ⚠ Which byte that is depends on the heap, so on the plain pass the
+	 * name check below catches the loosened clamp only when that byte is
+	 * non-zero. The Linux sanitizer job's ASan reports it every time -- which
+	 * is why this case exists even though a plain run cannot promise it. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;    /* upper layer: empty */
+	put16(raw + n, 0);      n += 2;    /* lower layer: empty */
+	put16(raw + n, 10);     n += 2;    /* ten bytes of fields follow */
+	raw[n++] = 6; raw[n++] = 4;        /* field 6, password, four bytes */
+	raw[n++] = 'A' ^ 0x99; raw[n++] = 'B' ^ 0x99;
+	raw[n++] = 'C' ^ 0x99; raw[n++] = 'D' ^ 0x99;
+	raw[n++] = 3; raw[n++] = 3;        /* field 3, name, claims THREE bytes */
+	raw[n++] = 'X'; raw[n++] = 'Y';    /* ...and the record ends after two */
+	r = readrecord(raw, n, &game);
+	CHECK_MSG(r == TRUE, "a record whose last field over-claims by one was refused");
+	CHECK_STR(game.name, "XY");
+	if (r == TRUE) free(game.leveldata);
+    }
+
+    tw_case("🔴 the Lynx fixups refuse a level too short for them -- at EXACTLY its length");
+    {
+	/* undomschanges() writes fixed bytes into CHIPS.DAT's level data when a
+	 * .dac says fixlynx=y, and first checks every target offset lies inside
+	 * its level: `levelsize <= fixup->pos` refuses. At levelsize == pos the
+	 * write would land one byte past the allocation -- a heap WRITE from an
+	 * untrusted file -- and one byte looser the check lets it through.
+	 *
+	 * The plain oracle is the return value and the count: refused, nothing
+	 * changes; let through, level 145 is deleted and count drops to 148. */
+	gameseries	series;
+	int		k, ok = 1;
+
+	memset(&series, 0, sizeof series);
+	series.count = 149;
+	series.games = calloc(149, sizeof *series.games);
+	CHECK_MSG(series.games != NULL, "allocation failed");
+	for (k = 0 ; series.games && k < 149 ; ++k) {
+	    /* 0x400 clears every offset in the fixup table (the largest is 0x392). */
+	    series.games[k].levelsize = (k == 5) ? 0x011D : 0x400;
+	    series.games[k].leveldata = calloc((size_t)series.games[k].levelsize, 1);
+	    if (!series.games[k].leveldata) ok = 0;
+	}
+	CHECK_MSG(ok, "allocation failed");
+	if (series.games && ok) {
+	    /* Level 5's fixup writes offset 0x011D; its data is exactly that long. */
+	    CHECK_MSG(undomschanges(&series) == FALSE,
+		      "a level exactly as long as its fixup offset was accepted -- the"
+		      " fixup would write one byte past it");
+	    CHECK_INT(series.count, 149);
+
+	    /* And one byte longer is enough, so the refusal is about the bound. */
+	    free(series.games[5].leveldata);
+	    series.games[5].levelsize = 0x011E;
+	    series.games[5].leveldata = calloc(0x011E, 1);
+	    CHECK_MSG(series.games[5].leveldata != NULL, "allocation failed");
+	    if (series.games[5].leveldata) {
+		CHECK_MSG(undomschanges(&series) == TRUE,
+			  "a level one byte longer than its fixup offset was refused");
+		CHECK_INT(series.count, 148);
+		CHECK_INT(series.games[5].leveldata[0x011D], 'P' ^ 0x99);
+	    }
+	}
+	/* undomschanges() freed the old level 145 and shifted the rest down, so
+	 * free whatever the array holds now, up to the count it left. */
+	for (k = 0 ; series.games && k < series.count ; ++k)
+	    free(series.games[k].leveldata);
+	free(series.games);
     }
 
     /* ================================================================== */

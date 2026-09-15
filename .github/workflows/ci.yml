@@ -18,8 +18,37 @@ jobs:
   # Seconds, no toolchain, and it catches the mistakes that are embarrassing rather than subtle.
   hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The floor ratchet below compares this change against its base, so
+          # it needs the history, not a one-commit shallow clone.
+          fetch-depth: 0
+
+      # 🔴 NO TEST FLOOR GOES DOWN WITHOUT A SENTENCE SAYING WHY. Every floor
+      # here is exact, but each compares the tree against a number the same
+      # tree can rewrite: an audit deleted jc-50's guard case, lowered its floor
+      # and one prose count, and every gate stayed green. This compares the push
+      # against its base and requires a `Test-Floor-Lowered:` trailer for any
+      # decrease. See the script's header for what it does and does not prove.
+      - name: No test floor went down without saying why
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          # A new branch or a manual run has no "before": compare with the parent.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git rev-parse HEAD~1)"
+          fi
+          # A rewritten branch (amend, force-push) names a "before" that is no
+          # longer in history. Compare with the parent then, and say so.
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "::warning::push base $base is not in history (rewritten branch?); comparing against HEAD~1 instead"
+            base="$(git rev-parse HEAD~1)"
+          fi
+          bash .github/check-floor-ratchet.sh "$base" HEAD
 
       - name: Nothing personal or copyrighted may be committed
         run: |
@@ -67,14 +96,6 @@ jobs:
           fi
           echo "README.txt header names $tag"
 
-      # 🔴 THE SAME DISCIPLINE, APPLIED TO FACTS. The check above makes fork.h
-      # the single definition of the build tag. Nothing did that for anything
-      # else, and an independent review found the consequence: SECURITY.md
-      # telling researchers that a live parser was dead code -- the third
-      # writing of a claim this project had already disproven twice -- and a
-      # witness count sitting stale in one paragraph while three other places in
-      # the same file were correct. Corrections propagated to CLAUDE.md and
-      # stopped there. See verify-docs.ps1's header.
       # 🔴 A BARE CARRIAGE RETURN IS A LINE BREAK TO POWERSHELL AND INVISIBLE IN
       # A DIFF. One sat inside a mutate.ps1 comment for two days -- a `\r` escape
       # collapsed to the real byte -- splitting the comment so its tail ran as a
@@ -100,6 +121,14 @@ jobs:
           fi
           echo "no bare carriage returns in tracked text files"
 
+      # 🔴 THE SAME DISCIPLINE, APPLIED TO FACTS. The build-tag check above makes
+      # fork.h the single definition of the build tag. Nothing did that for
+      # anything else, and an independent review found the consequence:
+      # SECURITY.md telling researchers that a live parser was dead code -- the
+      # third writing of a claim this project had already disproven twice -- and
+      # a witness count sitting stale in one paragraph while three other places
+      # in the same file were correct. Corrections propagated to CLAUDE.md and
+      # stopped there. See verify-docs.ps1's header.
       - name: The documentation still agrees with the code
         shell: pwsh
         run: pwsh -File verify-docs.ps1
@@ -119,6 +148,7 @@ jobs:
   # what broke.
   unit:
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: powershell
@@ -210,6 +240,7 @@ jobs:
   # parsers.
   sanitizers:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -250,6 +281,7 @@ jobs:
   # fuzz_leveldata.c uses fmemopen() to avoid a disk write per execution.
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -289,6 +321,7 @@ jobs:
   # delete the job and say so in docs/adr/0010.
   linux-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -339,6 +372,7 @@ jobs:
   # disabling a shipped engine fix and watching all six layers stay green.
   golden:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -385,6 +419,7 @@ jobs:
   # Adding one is a decision to be reviewed like code, not a way to clear a log.
   analysis:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -494,6 +529,7 @@ jobs:
   # build the arrangement, not that the fix is dead. See test/nofix/nofix.c.
   nofix:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -509,6 +545,7 @@ jobs:
   # package.ps1 is what verifies that one.
   build-and-e2e:
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: powershell

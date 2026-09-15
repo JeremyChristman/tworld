@@ -107,6 +107,18 @@ try {
         Write-Host "  git diff -- test/golden/engine-snapshot.tsv" -ForegroundColor Yellow
         Write-Host "If the digests moved but the outcome and ticks columns did not," -ForegroundColor Yellow
         Write-Host "the digest formula changed, not the engine." -ForegroundColor Yellow
+        # 🔴 AND IF THE ENGINE DID CHANGE, THIS BASELINE PROVES NOTHING ABOUT REPLAY.
+        # An adversarial audit changed a movement rule, regenerated this file and
+        # got an all-green suite -- legitimately, since that is what -Update is for.
+        # A rewritten snapshot records that the engine now behaves DIFFERENTLY; it
+        # cannot say whether anyone's recorded solutions still work. Only the
+        # corpus differential can, and no CI job can run it. Say so at the moment
+        # the baseline moves, not in a document nobody is reading right then.
+        Write-Host ""
+        Write-Host "If ENGINE BEHAVIOR changed, a green golden run now proves nothing about" -ForegroundColor Red
+        Write-Host "replay. Before committing this, run the corpus differential by hand:" -ForegroundColor Red
+        Write-Host "  test\run-corpus.ps1 (see its header, and CLAUDE.md section 5)" -ForegroundColor Red
+        Write-Host "No CI job can run it -- the collection is private (docs/adr/0005)." -ForegroundColor Red
         exit 0
     }
 

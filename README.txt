@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-57
+  Tile World  --  Jeremy Christman's fork                    build jc-58
 ==============================================================================
 
   1. What this is
@@ -495,6 +495,43 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-58  --  One real memory fix, found by looking for it on purpose
+--------------------------------------------------------------------
+
+  * NO CHANGE TO HOW ANY LEVEL PLAYS. Every solution replays exactly as it did
+    in jc-57, and every setting means the same thing.
+
+  * THE FIX. When a level starts, the window looks up that level's extra
+    information -- a prologue, an epilogue, an author, notes on which rulesets
+    it works under -- by its level NUMBER. It never checked that the number
+    fitted the table it was looking in. A level set whose numbering ran past
+    its own level count made the game read, and in one place write, memory just
+    past the end of that table.
+
+    A deliberately crafted level set CRASHES jc-57. Measured: a copy of CCLP1
+    with its first level renumbered to 60000 opens its window in jc-57 and
+    the program dies a moment later; jc-58 opens the same file and plays it.
+    (The unaltered CCLP1 runs fine in both, so the number is the cause.)
+
+    The stock files reach it too, by a much smaller step. The original
+    CHIPS.DAT played through cc-fixlynx.dac (the Lynx-ruleset repair) has one
+    level removed and its last level left numbered 149 in a 148-level set --
+    one step past the end, which usually read nothing that mattered. That
+    case follows from the code; it was not reproduced, because the copy of
+    CHIPS.DAT at hand is not the exact original the repair accepts.
+
+    A number with no entry now simply behaves as if the set had no extra
+    information at all.
+
+  * HOW IT WAS FOUND. By an outside review that was given the code with no
+    explanation and told to assume the documentation was flattering it -- the
+    same kind of review that shaped jc-57. It also found, and this build closes,
+    a long list of places where the tests would not have noticed a check being
+    loosened by a single byte, in the code that reads level files, solution
+    files and file paths. None of those checks was actually loosened; the
+    tests can now tell if one ever is.
 
 
 jc-57  --  Nothing you can see; a great deal you would rather not find out

@@ -201,7 +201,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1215);
+    tw_expect_atleast(1244);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -766,6 +766,110 @@ int main(void)
 	destroymovelist(&back.moves);
 	free(game.solutiondata);
 	game.solutiondata = NULL;
+    }
+
+    tw_case("🔴 every encoder threshold round-trips at the exact DELTA it switches on");
+    {
+	/* ⚠ THE CASE ABOVE GOT ITS OWN BOUNDARY WRONG, BY ONE. contractsolution()
+	 * compares `delta`, and delta is the gap MINUS ONE (`delta = -when - 1;
+	 * ... delta += when`). So its "2047 and 2048" are deltas 2046 and 2047,
+	 * and the switch at `delta >= (1 << 11)` -- delta 2048, a gap of 2049 --
+	 * was never reached. An adversarial audit loosened that threshold, the
+	 * five-byte one at `delta < (1 << 18)`, and format 3's `delta == 3`, and
+	 * all three survived every layer while silently corrupting recordings:
+	 * "move 0: wrote when=4, read back when=3".
+	 *
+	 * These are written as DELTAS, each at the one value where the correct
+	 * comparison and its off-by-one choose different encodings. */
+	int when = 0;
+	memset(&game, 0, sizeof game);
+	initmovelist(&sol.moves);
+	sol.rndseed = 7;
+	sol.flags = 0;
+	sol.rndslidedir = NORTH;
+	sol.stepping = 0;
+	addmove(&sol, NORTH, when);
+	/* Format 3 packs three orthogonal moves when the first has delta EXACTLY 3
+	 * and the next two follow four ticks apart. Delta 3 must pack and still
+	 * read back exactly; delta 4 must NOT pack, because format 3 has no room
+	 * to say "4" and reads every packed first move back as delta 3. */
+	addmove(&sol, EAST,  when += 4);   /* delta 3: packs */
+	addmove(&sol, WEST,  when += 4);
+	addmove(&sol, EAST,  when += 4);
+	addmove(&sol, WEST,  when += 5);   /* delta 4: must not pack... */
+	addmove(&sol, EAST,  when += 4);   /* ...even though these two follow */
+	addmove(&sol, WEST,  when += 4);   /*    four ticks apart */
+	/* A diagonal at delta EXACTLY 2048 needs the long format; at 2047 the
+	 * ordinary two-byte form's eleven bits still hold it. */
+	addmove(&sol, NORTH | WEST, when += 2048);   /* delta 2047 */
+	addmove(&sol, SOUTH | EAST, when += 2049);   /* delta 2048 */
+	/* The long format's four-byte size holds 18 bits of time; delta EXACTLY
+	 * 1 << 18 needs the five-byte size. */
+	addmove(&sol, SOUTH | WEST, when += (1 << 18));       /* delta 2^18 - 1 */
+	addmove(&sol, NORTH | EAST, when += (1 << 18) + 1);   /* delta 2^18 */
+	addmove(&sol, NORTH, when += 1);
+	CHECK_INT(contractsolution(&sol, &game), TRUE);
+	CHECK_INT(expandsolution(&back, &game), TRUE);
+	CHECK_INT(back.moves.count, sol.moves.count);
+	for (i = 0 ; i < sol.moves.count && i < back.moves.count ; ++i) {
+	    CHECK_MSG(back.moves.list[i].when == sol.moves.list[i].when,
+		      "move %d: wrote when=%d, read back %d -- the recording is corrupted",
+		      i, sol.moves.list[i].when, back.moves.list[i].when);
+	    CHECK_MSG(back.moves.list[i].dir == sol.moves.list[i].dir,
+		      "move %d: wrote dir=%d, read back %d", i,
+		      sol.moves.list[i].dir, back.moves.list[i].dir);
+	}
+	destroymovelist(&sol.moves);
+	destroymovelist(&back.moves);
+	free(game.solutiondata);
+	game.solutiondata = NULL;
+    }
+
+    tw_case("🔴 a .tws recorded under the OTHER ruleset is refused at its header");
+    {
+	/* readsolutionheader() refuses a file whose ruleset byte differs from the
+	 * level set's. Nothing tested it, and making that comparison always pass
+	 * survived every layer -- which would replay MS recordings through the
+	 * Lynx engine and report every one of them as a failure. */
+	char const *path = "tw_ruleset_test.tws";
+	FILE *f;
+	int rs;
+
+	for (rs = 0 ; rs < 2 ; ++rs) {
+	    int const recorded = (rs == 0) ? Ruleset_MS : Ruleset_Lynx;
+	    f = fopen(path, "wb");
+	    if (!f) {
+		tw_skip("could not create a temporary .tws in the working directory");
+		break;
+	    } else {
+		fileinfo file;
+		int flags = -1, extrasize = -1;
+		unsigned char extra[256];
+		unsigned char hdr[8];
+
+		/* The signature 0x999B3335, little-endian, then ruleset, flags, extra size. */
+		hdr[0] = 0x35; hdr[1] = 0x33; hdr[2] = 0x9B; hdr[3] = 0x99;
+		hdr[4] = (unsigned char)recorded;
+		hdr[5] = 0; hdr[6] = 0;
+		hdr[7] = 0;
+		fwrite(hdr, 1, sizeof hdr, f);
+		fclose(f);
+
+		clearfileinfo(&file);
+		file.name = (char*)path;
+		file.fp = fopen(path, "rb");
+		if (!file.fp) {
+		    tw_skip("could not reopen the temporary .tws");
+		    break;
+		}
+		CHECK_MSG(readsolutionheader(&file, Ruleset_MS, &flags, &extrasize, extra)
+			  == (recorded == Ruleset_MS),
+			  "a .tws recorded under ruleset %d was %s by an MS level set",
+			  recorded, (recorded == Ruleset_MS) ? "refused" : "ACCEPTED");
+		fclose(file.fp);
+		remove(path);
+	    }
+	}
     }
 
     tw_case("the null solution contracts to nothing, and is not an error");

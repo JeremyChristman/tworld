@@ -84,7 +84,9 @@ with a `TESTLANG:` comment and says why. Extra flags go in a `TESTFLAGS:` commen
 
 🔴 **`tw_expect_atleast(N)` in each test is load-bearing.** It fails the run if fewer than N checks
 executed, which is what catches a test function that has silently stopped being called. Raise it when
-you add cases; **never lower it to make a run pass.** ⚠ `input_test.c` and `dirinput_test.c` predate
+you add cases; **never lower it to make a run pass.** CI enforces that across commits: a push whose
+floors, NO_FIX_* witnesses or unit guards went DOWN fails unless a commit in it carries a
+`Test-Floor-Lowered: <why>` trailer (`.github/check-floor-ratchet.sh`). ⚠ `input_test.c` and `dirinput_test.c` predate
 `tw_test.h` and carry the same guard hand-written (`if (checks < N)`), so grepping for the macro
 under-counts — an audit read that as two unguarded tests. Both floors are exact.
 
@@ -103,7 +105,7 @@ that is no longer true**: jc-57's direct cases for `movelaw_block()` and `movela
 fail the plain pass with real assertions. Escalating the whole 2026-09-11 census through `-Sanitize`
 found it catches **7 of 949 plain-pass survivors, 0.7%** — small, and not a reason to skip it.
 
-⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 23,336.
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 23,402.
 Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
 than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
 The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.
@@ -134,5 +136,5 @@ moving a toggle into the unguarded list. Read §5 before claiming a green run me
 
 ## Pull requests
 
-Run `run-tests.ps1` and include the summary. CI runs the build, both test layers and CodeQL. See
+Run `run-tests.ps1` and include the summary. CI runs the build, every test layer, the fuzzers, both sanitizers, cppcheck and CodeQL. See
 `.github/CONTRIBUTING.md` for the workflow and `.github/RELEASING.md` for shipping.

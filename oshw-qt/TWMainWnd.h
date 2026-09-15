@@ -69,7 +69,11 @@ public:
 	
 	void ReadExtensions(gameseries* pSeries);
 	void Narrate(CCX::Text CCX::Level::*pmTxt, bool bForce = false);
-	
+	/* MOD (Jeremy, jc-58): the .ccx entry for a LEVEL NUMBER, or nullptr when
+	 * the number has no entry. Every lookup goes through here -- see the
+	 * definition for the out-of-bounds read this replaced. */
+	CCX::Level* CCXLevel(int nLevelNum);
+
 	void ShowAbout();
 
 private slots:

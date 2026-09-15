@@ -402,29 +402,67 @@ static void test_ccx_consumer(TileWorldMainWnd *w)
     series.count = 5;
     series.mapfilename = mapname;
 
-    tw_case("🔴 a MISSING .ccx still leaves the level vector safe to index");
-    /* ReadExtensions writes rCCXLevel.txtPrologue.bSeen for 1..count with no
-     * regard for whether the read worked. If a failed ReadFile left the vector
-     * empty this would be an out-of-bounds write on a real player's machine,
-     * every time they opened a set with no .ccx beside it -- which is most of
-     * them. It warns, and that is all it should do. */
+    /* ⚠ THESE CASES USED TO END IN `CHECK_MSG(true, "...survived")`, which cannot
+     * fail. Their only oracle was "the process did not crash", and a read one
+     * element past a std::vector does not crash on its own. It aborts here only
+     * because this toolchain's unoptimized build turns on libstdc++'s
+     * assertions -- measured 2026-09-15, a compiler default and not a promise.
+     * An adversarial audit rightly counted such checks as padding on this
+     * file's floor. Every lookup now goes through CCXLevel(), so the cases below
+     * assert on what the vector actually holds, with or without assertions. */
+
+    tw_case("🔴 a MISSING .ccx still leaves an entry for every level 1..count");
+    /* ReadExtensions writes the bSeen flags for 1..count with no regard for
+     * whether the read worked. If a failed ReadFile left the vector short, a
+     * player opening any set with no .ccx beside it -- most of them -- would
+     * lose those entries. It warns, and that is all it should do. */
     w->ReadExtensions(&series);
-    CHECK_MSG(true, "ReadExtensions survived a missing .ccx");
+    CHECK_MSG(w->CCXLevel(1) != NULL, "after a failed .ccx read, level 1 has no entry");
+    CHECK_MSG(w->CCXLevel(series.count) != NULL,
+	      "after a failed .ccx read, level %d (the last) has no entry", series.count);
+
+    tw_case("🔴 a level NUMBER past the set's count has no entry -- not a read past the vector");
+    /* jc-58. game->number comes straight out of the .dat and nothing bounds it
+     * by count, so DisplayGame() and Narrate() used to index the vector with it
+     * directly. A crafted file reaches 65535; a negative index is covered for
+     * the same reason the helper tests it. */
+    CHECK_MSG(w->CCXLevel(series.count + 1) == NULL,
+	      "level number %d in a %d-level set returned an entry", series.count + 1, series.count);
+    CHECK_MSG(w->CCXLevel(65535) == NULL, "level number 65535 returned an entry");
+    CHECK_MSG(w->CCXLevel(-1) == NULL, "level number -1 returned an entry");
+
+    tw_case("🔴 ...including the STOCK shape: fixlynx leaves 148 levels, the last numbered 149");
+    /* undomschanges() (series.c) deletes CHIPS.DAT's level 145 and shifts the
+     * next four down without renumbering, so a stock `fixlynx=y` .dac ends with
+     * count 148 and a last level numbered 149 -- exactly one past a vector of
+     * 149. No crafted file was ever needed to reach this. */
+    series.count = 148;
+    w->ReadExtensions(&series);
+    CHECK_MSG(w->CCXLevel(148) != NULL, "a 148-level set has no entry for level 148");
+    CHECK_MSG(w->CCXLevel(149) == NULL,
+	      "level number 149 in a 148-level set returned an entry -- one past the vector");
 
     tw_case("...for a count of zero and of one, too");
     /* The loop is `for (i = 1; i <= count; ++i)`, so count 0 touches nothing and
-     * count 1 touches exactly vecLevels[1] -- the index a naive sizing would
-     * miss. */
+     * count 1 touches exactly index 1 -- the one a naive sizing would miss. */
     series.count = 0;
     w->ReadExtensions(&series);
+    CHECK_MSG(w->CCXLevel(1) == NULL, "a 0-level set has an entry for level 1");
     series.count = 1;
     w->ReadExtensions(&series);
-    CHECK_MSG(true, "ReadExtensions survived counts of 0 and 1");
+    CHECK_MSG(w->CCXLevel(1) != NULL, "a 1-level set has no entry for level 1");
+    CHECK_MSG(w->CCXLevel(2) == NULL, "a 1-level set has an entry for level 2");
 
-    /* Narrate() reads m_ccxLevelset.vecLevels[m_nLevelNum], so the vector must
-     * be sized for the level being narrated. m_nLevelNum is 0 on a fresh window,
-     * and ReadFile sizes to count+1, so index 0 exists after any of the calls
-     * above. */
+    /* Narrate() narrates the level in m_nLevelNum, which is 0 on a fresh window;
+     * ReadFile sizes to count+1, so entry 0 exists. Taken AFTER the last
+     * ReadExtensions, because that call rebuilds the vector. */
+    CCX::Level *lvl = w->CCXLevel(0);
+    CHECK_MSG(lvl != NULL, "entry 0, the fresh window's level, is missing");
+    if (!lvl)
+	return;
+    lvl->txtPrologue.bSeen = false;
+    lvl->txtEpilogue.bSeen = false;
+
     tw_case("Narrate does nothing when the CCX display option is off");
     /* The gate is `(bSeen || !action_displayCCX->isChecked()) && !bForce`.
      * With the option off and no force, it returns WITHOUT marking the text
@@ -433,7 +471,9 @@ static void test_ccx_consumer(TileWorldMainWnd *w)
     CHECK_MSG(ccx != NULL, "the CCX display menu item is missing");
     ccx->setChecked(false);
     w->Narrate(&CCX::Level::txtPrologue, false);
-    CHECK_MSG(true, "Narrate returned with the option off");
+    CHECK_MSG(!lvl->txtPrologue.bSeen,
+	      "with the option off, Narrate marked the prologue SEEN -- turning the option on"
+	      " later would never show it");
 
     tw_case("🔴 ...and bForce overrides the option without opening a dialog");
     /* bForce skips the gate, marks the text seen, and then returns at
@@ -442,14 +482,17 @@ static void test_ccx_consumer(TileWorldMainWnd *w)
      * g_pApp->exec(), so a test that hangs here is reporting a real change in
      * that early return. */
     w->Narrate(&CCX::Level::txtPrologue, true);
-    CHECK_MSG(true, "Narrate with bForce returned without entering the page loop");
+    CHECK_MSG(lvl->txtPrologue.bSeen, "Narrate with bForce did not mark the prologue seen");
+    CHECK_MSG(!lvl->txtEpilogue.bSeen, "narrating the PROLOGUE marked the epilogue seen");
 
     tw_case("the epilogue is a separate text from the prologue");
     /* Narrate takes a POINTER-TO-MEMBER precisely so the two are addressed by
      * the same code; passing the wrong one would narrate the prologue at the
      * end of a level. */
+    lvl->txtPrologue.bSeen = false;
     w->Narrate(&CCX::Level::txtEpilogue, true);
-    CHECK_MSG(true, "Narrate handled the epilogue member");
+    CHECK_MSG(lvl->txtEpilogue.bSeen, "Narrate with bForce did not mark the epilogue seen");
+    CHECK_MSG(!lvl->txtPrologue.bSeen, "narrating the EPILOGUE marked the prologue seen");
 
     ccx->setChecked(false);
 }
@@ -468,7 +511,15 @@ static void test_batch_guards(void)
     tw_case("🔴 setsubtitle() is safe with no window -- batch mode has none");
     /* jc-30's re-title after loadsettings() is on the common path and crashed
      * every batch run instantly. The corpus guard caught it, which is exactly
-     * why that guard exists. */
+     * why that guard exists.
+     *
+     * ⚠ THE `CHECK_MSG(true)` LINES IN THIS FUNCTION AND AT TEARDOWN ARE NOT
+     * PADDING, unlike the .ccx ones that used to be (see test_ccx_consumer).
+     * Here the failure mode IS a crash: a null g_pMainWnd dereference, or a
+     * faulting destructor, ends the process before tw_end() reports, and the
+     * runner fails that run. The check only records that the line was reached.
+     * The .ccx ones were different because their failure was an out-of-bounds
+     * READ, which is caught only if libstdc++'s assertions happen to be on. */
     CHECK_MSG(g_pMainWnd == NULL, "this case requires that no window exists yet");
     setsubtitle("anything");
     setsubtitle(NULL);
@@ -798,6 +849,6 @@ int main(int argc, char **argv)
      * Exact, and both runners now check that it is -- see run-tests.ps1 and
      * run-sanitizers.sh. Nothing here is platform-dependent: the offscreen
      * platform is the same everywhere, which is most of why it was used. */
-    tw_expect_atleast(92);
+    tw_expect_atleast(103);
     return tw_end();
 }

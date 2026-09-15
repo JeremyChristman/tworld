@@ -137,8 +137,16 @@ backport to. Fixes ship in the next tagged build.
   ungated, because its safety otherwise depends on a check in a different file.
 - **The `.ccx` metadata parser is covered too** (`test/qt/ccmetadata_test.cpp`, 90 checks). It is
   the only parser here reachable ONLY from a running GUI -- readextensions() returns early in batch
-  mode -- so no corpus run, e2e case or fuzz target can touch it. No defect was found; the level
-  index is bounds-checked and Qt does the parsing.
+  mode -- so no corpus run, e2e case or fuzz target can touch it. The PARSER's level index is
+  bounds-checked, and no defect was found there.
+  🔴 **Its CONSUMER was not, and that was a real out-of-bounds read, fixed in jc-58.** The main window
+  indexed the `.ccx` table with the level number straight from the `.dat` -- in `DisplayGame()`, the
+  compatibility message and `Narrate()`, where the read became a write -- against a table sized by the
+  set's level count. **Measured: a `.dat` with one level renumbered to 60000 crashes jc-57 on
+  opening** (`0xC0000005`, with the unaltered file as control), so this was a crash reachable from a
+  downloaded level set. From the code, a stock `fixlynx=y` `.dac` goes one past on the original
+  CHIPS.DAT's last level too. Found by an adversarial audit, not by the parser's own test -- the lesson
+  being that a bounds-checked parser says nothing about the code that indexes its output.
 - ⚠ **The parser that had no test was the parser with the defects.** `readconfigfile()` was the last
   one with no coverage of any kind; writing its first unit test in jc-48 immediately found a path
   check that could not work on Windows and eleven `<ctype.h>` calls on a signed `char`. Coverage of

@@ -847,7 +847,8 @@ bool TileWorldMainWnd::DisplayGame(const gamestate* pState, int nTimeLeft, int n
 
         m_author = TWTextCoder::decode(pState->game->author);
         if (m_author.isEmpty()) {
-            m_author = m_ccxLevelset.vecLevels[m_nLevelNum].sAuthor;
+            if (CCX::Level const* pCCXLevel = CCXLevel(m_nLevelNum))
+                m_author = pCCXLevel->sAuthor;
         }
         if (!m_author.isEmpty()) {
             m_pLblAuthor->setText(m_author);
@@ -868,10 +869,9 @@ bool TileWorldMainWnd::DisplayGame(const gamestate* pState, int nTimeLeft, int n
 		menu_Solution->setEnabled(bHasSolution);
 		menu_Help->setEnabled(true);
 		action_GoTo->setEnabled(true);
-		CCX::Level const & currLevel
-		    (m_ccxLevelset.vecLevels[m_nLevelNum]);
-		bool hasPrologue(!currLevel.txtPrologue.vecPages.empty());
-		bool hasEpilogue(!currLevel.txtEpilogue.vecPages.empty());
+		CCX::Level const* pCurrLevel = CCXLevel(m_nLevelNum);
+		bool hasPrologue(pCurrLevel && !pCurrLevel->txtPrologue.vecPages.empty());
+		bool hasEpilogue(pCurrLevel && !pCurrLevel->txtEpilogue.vecPages.empty());
 		action_Prologue->setEnabled(hasPrologue);
 		action_Epilogue->setEnabled(hasEpilogue && bHasSolution);
 
@@ -1032,7 +1032,10 @@ void TileWorldMainWnd::CheckForProblems(const gamestate* pState)
 	}
 	else
 	{
-		CCX::RulesetCompatibility ruleCompat = m_ccxLevelset.vecLevels[m_nLevelNum].ruleCompat;
+		// A level with no .ccx entry reads as all-UNKNOWN, exactly as a set with
+		// no .ccx at all does.
+		CCX::Level const* pCCXLevel = CCXLevel(m_nLevelNum);
+		CCX::RulesetCompatibility ruleCompat = pCCXLevel ? pCCXLevel->ruleCompat : CCX::RulesetCompatibility();
 		CCX::Compatibility compat = CCX::COMPAT_UNKNOWN;
 		if (m_nRuleset == Ruleset_Lynx)
 		{
@@ -2165,16 +2168,46 @@ void TileWorldMainWnd::ReadExtensions(gameseries* pSeries)
 		
 	for (int i = 1; i <= pSeries->count; ++i)
 	{
-		CCX::Level& rCCXLevel = m_ccxLevelset.vecLevels[i];
-		rCCXLevel.txtPrologue.bSeen = false;	// @#$ (pSeries->games[i-1].sgflags & SGF_HASPASSWD) != 0;
-		rCCXLevel.txtEpilogue.bSeen = false;
+		CCX::Level* pCCXLevel = CCXLevel(i);
+		if (!pCCXLevel)
+			continue;
+		pCCXLevel->txtPrologue.bSeen = false;	// @#$ (pSeries->games[i-1].sgflags & SGF_HASPASSWD) != 0;
+		pCCXLevel->txtEpilogue.bSeen = false;
 	}
+}
+
+/* MOD (Jeremy, jc-58): the one place a level number becomes a .ccx index.
+ *
+ * 🔴 THIS WAS AN OUT-OF-BOUNDS READ -- AND, IN Narrate(), A WRITE -- ON A PATH
+ * EVERY PLAYER TAKES. DisplayGame(), the level-compatibility message and
+ * Narrate() all indexed vecLevels[m_nLevelNum] directly. The vector is sized
+ * count+1 (CCMetaData.cpp, ReadFile), but m_nLevelNum is game->number: a 16-bit
+ * field read straight out of the .dat (series.c), which nothing requires to lie
+ * within 1..count. A crafted .dat reaches as far as 65535.
+ *
+ * And no crafted file is needed. A stock .dac with fixlynx=y runs
+ * undomschanges(), which deletes level 145 and shifts the next four down
+ * WITHOUT renumbering them -- so count becomes 148 while the last level's number
+ * stays 149, one past a 149-element vector. Found by an adversarial audit that
+ * built the window test with -D_GLIBCXX_ASSERTIONS and watched operator[] abort.
+ *
+ * A number with no entry behaves exactly like a set with no .ccx at all: no
+ * author override, no prologue or epilogue, compatibility UNKNOWN.
+ */
+CCX::Level* TileWorldMainWnd::CCXLevel(int nLevelNum)
+{
+	if (nLevelNum < 0 || nLevelNum >= int(m_ccxLevelset.vecLevels.size()))
+		return nullptr;
+	return &m_ccxLevelset.vecLevels[nLevelNum];
 }
 
 
 void TileWorldMainWnd::Narrate(CCX::Text CCX::Level::*pmTxt, bool bForce)
 {
-	CCX::Text& rText = m_ccxLevelset.vecLevels[m_nLevelNum].*pmTxt;
+	CCX::Level* pCCXLevel = CCXLevel(m_nLevelNum);
+	if (!pCCXLevel)
+		return;
+	CCX::Text& rText = pCCXLevel->*pmTxt;
 	if ((rText.bSeen || !action_displayCCX->isChecked()) && !bForce)
 		return;
 	rText.bSeen = true;

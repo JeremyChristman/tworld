@@ -109,7 +109,7 @@ int main(void)
 	free(buf);
     }
 
-    tw_expect_atleast(37);
+    tw_expect_atleast(42);
 
     tw_case("an absolute path ignores the directory entirely");
     {
@@ -206,6 +206,54 @@ int main(void)
 	CHECK_MSG(combinepath(dest, dir, path) == FALSE,
 		  "a combined path one character too long was accepted");
 	CHECK_INT(errno, ENAMETOOLONG);
+    }
+
+    tw_case("🔴 openfileindir refuses a joined path one byte too long for its STACK buffer");
+    {
+	/* openfileindir() joins into `char buf[PATH_MAX + 1]`: the directory,
+	 * a separator, the name and a terminator, m + n + 2 bytes. So
+	 * `m + n + 1 > PATH_MAX` is exactly the bound, and one byte looser writes
+	 * one byte past a stack array. combinepath() had its exact-fit case
+	 * above; this twin had none, and an adversarial audit loosened it with
+	 * every layer green -- UBSan included, which does not watch arrays.
+	 *
+	 * Both forms fail to open a file that does not exist, so the return value
+	 * is not the oracle. Neither is errno, as it turned out: a review caught
+	 * that on Linux the OPERATING SYSTEM refuses a path of PATH_MAX characters
+	 * with ENAMETOOLONG too (its limit counts the terminator), so at exactly
+	 * this length the kernel and the guard give the same answer there.
+	 *
+	 * The oracle is whether the joined path ever reached fileopen(), which
+	 * copies it into file->name before calling fopen(). Refused by the guard,
+	 * name stays NULL; past the guard, name holds the joined path -- on every
+	 * platform, whatever fopen() then says. */
+	fileinfo	opened;
+
+	strcpy(path, "file.dat");
+	n = (int)strlen(path);
+
+	makedir(dir, PATH_MAX - n);        /* n + D + 1 == PATH_MAX + 1 */
+	clearfileinfo(&opened);
+	errno = 0;
+	CHECK_MSG(openfileindir(&opened, dir, path, "rb", NULL) == FALSE,
+		  "a joined path one byte too long was opened");
+	CHECK_MSG(opened.name == NULL,
+		  "a joined path one byte too long for the stack buffer was assembled"
+		  " and handed to fileopen() -- the copy into buf[] overran it first");
+	CHECK_INT(errno, ENAMETOOLONG);
+	if (opened.name && opened.alloc) free(opened.name);
+
+	/* The exact fit gets PAST the guard -- and then fails for the ordinary
+	 * reason, since no such file exists -- so the case above is about the
+	 * bound and not a guard that refuses every long path. */
+	makedir(dir, PATH_MAX - n - 1);    /* n + D + 1 == PATH_MAX */
+	clearfileinfo(&opened);
+	CHECK_MSG(openfileindir(&opened, dir, path, "rb", NULL) == FALSE,
+		  "a file that does not exist was opened");
+	CHECK_MSG(opened.name != NULL && (int)strlen(opened.name) == PATH_MAX,
+		  "a joined path that exactly fits the buffer never reached fileopen()"
+		  " (name %s) -- the guard refused it", opened.name ? "set, wrong length" : "NULL");
+	if (opened.name && opened.alloc) free(opened.name);
     }
 
     tw_case("skippathname returns the file part, or the whole name");

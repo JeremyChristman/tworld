@@ -7,10 +7,19 @@ Upstream is [SicklySilverMoon/tworld](https://github.com/SicklySilverMoon/tworld
 this fork is public at <https://github.com/JeremyChristman/tworld> and is **GPLv2-or-later**. Builds
 are tagged `jc-N` and published as GitHub releases that real people download and play.
 
-Read this file completely before you change anything. Everything below is load-bearing, and most of
-it is a mistake somebody already made here.
+Everything below is load-bearing, and most of it is a mistake somebody already made here. ⚠ **It is
+also about 1,100 lines — more than one read of a typical file tool returns**, so an agent that
+"reads it completely" in one call has read half of it. Read it in this order:
 
-If you only read one thing, read [`AGENTS.md`](AGENTS.md) — it is the short version.
+| Read | What | Size |
+|---|---|---|
+| **first** | [`AGENTS.md`](AGENTS.md) — the short version, and enough to run the suite correctly | ~140 lines |
+| **always** | §1–§4 (purpose, commands, the traps that make a test lie, repo map) and §7, §9–§11 (deliberate oddities, conventions, releasing, other agents) | ~350 lines |
+| **for the code you touch** | §5 Tests (half the file: every layer, what it cannot see) and §8 What the defects taught | ~750 lines |
+| **when stuck** | §6 settings, §12 | short |
+
+**Page through a section rather than stopping at a truncation.** An adversarial audit's tool cut
+this file off partway and it reasoned from the half it had.
 
 ---
 
@@ -59,10 +68,11 @@ powershell -ExecutionPolicy Bypass -File test\run-nofix.ps1 -Search   # REDISCOV
 powershell -ExecutionPolicy Bypass -File test\run-playtest.ps1        # extract the release zip and prove it runs
 ```
 
-Two more, neither of which is PowerShell:
+Three more that do not run from `run-tests.ps1` — one PowerShell script that needs the maintainer's
+private collection, and two Linux-only shell scripts:
 
 ```bash
-test/run-corpus.ps1 ...          # replay differential over the whole collection -- see its header
+test/run-corpus.ps1 ...          # PowerShell; replay differential over the private collection -- see its header
 test/run-sanitizers.sh           # ASan+UBSan over the unit tests. LINUX ONLY; the CI job runs it
 test/run-fuzz.sh                 # libFuzzer over the .tws/.dat parsers. LINUX ONLY (needs clang)
 FUZZ_SECONDS=0 test/run-fuzz.sh  # just replay the committed corpus, no fuzzing
@@ -232,13 +242,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,336 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 208 checks;
+Current state: **19 unit runs, 23,402 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 219 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,336 AS A MEASURE OF REACH. Three files are 94% of it.**
-`random_test.c` alone is **15,534** — 67%, because it asserts a handful of properties a couple of
-thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,215. That leaves about
-**1,376 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+🔴 **DO NOT READ 23,402 AS A MEASURE OF REACH. Three files are 94% of it.**
+`random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
+thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,244. That leaves about
+**1,413 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -253,7 +263,7 @@ means something; check count is a smoke alarm.** See §5's coverage note and `do
 nothing broke, which is exactly why nobody noticed, and it was the last hand-typed count in this
 file after the coverage table and the toggle count had already been moved to generated sources.
 
-Two of those five need no test harness at all — they link the engines the way `tworld2` does and
+Two of those six need no test harness at all — they link the engines the way `tworld2` does and
 drive real level data. They run from `run-tests.ps1` like everything else, and **they are the only
 layers that can see an engine behavior change**, so run them after any edit to `mslogic.c`,
 `lxlogic.c`, `encoding.c` or `random.c`:
@@ -520,7 +530,7 @@ misreading in the parser is faithfully reproduced and never caught.
     password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
     `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
     `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
-  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 92 checks, the largest file that ships. It links
+  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 103 checks, the largest file that ships. It links
     the window against most of the core (27 declared sources; `tworld.c` owns `main()` and is
     stubbed) and drives it under `QT_QPA_PLATFORM=offscreen`. What it asserts are DECISIONS, never
     drawings: the jc-37/jc-38 short-message precedence, the death-counter menu, the window title
@@ -551,16 +561,16 @@ misreading in the parser is faithfully reproduced and never caught.
   spelling finds nothing and reads exactly like proof of absence. **Follow the call, not the grep.**
 - ~~`series.c`'s `.dac` parser has no unit test~~ — **closed in jc-48**, and writing that test found
   two shipped defects immediately (a path guard that could not work on Windows, and eleven ctype
-  calls on a signed `char`). It has 40 unit checks and a fuzz target now. The lesson is the cheapest
+  calls on a signed `char`). It has its own unit test and a fuzz target now. The lesson is the cheapest
   one in this file: **the parser with no test was the parser with the bugs.**
 - ~~**Neither engine is fuzzed, only the parsers.**~~ — **closed**: `test/fuzz/fuzz_mslogic.c` and
   `fuzz_lxlogic.c` load a level *and play it*, which is the class a parser target structurally cannot
   reach — a file that is **accepted** and then breaks the engine. It paid for itself twice
   immediately: **jc-50** (one second into the first run) and **jc-51** (43 s into the next). jc-45 was
   the same shape and had to be found by hand.
-  ⚠ **What is still uncovered is the other ruleset's depth.** Both targets exist, but `mslogic.c` sits
-  at 44.8% lines with thirty-two `NO_FIX_*` branches largely unexercised; the fuzzer reaches what a
-  short random move plan reaches. The `NO_FIX_*` differential matrix below is still the cheapest way
+  ⚠ **What is still uncovered is the other ruleset's depth.** Both targets exist, but `mslogic.c` has
+  thirty-two `NO_FIX_*` branches largely unexercised (its current figure is in
+  `docs/coverage-baseline.tsv`, not here); the fuzzer reaches what a short random move plan reaches. The `NO_FIX_*` differential matrix below is still the cheapest way
   to move it.
 
 ### Coverage — what the suite actually reaches
@@ -598,21 +608,23 @@ enforces it; the same principle applies to facts, and this is where it was not b
 
 🔴 **READ THE PER-FILE COLUMN, NOT THE TOTAL.** The overall figure has fallen twice while nothing
 regressed and coverage was *added*: a large, barely-tested file entering the denominator drags the
-total down. `tworld.c` is 1,338 instrumented lines against a test aimed at five functions.
+total down. `tworld.c` is well over a thousand instrumented lines against a test aimed at five
+functions.
 `-CheckBaseline` compares files individually for exactly that reason, and the total is the least
 useful number the tool prints.
 
-⭐ **`lxlogic.c` went from 0% to the best-covered engine in the tree** — ahead of `mslogic.c`, which
-has more cases behind it. Not because the Lynx test is cleverer: `lxlogic.c` is 1,073 instrumented
-lines against `mslogic.c`'s 1,654, and its core movement paths are dense rather than spread across
-thirty-two `NO_FIX_*` branches. The cheapest way to move `mslogic.c` is still the differential matrix
-described below.
+⭐ **`lxlogic.c` went from 0% to briefly the best-covered engine in the tree**, ahead of `mslogic.c`
+despite fewer cases — its core movement paths are dense rather than spread across thirty-two
+`NO_FIX_*` branches. ⚠ **That ranking has since reversed**: the 2026-09 gameplay and toggle-guard
+cases put `mslogic.c` ahead, and this paragraph quoted percentages that went stale without anything
+failing. The lesson stands; the figures are in `docs/coverage-baseline.tsv`.
 
 **Read the branch column.** An emulator is mostly conditionals, and a line count flatters an
 unexercised `switch` badly.
 
-⭐ **The engine fuzz corpora are why `mslogic.c` and `encoding.c` moved so far in jc-51** — 38.1% →
-44.8% and 82.7% → 89.9% lines, with branches up 7 points apiece. Nobody wrote a case aimed at those
+⭐ **The engine fuzz corpora are why `mslogic.c` and `encoding.c` moved so far in jc-51** — each
+gained about seven points of lines and of branches in that one build (a historical measurement,
+recorded in `FORK.md`; today's figures are in the baseline). Nobody wrote a case aimed at those
 lines. `mslogic_test.c` and `lxlogic_test.c` each replay their fuzz corpus through the real engine,
 so **every reproducer a fuzzer finds becomes permanent coverage of whatever path it happened to
 reach.** That is a second, unadvertised return on the corpus discipline in
@@ -620,13 +632,23 @@ reach.** That is a second, unadvertised return on the corpus discipline in
 
 🔴 **MEASURE THE HALF THAT MATTERS BEFORE ACTING ON A FILE'S SCORE.** An audit reported `res.c` at a
 33% mutation kill rate and `series.c` at 55%, the two worst outside `generic/tile.c`, and framed both
-as untrusted-input parsers left uncovered. Checked one guard at a time, that framing is wrong — every
-guard on the untrusted path dies:
+as untrusted-input parsers left uncovered. Checked one guard at a time, that framing was wrong for the
+guards it checked:
 
 | guard | result |
 |---|---|
 | `res.c` `istilesetname()`: separators, colon, control chars, `..`, reserved names | all killed |
 | `series.c` `readconfigfile()`: path separators, reserved filename, `lastlevel` range | all killed |
+| `series.c` `readleveldata()`: every size bound, **one byte looser** | 🔴 **all survived** until 2026-09-15 |
+
+🔴 **That third row is why "every guard on the untrusted path dies" was retired.** This passage used
+to say exactly that, after checking only the first two rows. A later audit loosened each of
+`readleveldata()`'s bounds by one byte — the first thing that touches a downloaded `.dat` — and the
+whole suite stayed green; so did `encoding.c`'s three `+ 2` reservations, `openfileindir()`'s stack
+buffer, and the move encoder's three thresholds. The existing cases pinned 0 and 2 bytes of slack and
+never 1. Each now has a case at the exact disagreeing input (`series_test.c`, `encoding_test.c`,
+`fileio_test.c`, `solution_test.c`), and the lesson is the same one this section keeps teaching: **a
+claim about "every guard" is a claim about the guards you checked.**
 
 What drags those numbers down is the *other* half: `res.c`'s loaders (`loadimages`, `loadcolors`,
 `loadfont`, `loadsounds`) need a real resource-file environment and parse no attacker-controlled
@@ -636,13 +658,13 @@ number is evidence of an exposed parser, and writing tests to move them would bu
 least dangerous code in each file.** Recorded so the next reader spends the effort where the last
 measurement says it pays.
 
-Two of these deserve explanation rather than embarrassment. **`series.c` at 19.3%** and **`fileio.c`
-at 40.1%** are each compiled into a test aimed at a couple of functions — `readleveldata()`,
-`readconfigfile()`, and the file primitives they need — so the other five hundred lines of series
-enumeration count against them without being aimed at. **`mslogic.c` at 44.8%** is 4,800 lines of two
-rulesets' worth of creature behavior against a suite that walks Chip around; it was 0% before this
-suite existed, and the cheapest way to move it further is the `NO_FIX_*` differential matrix
-described above.
+Three rows deserve explanation rather than embarrassment. **`series.c`** and **`fileio.c`** are each
+compiled into a test aimed at a couple of functions — `readleveldata()`, `readconfigfile()`, and the
+file primitives they need — so the other five hundred lines of series enumeration count against
+them without being aimed at. **`mslogic.c`** is 4,800 lines of two rulesets' worth of creature
+behavior; it was 0% before this suite existed. ⚠ This paragraph used to quote all three percentages,
+in the section that promises it holds no copy of them, and all three had gone stale — an audit
+found `mslogic.c` quoted at 44.8% against a baseline of 60.3%. Read the TSV.
 
 ⚠ **The overall figure went DOWN between jc-44's first and second coverage runs, from 30.2% to
 27.7%, while the suite grew.** Nothing regressed: adding `series_test.c` pulled `series.c`'s 570
@@ -862,6 +884,7 @@ story here, add it to `FORK.md` instead and put the lesson here, once.
 | jc-52 | `TWTextCoder::encode()` shifted one byte for eleven characters; two more unguarded `movelaws[]` indexes; an uninitialized pointer on a path-qualified command line | `FORK.md` items 23–25 |
 | jc-54 | `tw_settings.ini` was rewritten by truncating it in place, so an interrupted write destroyed it; and a value ending in a carriage return did not survive its own round trip | `FORK.md` items 26–27 |
 | jc-56 | Not shipped defects — a feature, and five quiet failures found by building its guards: an unchecked third copy of the stock settings file, a documented count four out, a `foreach` variable that had been eating a script parameter since the file was written, a **flaky wall-clock test that burned the jc-55 tag**, and `package.ps1` deleting the build manifest RELEASING.md tells you to write one command earlier | `FORK.md` items 28–32 |
+| jc-58 | The main window indexed the `.ccx` table with an unchecked level number — one past the end on a stock `cc-fixlynx.dac`, much further on a crafted `.dat`. Plus two audits' worth of test and gate work: sixteen one-byte-loosenable guards, fail-open scripts, no timeouts, a floor ratchet across commits | `FORK.md` items 41–42 |
 | jc-57 | **An adversarial audit's findings.** A release gate that reported replaying solutions it had skipped; eleven of twelve engine bound-mutations surviving every local layer, jc-50 revertible wholesale among them; `encoding.c`'s run-length bound unREACHED rather than undetected; `verify-docs.ps1` failing open; and two latent `generic/tile.c` defects | `FORK.md` items 33–38 |
 
 Every one of those is replay-neutral where it touches the engine, and the evidence is in `FORK.md`
@@ -1051,7 +1074,7 @@ The full sequence is in [`.github/RELEASING.md`](.github/RELEASING.md). The shor
 2. Update `README.txt` — the **header must name the new build**, or `package.ps1` refuses to
    package. Add a section 7 entry, and document any new setting in section 6.
 3. Update `FORK.md` (the engineering record) and `CHANGELOG.md` (the summary).
-4. `run-tests.ps1` green, both layers.
+4. `run-tests.ps1` green — every layer, with nothing under `NOT RUN` in its summary.
 5. `package.ps1`, then **extract the zip somewhere clean and actually play it**. Reviews audit
    artifacts; this audits reality.
 6. Commit, push, tag, push the tag. The tag push drafts a GitHub release; publishing stays a human

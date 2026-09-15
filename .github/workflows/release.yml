@@ -25,6 +25,7 @@ concurrency:
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 60
     defaults:
       run:
         shell: powershell
@@ -161,6 +162,9 @@ jobs:
           Keep them together -- the executable will not start on its own.
 
           See README.txt section 7 for what this build changed.
+
+          This fork is developed by Jeremy Christman with Claude (Anthropic): Jeremy owns the
+          direction, the decisions and the testing, and the code changes were written with Claude.
           "@
           gh release create $env:TAG $zip.FullName --draft --title $env:TAG --notes $notes
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }

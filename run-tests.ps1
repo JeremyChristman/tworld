@@ -78,6 +78,9 @@ param(
     [switch]$NoFix,
     [switch]$Sanitize,
     [switch]$Docs,
+    # Seconds any one layer may run before it is killed and failed. Every layer
+    # takes well under a minute; this catches a hang, it is not a budget.
+    [int]$LayerTimeoutSec = 900,
     [switch]$Build,
     [string]$Exe,
     [string]$Filter,
@@ -116,6 +119,41 @@ $timings = @()
 $env:TW_SKIP_REPORT = Join-Path ([IO.Path]::GetTempPath()) ("tw-skips-" + $PID + ".txt")
 Remove-Item -LiteralPath $env:TW_SKIP_REPORT -Force -ErrorAction SilentlyContinue
 $clock = [Diagnostics.Stopwatch]::StartNew()
+# Consume whatever the layer that just ran reported as a skip, and clear the
+# file so the next layer's report is its own. Returns how many it found.
+function Read-Skips {
+    if (-not (Test-Path -LiteralPath $env:TW_SKIP_REPORT)) { return 0 }
+    $lines = @(Get-Content -LiteralPath $env:TW_SKIP_REPORT | Where-Object { $_ })
+    Remove-Item -LiteralPath $env:TW_SKIP_REPORT -Force -ErrorAction SilentlyContinue
+    foreach ($why in $lines) { $script:skipped += $why }
+    return $lines.Count
+}
+# 🔴 EVERY LAYER RUNS UNDER A DEADLINE. They used to be `& powershell ...`, which
+# waits forever, and an adversarial audit showed a one-token engine mutation (a
+# loop that no longer advances) hangs the suite indefinitely. The unit runner now
+# has a per-binary deadline of its own, but golden, nofix, sanitize and e2e all run
+# engine code too, so the ceiling lives here, once, for all of them.
+#
+# Start-Process in the SAME console (-NoNewWindow, no redirects), so a layer's
+# output and colors look exactly as before. `$null = $p.Handle` BEFORE waiting,
+# or ExitCode reads back empty -- measured in test\run-tests.ps1. On a timeout
+# the tree is killed by PID (never by name) and $LASTEXITCODE is set to 124,
+# timeout(1)'s convention, so the existing exit checks below need no change.
+function Invoke-Layer([string]$name, [string[]]$arguments) {
+    $quoted = @($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+    $p = Start-Process -FilePath "powershell.exe" -ArgumentList $quoted -NoNewWindow -PassThru
+    $null = $p.Handle
+    if (-not $p.WaitForExit($LayerTimeoutSec * 1000)) {
+        & taskkill /T /F /PID $p.Id 2>&1 | Out-Null
+        $p.WaitForExit(10000) | Out-Null
+        Write-Host ""
+        Write-Host ("LAYER TIMED OUT: {0} ran longer than {1}s and was killed" -f $name, $LayerTimeoutSec) -ForegroundColor Red
+        $global:LASTEXITCODE = 124
+        return
+    }
+    $p.WaitForExit()
+    $global:LASTEXITCODE = $p.ExitCode
+}
 function Stop-Layer([string]$name) {
     $script:timings += ("{0} {1:N1}s" -f $name, $clock.Elapsed.TotalSeconds)
     $clock.Restart()
@@ -129,7 +167,7 @@ if ($Unit) {
     if ($Filter)      { $unitArgs += @("-Filter", $Filter) }
     if ($ResultsPath) { $unitArgs += @("-ResultsPath", $ResultsPath) }
     if ($Lang -ne "both") { $unitArgs += @("-Lang", $Lang) }
-    & powershell @unitArgs
+    Invoke-Layer "unit" $unitArgs
     $ran += "unit"
     if ($LASTEXITCODE -ne 0) { $failed += "unit" }
     Stop-Layer "unit"
@@ -154,7 +192,7 @@ if ($Sanitize) {
     $sanArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-tests.ps1"), "-Sanitize")
     if ($Filter) { $sanArgs += @("-Filter", $Filter) }
     if ($Lang -ne "both") { $sanArgs += @("-Lang", $Lang) }
-    & powershell @sanArgs
+    Invoke-Layer "sanitize" $sanArgs
     $ran += "sanitize"
     if ($LASTEXITCODE -ne 0) { $failed += "sanitize" }
     Stop-Layer "sanitize"
@@ -220,9 +258,13 @@ if ($E2E) {
             $e2eArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-e2e.ps1"))
             if ($Exe)         { $e2eArgs += @("-Exe", $Exe) }
             if ($ResultsPath) { $e2eArgs += @("-ResultsPath", $ResultsPath) }
-            & powershell @e2eArgs
-            $ran += "e2e"
-            if ($LASTEXITCODE -ne 0) { $failed += "e2e" }
+            Invoke-Layer "e2e" $e2eArgs
+            $e2eExit = $LASTEXITCODE
+            # run-e2e.ps1 reports a STALE executable as a skip, not a result.
+            if ((Read-Skips) -eq 0) {
+                $ran += "e2e"
+                if ($e2eExit -ne 0) { $failed += "e2e" }
+            }
         }
     }
     Stop-Layer "e2e"
@@ -243,13 +285,9 @@ if ($Qt) {
     $clock.Restart()
     $qtArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-qt-tests.ps1"))
     if ($Filter) { $qtArgs += @("-Filter", $Filter) }
-    & powershell $qtArgs
+    Invoke-Layer "qt" $qtArgs
     if ($LASTEXITCODE -ne 0) { $failed += "qt" }
-    if (Test-Path -LiteralPath $env:TW_SKIP_REPORT) {
-        foreach ($why in (Get-Content -LiteralPath $env:TW_SKIP_REPORT)) { $skipped += $why }
-    } else {
-        $ran += "qt"
-    }
+    if ((Read-Skips) -eq 0) { $ran += "qt" }
     Stop-Layer "qt"
 }
 
@@ -261,7 +299,7 @@ if ($Golden) {
     # engines, hashed. It is the only layer here that can see an engine
     # behavior change at all -- the unit layer drives synthesized levels and the
     # e2e layer verifies two solutions.
-    & powershell @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-golden.ps1"))
+    Invoke-Layer "golden" @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-golden.ps1"))
     if ($LASTEXITCODE -ne 0) { $failed += "golden" }
     $ran += "golden"
     Stop-Layer "golden"
@@ -275,7 +313,7 @@ if ($NoFix) {
     # fix-on build and a fix-off build still disagree. The only check on the
     # desync machinery, and the toggles are opt-out macros -- a broken one
     # changes no shipped behavior and nothing else goes red.
-    & powershell @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-nofix.ps1"))
+    Invoke-Layer "nofix" @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-nofix.ps1"))
     if ($LASTEXITCODE -ne 0) { $failed += "nofix" }
     $ran += "nofix"
     Stop-Layer "nofix"
@@ -288,7 +326,7 @@ if ($Docs) {
     # ⚠ A FILTERED UNIT RUN DOES NOT REWRITE docs\test-counts.tsv, so after
     # `-Filter` this compares the documents against the last complete run.
     # That is still the right comparison; it just is not news about this one.
-    & powershell @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "verify-docs.ps1"), "-Quiet")
+    Invoke-Layer "docs" @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "verify-docs.ps1"), "-Quiet")
     if ($LASTEXITCODE -ne 0) { $failed += "docs" }
     $ran += "docs"
     Stop-Layer "docs"

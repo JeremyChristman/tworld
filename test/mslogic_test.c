@@ -317,7 +317,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(283);
+    tw_expect_atleast(290);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -437,6 +437,40 @@ int main(void)
     CHECK_INT(teststate.chipsneeded, 1);
     runticks(4, CmdEast);
     CHECK_INT(teststate.chipsneeded, 0);
+
+    /* ================================================================== */
+    tw_case("🔴 a SPARE chip leaves the counter at zero, and the socket still opens");
+    {
+	/* mslogic.c's chip pickup is `if (chipsneeded()) --chipsneeded();`. Levels
+	 * routinely hold more chips than they demand, and the guard is what keeps
+	 * the surplus from driving the counter to -1 -- at which point the
+	 * socket's `chipsneeded() != 0` gate (jc-51) shuts it for good and the
+	 * level becomes unwinnable. An adversarial audit replaced the guard with
+	 * `if (1)` and every layer stayed green: no case ever collected a chip
+	 * the level did not need. */
+	fix_init(&lv);
+	fix_border(&lv);
+	lv.chips = 1;
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_ICCHIP);      /* the one the level needs */
+	fix_settop(&lv, 7, 5, FIX_ICCHIP);      /* the spare */
+	fix_settop(&lv, 8, 5, FIX_SOCKET);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(teststate.chipsneeded, 1);
+	runticks(4, CmdEast);
+	CHECK_INT(chipx(), 6);
+	CHECK_INT(teststate.chipsneeded, 0);
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 7, "Chip did not reach the spare chip (x=%d); this case"
+				" is testing nothing", chipx());
+	CHECK_MSG(teststate.chipsneeded == 0,
+		  "collecting a chip the level did not need left the counter at %d",
+		  (int)teststate.chipsneeded);
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 8,
+		  "Chip, holding every chip the level needs, was refused by the socket"
+		  " (x=%d)", chipx());
+    }
 
     /* ================================================================== */
     tw_case("a level demanding 65,532 chips locks the socket, it does not die (jc-51)");

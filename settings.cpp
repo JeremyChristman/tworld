@@ -79,7 +79,8 @@ namespace
      *
      * MOD (Jeremy, jc-37): the bound is now the named constant SECTION_MAXKEYS rather than a bare
      * 8, because the prose above and the literal below had already drifted apart once. [Display]
-     * uses EIGHT of the twelve slots as of jc-37 (the death counter added two). Raising this
+     * used EIGHT of the then-twelve slots as of jc-37 (the death counter added two; superseded by
+     * the jc-56 note below -- see the row itself for today's count). Raising this
      * constant is the ONLY edit needed to make room -- savesettings() derives its loop bound from
      * sizeof(), and the "unknown keys survive a round trip" guarantee comes from the [Other] pass,
      * not from this table, so growing it cannot lose a setting.
