@@ -1,11 +1,14 @@
 <#
-Runs the whole test suite: unit, end-to-end, Qt, golden master, NO_FIX_* matrix.
+Runs the whole test suite -- unit, sanitize, end-to-end, Qt, golden master,
+NO_FIX_* matrix -- and then checks the documentation against the tree.
 
     powershell -ExecutionPolicy Bypass -File run-tests.ps1
     powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Unit
+    powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Sanitize
     powershell -ExecutionPolicy Bypass -File run-tests.ps1 -E2E
     powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Golden
     powershell -ExecutionPolicy Bypass -File run-tests.ps1 -NoFix
+    powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Docs
     powershell -ExecutionPolicy Bypass -File run-tests.ps1 -ResultsPath test-results
     powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Filter random
 
@@ -13,11 +16,13 @@ This is the entry point. The layers underneath can also be run directly:
 
     test\run-tests.ps1   the unit layer -- C files that compile the source under
                          test directly, no CMake tree, no built executable.
+    test\run-tests.ps1 -Sanitize   the same unit cases under UBSan, trapping.
     test\run-e2e.ps1     the end-to-end layer -- the REAL executable, driven
                          through its GUI-free command line.
     test\run-qt-tests.ps1  the oshw-qt layer (skips cleanly without Qt).
     test\run-golden.ps1  the golden-master engine snapshot.
     test\run-nofix.ps1   the NO_FIX_* differential matrix.
+    verify-docs.ps1      not a test layer: the documents checked against the tree.
 
 WHAT EACH LAYER IS FOR, so that a failure points somewhere:
 
@@ -39,8 +44,19 @@ WHAT EACH LAYER IS FOR, so that a failure points somewhere:
           shipped behavior and nothing else goes red.
 
 ⚠ golden and nofix compile the engines themselves, so they need a compiler but
-no built executable and no Qt. Together they take about fifteen seconds. Run
-them after ANY edit to mslogic.c, lxlogic.c, encoding.c or random.c.
+no built executable and no Qt. Together they take about half a minute -- nofix
+is most of it, because it compiles an engine per toggle. Run them after ANY
+edit to mslogic.c, lxlogic.c, encoding.c or random.c.
+
+⚠ DO NOT TRUST A DURATION WRITTEN IN THIS FILE; READ THE SUMMARY. It prints
+every layer's measured time. The comments here said "about fifteen seconds"
+for golden+nofix and "roughly 30 seconds" for sanitize, and an audit timed them
+at 27 and 12 -- both wrong, in opposite directions, and nothing noticed.
+
+docs is verify-docs.ps1, run LAST because the unit layer rewrites
+docs\test-counts.tsv on a complete run and the documents are checked against
+that. It is here because an audit deleted a NO_FIX_* witness row and the only
+gate that noticed was this one -- which nothing in the test workflow ran.
 
 THE E2E LAYER NEEDS AN EXECUTABLE and does not build one by itself. Pass -Build
 to build the dynamic-Qt flavor first, or point -Exe at one you already have. If
@@ -48,7 +64,11 @@ neither is available the e2e layer is SKIPPED with a message rather than failing
 because a missing local build is a setup state, not a defect -- but CI passes
 -Build, so nothing is quietly skipped there.
 
-Exit code is 0 only if every layer that ran passed.
+Exit code is 0 only if every layer that ran passed. A layer that SKIPPED (no
+executable, no Qt) does not fail the run -- a missing local setup is not a
+defect -- but the summary names it and will not say "all green". The exception
+is a run where NOTHING ran, e.g. `-Qt` alone on a machine without Qt: that is
+exit 1, because a request for a layer that produced no verdict is not a pass.
 #>
 param(
     [switch]$Unit,
@@ -57,6 +77,7 @@ param(
     [switch]$Golden,
     [switch]$NoFix,
     [switch]$Sanitize,
+    [switch]$Docs,
     [switch]$Build,
     [string]$Exe,
     [string]$Filter,
@@ -76,17 +97,34 @@ $root = $PSScriptRoot
 # touch the only two layers that could have objected. CI caught it, but a green
 # local run that means less than it looks is exactly the failure this repository
 # treats as the serious kind (see CLAUDE.md section 3, "the traps that make a
-# test or a script LIE"). They cost about fifteen seconds together.
-if (-not $Unit -and -not $E2E -and -not $Qt -and -not $Golden -and -not $NoFix -and -not $Sanitize) {
-    $Unit = $true; $E2E = $true; $Qt = $true; $Golden = $true; $NoFix = $true; $Sanitize = $true
+# test or a script LIE"). They cost about half a minute together.
+if (-not $Unit -and -not $E2E -and -not $Qt -and -not $Golden -and -not $NoFix -and -not $Sanitize -and -not $Docs) {
+    $Unit = $true; $E2E = $true; $Qt = $true; $Golden = $true; $NoFix = $true; $Sanitize = $true; $Docs = $true
 }
 
 $failed = @()
 $ran = @()
+# 🔴 A SKIP IS RECORDED, NOT JUST PRINTED. The summary used to list a skipped
+# layer under "layers run" and finish "all green" -- so on a machine without Qt5
+# an audit broke the .ccx parser's bounds check (CCMetaData.cpp:151, which only
+# the Qt layer can reach) and this script called the run all green. The message
+# scrolled past four screens up. CI refuses a Qt skip outright; locally a skip
+# stays exit 0, but it is named at the bottom where the verdict is read.
+$skipped = @()
+$timings = @()
+# The Qt runner is a separate process, so it reports a skip through this file.
+$env:TW_SKIP_REPORT = Join-Path ([IO.Path]::GetTempPath()) ("tw-skips-" + $PID + ".txt")
+Remove-Item -LiteralPath $env:TW_SKIP_REPORT -Force -ErrorAction SilentlyContinue
+$clock = [Diagnostics.Stopwatch]::StartNew()
+function Stop-Layer([string]$name) {
+    $script:timings += ("{0} {1:N1}s" -f $name, $clock.Elapsed.TotalSeconds)
+    $clock.Restart()
+}
 
 if ($Unit) {
     Write-Host ""
     Write-Host "================= UNIT =================" -ForegroundColor Cyan
+    $clock.Restart()
     $unitArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-tests.ps1"))
     if ($Filter)      { $unitArgs += @("-Filter", $Filter) }
     if ($ResultsPath) { $unitArgs += @("-ResultsPath", $ResultsPath) }
@@ -94,17 +132,19 @@ if ($Unit) {
     & powershell @unitArgs
     $ran += "unit"
     if ($LASTEXITCODE -ne 0) { $failed += "unit" }
+    Stop-Layer "unit"
 }
 
 if ($Sanitize) {
     Write-Host ""
     Write-Host "=============== SANITIZE ===============" -ForegroundColor Cyan
+    $clock.Restart()
     # The whole unit suite again under UndefinedBehaviorSanitizer, trapping.
     #
     # 🔴 THE LAYER THAT WOULD HAVE CAUGHT jc-50 LOCALLY. An adversarial audit
     # reverted that fix -- movelaws[] indexed by a cell's bottom layer, this
     # fork's own headline defect -- and unit, golden and nofix all stayed green.
-    # This layer exits 132 on it. Roughly 30 seconds; it reads no new inputs and
+    # This layer exits 132 on it. About twelve seconds; it reads no new inputs and
     # asserts nothing new, it just watches the SAME cases for undefined
     # behavior, which is where the memory-safety guards are actually observable.
     #
@@ -117,11 +157,13 @@ if ($Sanitize) {
     & powershell @sanArgs
     $ran += "sanitize"
     if ($LASTEXITCODE -ne 0) { $failed += "sanitize" }
+    Stop-Layer "sanitize"
 }
 
 if ($E2E) {
     Write-Host ""
     Write-Host "================= END TO END =================" -ForegroundColor Cyan
+    $clock.Restart()
 
     if ($Build) {
         # The dynamic flavor deliberately: it builds in a fraction of the time
@@ -148,7 +190,9 @@ if ($E2E) {
             $exeFull = if ([IO.Path]::IsPathRooted($Exe)) { $Exe } else { Join-Path $root $Exe }
             $haveExe = Test-Path $exeFull
         } else {
-            foreach ($candidate in @("build-dynamic\tworld2.exe", "build-static\tworld2.exe", "build-jc43\tworld2.exe")) {
+            # Only what build.ps1 writes -- see the same list in test\run-e2e.ps1
+            # for why a frozen build-jcNN directory must never be a fallback.
+            foreach ($candidate in @("build-dynamic\tworld2.exe", "build-static\tworld2.exe")) {
                 if (Test-Path (Join-Path $root $candidate)) { $haveExe = $true; break }
             }
         }
@@ -170,6 +214,7 @@ if ($E2E) {
                 Write-Host "SKIPPED: no built executable found." -ForegroundColor Yellow
                 Write-Host "  Build one and re-run, or pass -Build:" -ForegroundColor Yellow
                 Write-Host "    powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build"
+                $skipped += "e2e (no built executable; pass -Build)"
             }
         } else {
             $e2eArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-e2e.ps1"))
@@ -180,6 +225,7 @@ if ($E2E) {
             if ($LASTEXITCODE -ne 0) { $failed += "e2e" }
         }
     }
+    Stop-Layer "e2e"
 }
 
 if ($Qt) {
@@ -191,18 +237,26 @@ if ($Qt) {
     # skip it by construction.
     #
     # run-qt-tests.ps1 reports SKIPPED and exits 0 when Qt is not installed, so
-    # a machine without it still gets every other layer. It says so loudly; CI
-    # has Qt, so a skip cannot quietly become the normal case.
+    # a machine without it still gets every other layer. It says so loudly, it
+    # writes the reason to $env:TW_SKIP_REPORT so the summary below can name it,
+    # and CI's Qt step throws on a skip, so one cannot quietly become normal.
+    $clock.Restart()
     $qtArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-qt-tests.ps1"))
     if ($Filter) { $qtArgs += @("-Filter", $Filter) }
     & powershell $qtArgs
     if ($LASTEXITCODE -ne 0) { $failed += "qt" }
-    $ran += "qt"
+    if (Test-Path -LiteralPath $env:TW_SKIP_REPORT) {
+        foreach ($why in (Get-Content -LiteralPath $env:TW_SKIP_REPORT)) { $skipped += $why }
+    } else {
+        $ran += "qt"
+    }
+    Stop-Layer "qt"
 }
 
 if ($Golden) {
     Write-Host ""
     Write-Host "================ GOLDEN ================" -ForegroundColor Cyan
+    $clock.Restart()
     # The golden-master engine snapshot: all 903 committed levels through BOTH
     # engines, hashed. It is the only layer here that can see an engine
     # behavior change at all -- the unit layer drives synthesized levels and the
@@ -210,11 +264,13 @@ if ($Golden) {
     & powershell @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-golden.ps1"))
     if ($LASTEXITCODE -ne 0) { $failed += "golden" }
     $ran += "golden"
+    Stop-Layer "golden"
 }
 
 if ($NoFix) {
     Write-Host ""
     Write-Host "================ NOFIX =================" -ForegroundColor Cyan
+    $clock.Restart()
     # The NO_FIX_* differential matrix: for each recorded witness, prove a
     # fix-on build and a fix-off build still disagree. The only check on the
     # desync machinery, and the toggles are opt-out macros -- a broken one
@@ -222,18 +278,46 @@ if ($NoFix) {
     & powershell @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "test\run-nofix.ps1"))
     if ($LASTEXITCODE -ne 0) { $failed += "nofix" }
     $ran += "nofix"
+    Stop-Layer "nofix"
 }
+
+if ($Docs) {
+    Write-Host ""
+    Write-Host "================= DOCS =================" -ForegroundColor Cyan
+    $clock.Restart()
+    # ⚠ A FILTERED UNIT RUN DOES NOT REWRITE docs\test-counts.tsv, so after
+    # `-Filter` this compares the documents against the last complete run.
+    # That is still the right comparison; it just is not news about this one.
+    & powershell @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $root "verify-docs.ps1"), "-Quiet")
+    if ($LASTEXITCODE -ne 0) { $failed += "docs" }
+    $ran += "docs"
+    Stop-Layer "docs"
+}
+
+Remove-Item -LiteralPath $env:TW_SKIP_REPORT -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "################ SUITE SUMMARY ################"
 Write-Host ("  layers run: {0}" -f $(if ($ran.Count) { $ran -join ", " } else { "none" }))
+if ($timings.Count) { Write-Host ("  time:       {0}" -f ($timings -join ", ")) }
+foreach ($s in $skipped) { Write-Host ("  NOT RUN:    {0}" -f $s) -ForegroundColor Yellow }
 if ($failed.Count -gt 0) {
     Write-Host ("  FAILED: {0}" -f ($failed -join ", ")) -ForegroundColor Red
     exit 1
 }
 if ($ran.Count -eq 0) {
-    Write-Host "  nothing ran" -ForegroundColor Yellow
+    # Exit 1 even when the cause is a skip: every requested layer produced no
+    # verdict, and a run that verified nothing must not read as a pass.
+    if ($skipped.Count -gt 0) {
+        Write-Host "  nothing ran -- every requested layer SKIPPED (see NOT RUN above)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  nothing ran" -ForegroundColor Yellow
+    }
     exit 1
+}
+if ($skipped.Count -gt 0) {
+    Write-Host ("  green, but {0} layer(s) did NOT run -- this is not an all-green result" -f $skipped.Count) -ForegroundColor Yellow
+    exit 0
 }
 Write-Host "  all green" -ForegroundColor Green
 exit 0

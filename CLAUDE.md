@@ -39,8 +39,8 @@ Everything is PowerShell, targeting **Windows PowerShell 5.1**. The toolchain is
 powershell -ExecutionPolicy Bypass -File build.ps1                    # -> build-static\tworld2.exe (ships)
 powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic    # -> build-dynamic\tworld2.exe (fast)
 powershell -ExecutionPolicy Bypass -File build.ps1 -Clean
-powershell -ExecutionPolicy Bypass -File run-tests.ps1                # unit + end-to-end
-powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build         # build first, then both layers
+powershell -ExecutionPolicy Bypass -File run-tests.ps1                # all six layers, then verify-docs
+powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build         # build first, then the same
 powershell -ExecutionPolicy Bypass -File run-tests.ps1 -ResultsPath test-results   # JUnit XML + JSON
 powershell -ExecutionPolicy Bypass -File test\run-tests.ps1 -Filter mslogic        # one unit test
 powershell -ExecutionPolicy Bypass -File test\run-e2e.ps1             # end-to-end only
@@ -48,6 +48,7 @@ powershell -ExecutionPolicy Bypass -File test\run-qt-tests.ps1        # the oshw
 powershell -ExecutionPolicy Bypass -File package.ps1                  # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1          # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File verify-docs.ps1              # the docs still agree with the code
+powershell -ExecutionPolicy Bypass -File verify-docs.ps1 -SelfTest    # ...and that check still catches things
 powershell -ExecutionPolicy Bypass -File coverage.ps1                 # gcov, unit + Qt layers
 powershell -ExecutionPolicy Bypass -File mutate.ps1 -SelfTest         # prove the census harness is honest (~1 min)
 powershell -ExecutionPolicy Bypass -File mutate.ps1                   # mutation census, unit layer (SLOW, ~30 min)
@@ -206,7 +207,16 @@ run-tests.ps1              entry point: runs ALL SIX layers below
   test\run-golden.ps1      the golden-master engine snapshot
   test\run-nofix.ps1       the NO_FIX_* differential matrix
   test\run-tests.ps1 -Sanitize   the same unit cases under UndefinedBehaviorSanitizer
+then
+  verify-docs.ps1          not a layer: the documents against the tree, LAST, because
+                           the unit layer rewrites docs\test-counts.tsv first
 ```
+
+⚠ **Read the summary's last lines, not the scroll.** It prints each layer's measured time and names
+every layer that SKIPPED under `NOT RUN`. A skip still exits 0 — a missing local build or Qt5 is a
+setup state, not a defect — but the summary will not say `all green` over one. It used to: an audit
+broke `CCMetaData.cpp`'s bounds check, which only the Qt layer reaches, on a machine without Qt5,
+and the run finished "all green". CI's Qt step refuses a skip outright.
 
 🔴 **The sixth layer is new in jc-57 and it exists because of one measurement.** An adversarial
 audit reverted **jc-50** — this fork's own headline defect, `movelaws[]` indexed by a cell's bottom
@@ -222,13 +232,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,323 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 208 checks;
+Current state: **19 unit runs, 23,336 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 208 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,308 AS A MEASURE OF REACH. Three files are 95% of it.**
-`random_test.c` alone is **15,534** — 68%, because it asserts a handful of properties a couple of
-thousand times each — then `tile_test.c` 4,885 and `solution_test.c` 1,207. That leaves about
-**1,100 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+🔴 **DO NOT READ 23,336 AS A MEASURE OF REACH. Three files are 94% of it.**
+`random_test.c` alone is **15,534** — 67%, because it asserts a handful of properties a couple of
+thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,215. That leaves about
+**1,376 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -288,6 +298,17 @@ layers that can see an engine behavior change**, so run them after any edit to `
   points at row 32, and `fix_addcloner()` writes it unchecked), and the "no mouse command" note was
   about `nofix.c`'s generated alphabet only — a unit case writes `currentinput()` directly, which is
   how `KEY_CLEARS_GOAL` is now guarded.
+
+  🔴 **Both counts are RATCHETED, exactly.** `nofix-matrix.tsv` declares them on its `#!EXPECT` line
+  and the runner fails if either differs. An audit blanked one witness row and the suite stayed green
+  — the toggle just migrated into the printed-and-ignored "UNGUARDED" list, because the exit code was
+  driven by the witness loop alone. Exact rather than a floor, for the check-floor reason: slack is
+  where a later loss hides behind an earlier gain. Two more properties the runner now checks rather
+  than assumes: **a control build** — `mslogic_test.c` must PASS with no toggle defined, or every
+  toggle would read as "guarded" whenever that test is red for an unrelated reason — and **a crash in
+  the SHIPPED engine is named as one**, not thrown as a .NET index exception. ⚠ `test/run-nofix.sh`,
+  which is what CI runs, had neither the ratchet NOR the unit-guard oracle until 2026-09-15, so the
+  nine guards were never checked in CI at all. Both runners implement all of it now.
 
 Two more layers do not run from `run-tests.ps1`, because neither can run on Windows:
 
@@ -428,8 +449,8 @@ misreading in the parser is faithfully reproduced and never caught.
   its `cmd` argument entirely during a replay.** ⚠ One case is deliberately narrower than it looks —
   the death-counter ceiling is enforced twice, so the case pins the *behavior*, not either guard; the
   case says so.
-- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 79
-  checks over 21 cases, 0% → 55.4% lines. ⚠ Read its header before adding to it: Lynx commits a
+- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 135
+  checks over 26 cases, 0% → 58.8% lines. ⚠ Read its header before adding to it: Lynx commits a
   creature's **position when the move begins**, not when it ends, and `advancegame()` withholds the
   result for a **13-tick endgame timer** after the level is decided. Both make naive tick arithmetic
   look like engine bugs. And **never use `chipisalive()` from a test** — it is `id == Chip`, which is
@@ -654,11 +675,16 @@ hand, aimed at guards. This is a mechanical census, and its blended rate is a fu
 operator mix — turning on a second operator moves the headline without one thing about the suite
 changing. The two numbers measure different quantities. Read the per-file column.
 
-⚠ **`-SelfTest` is not optional before believing a census.** It plants four mutants whose verdicts
+⚠ **`-SelfTest` is not optional before believing a census.** It plants FIVE mutants whose verdicts
 are known in advance — one that must be killed, one that must not compile, one that must survive
-because it sits on a line the compiler never sees, and one that must hang — and refuses to measure if
-any comes back wrong. Between them they prove the mutation really reached disk, the tests really ran,
-INVALID is not scoring as KILLED, and the timeout and process-tree-kill path recovers.
+because it sits on a line the compiler never sees, one that must hang, and one that must be caught
+ONLY under the sanitizer — and refuses to measure if any comes back wrong. Between them they prove the
+mutation really reached disk, the tests really ran, INVALID is not scoring as KILLED, the timeout and
+process-tree-kill path recovers, and the sanitize pass is actually consulted.
+
+⚠ This passage said FOUR, and listed four, while the script ran five and its own comment said four;
+AGENTS.md said five. Three writings, two of them wrong, none of them checked — which is why
+verify-docs.ps1 now derives the number from `mutate.ps1` and fails when a document disagrees.
 
 ⭐ **SURVIVED IS A REAL GAP, AND THAT IS MEASURED RATHER THAN ASSUMED.** The obvious worry about a
 unit-layer kill rate is that the other five layers catch what it misses, so the survivor list is
@@ -1038,9 +1064,12 @@ in `CHANGELOG.md`.
   link step fails with a lock error that reads like a permissions problem. Kill by **PID**, captured
   from `Start-Process -PassThru` — never by process name, which would also kill an instance the
   maintainer is playing.
-- ⚠ The working tree may contain a very large number of `build-*` directories from the desync
-  project. They are gitignored, so CI never sees them, but they slow every recursive search. Scope
-  your `Glob` and `grep` rather than sweeping the tree.
+- ⚠ A working tree may contain old `build-jcNN` directories from the desync project — the
+  maintainer's held 191 of them (3.9 GB) until 2026-09-15. They are gitignored, so CI never sees
+  them, but they slow every recursive search. **Only `build-static\` and `build-dynamic\` are read by
+  any script; everything else is safe to delete.** 🔴 A frozen build is never a fallback: the e2e
+  runners used to fall back to `build-jc43\tworld2.exe`, which would have tested an August binary
+  and reported it as HEAD.
 
 ### `.claude/settings.json` is a convenience, not a security boundary
 

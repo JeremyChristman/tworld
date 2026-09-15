@@ -23,6 +23,49 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Fixed — a blind audit's gate defeats: the checks that could be walked past
+
+A double-blind adversarial audit (2026-09-15) ran 28 mutations of operator classes `mutate.ps1` does
+not ship and caught 88% with the six layers — and then found the places where a GATE, not the code,
+could be talked around. Every finding below was reproduced before it was conceded.
+
+- **`verify-docs.ps1` let a reworded retired claim through.** "unslist.c is unreachable dead code and
+  is never called" matched none of the three wordings the pattern enumerated. The pattern now covers
+  the dead-code word family, each claim in `docs/retired-claims.tsv` declares `+`/`-` probe phrasings,
+  and **`verify-docs.ps1 -SelfTest`** runs the real script against a scratch copy with one planted
+  defect per check class — stale count, unasserted fact, reworded claim, dead link, deleted truth
+  source — after a control proving the untouched copy is clean. Mutating the gate four ways turns it
+  red each time. CI runs it.
+- **A derived fact that matched no document reported `ok`.** Two did: the toggle count (every document
+  spells it "thirty-two") and a coverage-file count no document has ever stated, by design. An
+  unasserted fact now fails; the first pattern accepts words, the second fact is removed with its reason.
+- **Blanking a `NO_FIX_*` witness row left the suite green.** `nofix-matrix.tsv` now declares
+  `#!EXPECT witnesses=18 guarded=9`, and both runners require the counts **exactly** and fail closed
+  on a malformed line. `test/run-nofix.sh` — the one CI runs — gained the unit-guard oracle it never
+  had, so the nine guards are checked in CI for the first time. Both runners also build a **control**
+  (`mslogic_test.c` must pass with no toggle defined) so a red unit test can no longer make every
+  toggle look guarded.
+- **`run-nofix.ps1` died with "Index was outside the bounds of the array"** when the shipped engine
+  crashed. It now says the fix-on engine crashed, on which seed, with the exit code. And `-Search`
+  would have replaced the matrix's 160-line header of recorded measurements with six lines; it keeps it.
+- **`solution.c`'s set-name branch had never executed**, so `&&` → `||` on its condition survived every
+  layer, and a heap overread in its `memcpy` was outside even the Linux ASan job's view. Two cases.
+- **`fileio.h` documented `combinepath()`'s buffer one byte too small.** Nothing in the tree was
+  overrun — `getpathbuffer()` allocates `PATH_MAX + 1` — but a new caller believing the comment would
+  have been. Comment corrected, and the exact-limit path pinned both ways.
+- **Six stale figures and four wrong durations** in the primary docs. The CI unit job now fails when the
+  regenerated `docs/test-counts.tsv` differs from the committed one, and `run-tests.ps1` runs
+  `verify-docs.ps1` last and prints every layer's measured time.
+- **`run-tests.ps1` said "all green" over a skipped Qt layer** — the only layer reaching the `.ccx`
+  parser. Skips are named under `NOT RUN` and the verdict line changes; the exit code stays 0.
+- **Both e2e runners fell back to `build-jc43\tworld2.exe`**, an August binary. Removed.
+- `.claude/settings.json` now allows the golden, nofix, sanitize and docs gates it had omitted.
+
+**Defended, not changed:** a self-test for all thirteen remaining gate scripts (the measured failures
+were closed where they occurred, and the stop rule recorded 2026-09-14 still holds); the Qt layer's
+exit-0 skip (a missing setup is not a defect, and CI throws on it); fifteen `TODO`s in upstream's
+GUI code (not this fork's to reformat).
+
 ### Added — `-Split`: the survivor list is two problems, not one
 
 "Nothing noticed this mutation" has two causes with different fixes and very different costs, and

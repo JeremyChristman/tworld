@@ -79,6 +79,16 @@ jobs:
         shell: pwsh
         run: pwsh -File verify-docs.ps1
 
+      # 🔴 AND THE CHECK ITSELF STILL WORKS. An adversarial audit reworded a
+      # retired claim and this gate said ok; it also found a derived fact that
+      # matched no document and reported ok anyway. -SelfTest runs the real
+      # script against a scratch copy with one planted defect per check class,
+      # after a control proving the untouched copy is clean -- the canary
+      # discipline mutate.ps1 already applies to the census.
+      - name: The documentation check still catches what it claims to
+        shell: pwsh
+        run: pwsh -File verify-docs.ps1 -SelfTest
+
   # The unit layer needs only a C compiler, so it is separate from -- and much
   # faster than -- the job that builds Qt. It is the one that should tell you
   # what broke.
@@ -126,6 +136,19 @@ jobs:
 
       - name: Unit tests
         run: powershell -ExecutionPolicy Bypass -File test\run-tests.ps1 -ResultsPath test-results
+
+      # 🔴 THE COMMITTED COUNTS MUST BE THIS RUN'S COUNTS. The step above rewrites
+      # docs/test-counts.tsv, and verify-docs.ps1 checks the documents against
+      # that file -- in a DIFFERENT job, against the COMMITTED copy. So a stale
+      # file and the stale sentence quoting it agreed with each other and the
+      # build went green; an audit found six such figures in the primary docs.
+      # Comparing the regenerated file with the committed one closes that.
+      - name: The committed test counts match this run
+        run: |
+          git diff --exit-code -- docs/test-counts.tsv
+          if ($LASTEXITCODE -ne 0) {
+            throw "docs/test-counts.tsv is stale. Run the unit suite locally and commit the file together with the documents that quote it (verify-docs.ps1 names them)."
+          }
 
       - name: Publish unit test results
         # Runs even when the tests failed -- that is when the report matters most.

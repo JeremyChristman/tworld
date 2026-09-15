@@ -201,7 +201,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1207);
+    tw_expect_atleast(1215);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -447,6 +447,115 @@ int main(void)
 	}
     }
 
+    /* 🔴 THE SET-NAME RECORD, which nothing reached until now.
+     *
+     * readsolution() treats a record as the levelset's NAME when
+     *
+     *     if (!game->number && !*game->passwd)
+     *
+     * i.e. level number zero AND an empty password. The branch copies the
+     * remainder into game->name, frees the solution data and reports no
+     * solution. A coverage map showed solution.c:527 (the condition) reached and
+     * lines 528-535 (its body) NEVER executed by any test, which had two
+     * consequences worth writing down:
+     *
+     *   - changing that && to || survived all six layers. A record with number 0
+     *     and a REAL password -- or any numbered level whose password happens to
+     *     be empty -- would be misread as a set name and its solution discarded.
+     *   - the memcpy two lines later was outside every sanitizer's view, because
+     *     ASan only reports what actually runs. An introduced overread there was
+     *     invisible to the Linux job as well as the Windows one.
+     *
+     * Both halves of the condition are exercised below.
+     */
+    tw_case("🔴 a level-0 record with an EMPTY password is the set name");
+    {
+	char const *path = "tw_setname_test.tws";
+	FILE *f;
+
+	f = fopen(path, "wb");
+	if (!f) {
+	    tw_skip("could not create a temporary .tws in the working directory");
+	} else {
+	    fileinfo file;
+	    gamesetup g;
+	    unsigned char rec[16 + 9];
+	    unsigned char len[4];
+
+	    memset(rec, 0, sizeof rec);
+	    /* number 0, password all NUL -- the set-name shape. */
+	    memcpy(rec + 16, "My Levels", 9);
+	    len[0] = (unsigned char)(sizeof rec); len[1] = 0; len[2] = 0; len[3] = 0;
+	    fwrite(len, 1, 4, f);
+	    fwrite(rec, 1, sizeof rec, f);
+	    fclose(f);
+
+	    clearfileinfo(&file);
+	    file.name = (char*)path;
+	    file.fp = fopen(path, "rb");
+	    if (!file.fp) {
+		tw_skip("could not reopen the temporary .tws");
+	    } else {
+		memset(&g, 0, sizeof g);
+		CHECK_INT(readsolution(&file, &g), TRUE);
+		CHECK_MSG((g.sgflags & SGF_SETNAME) != 0,
+			  "SGF_SETNAME was not set, so this record was not read as a"
+			  " set name at all");
+		CHECK_STR(g.name, "My Levels");
+		CHECK_MSG(g.solutiondata == NULL,
+			  "the set-name branch must release the solution data");
+		CHECK_INT(g.solutionsize, 0);
+		fclose(file.fp);
+	    }
+	    remove(path);
+	}
+    }
+
+    tw_case("⚠ ...but a level-0 record WITH a password is NOT the set name");
+    {
+	/* This is the half that the && -> || mutation breaks. Under ||, a
+	 * password of "ABCD" on level 0 still takes the set-name branch and the
+	 * solution is thrown away. */
+	char const *path = "tw_setname_pw_test.tws";
+	FILE *f;
+
+	f = fopen(path, "wb");
+	if (!f) {
+	    tw_skip("could not create a temporary .tws in the working directory");
+	} else {
+	    fileinfo file;
+	    gamesetup g;
+	    unsigned char rec[17];
+	    unsigned char len[4];
+
+	    memset(rec, 0, sizeof rec);
+	    rec[0] = 0x00;                                  /* level number 0 */
+	    rec[2] = 'A'; rec[3] = 'B'; rec[4] = 'C'; rec[5] = 'D';
+	    rec[16] = 0x01;                                 /* one move byte  */
+	    len[0] = (unsigned char)(sizeof rec); len[1] = 0; len[2] = 0; len[3] = 0;
+	    fwrite(len, 1, 4, f);
+	    fwrite(rec, 1, sizeof rec, f);
+	    fclose(f);
+
+	    clearfileinfo(&file);
+	    file.name = (char*)path;
+	    file.fp = fopen(path, "rb");
+	    if (!file.fp) {
+		tw_skip("could not reopen the temporary .tws");
+	    } else {
+		memset(&g, 0, sizeof g);
+		CHECK_INT(readsolution(&file, &g), TRUE);
+		CHECK_MSG((g.sgflags & SGF_SETNAME) == 0,
+			  "a level-0 record with the password \"ABCD\" was read as the"
+			  " SET NAME -- the two halves of the condition are being ORed");
+		CHECK_MSG(g.solutiondata != NULL,
+			  "the solution data was freed for a record that is not a set name");
+		fclose(file.fp);
+		free(g.solutiondata);
+	    }
+	    remove(path);
+	}
+    }
     tw_case("every committed fuzz corpus input still parses safely");
     {
 	char dir[256];

@@ -118,6 +118,37 @@ try {
         return $ok
     }
 
+    # 🔴 A CRASHING ENGINE IS A DIAGNOSIS, NOT A .NET EXCEPTION.
+    #
+    # Every digest used to be read as `((& $exe -one $seed) -split "`t")[0]`. An
+    # audit widened encoding.c's run-length loop (`i-- && pos < ...` -> `||`), and
+    # the FIX-ON build then segfaulted on the first witness seed -- exit
+    # 0xC0000005, no output. Splitting nothing gives an empty array, StrictMode
+    # throws on [0], and the script died with "Index was outside the bounds of the
+    # array". It failed closed, but it named nothing: not that the SHIPPED engine
+    # was the one crashing, not which seed, not that no toggle was involved. Read
+    # as-is, it points an agent at the matrix for a defect that is in the engine.
+    #
+    # So every run of a nofix binary comes through here, and a crash comes back
+    # as a value the caller can report. `-id` and `-one` both return 0 and print
+    # exactly one line, so anything else is a crash.
+    function Invoke-Nofix([string]$exe, [string[]]$arguments) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $out = @(& $exe @arguments 2>$null)
+        $rc = $LASTEXITCODE
+        $ErrorActionPreference = $prev
+        $first = ""
+        if ($out.Count -gt 0 -and $null -ne $out[0]) { $first = ([string]$out[0]).Trim() }
+        return @{
+            ok     = ($rc -eq 0 -and $first -ne "")
+            rc     = $rc
+            text   = $first
+            fields = @($first -split "`t")
+        }
+    }
+    function Format-Exit($rc) { return ("exit {0} (0x{0:X8})" -f [int]$rc) }
+
     # Every toggle mslogic.c actually defines, read from the source rather than
     # kept in a list here -- a list would go stale the first time one is added.
     $toggles = Select-String -Path (Join-Path $root "mslogic.c") -Pattern 'NO_FIX_\w+' -AllMatches |
@@ -155,18 +186,20 @@ try {
                 $rows += , @($t, "-", "-", "-", "buildfail", "-")
                 continue
             }
-            $id = (& $exe -id).Trim()
-            if ($id -ne $t) {
-                Write-Host ("  IDMISMATCH {0} reports '{1}'" -f $t, $id) -ForegroundColor Red
+            $idRun = Invoke-Nofix $exe @("-id")
+            if (-not $idRun.ok -or $idRun.text -ne $t) {
+                Write-Host ("  IDMISMATCH {0} reports '{1}' ({2})" -f $t, $idRun.text, (Format-Exit $idRun.rc)) -ForegroundColor Red
                 $rows += , @($t, "-", "-", "-", "idmismatch", "-")
                 continue
             }
 
             if ($existing.ContainsKey($t)) {
                 $old = $existing[$t]
-                $a = (& $defaultExe -one $old[1]) -split "`t"
-                $b = (& $exe -one $old[1]) -split "`t"
-                if ($a[0] -ne $b[0]) {
+                $onRun  = Invoke-Nofix $defaultExe @("-one", $old[1])
+                $offRun = Invoke-Nofix $exe @("-one", $old[1])
+                $a = $onRun.fields
+                $b = $offRun.fields
+                if ($onRun.ok -and $offRun.ok -and $a.Count -ge 3 -and $a[0] -ne $b[0]) {
                     Write-Host ("  kept  {0} (seed {1})" -f $t, $old[1])
                     $rows += , @($t, $old[1], $a[0], $b[0], $a[1], $a[2])
                     continue
@@ -186,12 +219,29 @@ try {
         }
 
         $sb = New-Object System.Text.StringBuilder
-        [void]$sb.AppendLine("# The NO_FIX_* differential matrix. Rebuild with test\run-nofix.ps1 -Search.")
-        [void]$sb.AppendLine("# A WITNESS is one generated input whose result differs between a build with")
-        [void]$sb.AppendLine("# the fix on and one with it off -- proof the fix is live and reachable.")
-        [void]$sb.AppendLine("# A row of '-' means the search found no such input. That is a statement about")
-        [void]$sb.AppendLine("# the SEARCH, not about the fix, and is never grounds for deleting one.")
-        [void]$sb.AppendLine("#toggle`tseed`tdigest_fix_on`tdigest_fix_off`toutcome`tticks")
+        # 🔴 KEEP THE EXISTING HEADER, VERBATIM. It is not boilerplate: it is
+        # 160 lines recording why each blank row is blank -- the fixtures that
+        # were attempted and withdrawn, with the tick counts measured -- plus the
+        # #!EXPECT ratchet line. This writer used to emit a fresh six-line header,
+        # so the next -Search would have silently deleted all of it.
+        $header = @()
+        if (Test-Path $matrixPath) {
+            foreach ($line in [IO.File]::ReadAllLines($matrixPath)) {
+                if (-not $line.StartsWith("#") -and $line.Trim() -ne "") { break }
+                $header += $line
+            }
+        }
+        if ($header.Count -eq 0) {
+            $header = @(
+                "# The NO_FIX_* differential matrix. Rebuild with test\run-nofix.ps1 -Search.",
+                "# A WITNESS is one generated input whose result differs between a build with",
+                "# the fix on and one with it off -- proof the fix is live and reachable.",
+                "# A row of '-' means the search found no such input. That is a statement about",
+                "# the SEARCH, not about the fix, and is never grounds for deleting one.",
+                "#toggle`tseed`tdigest_fix_on`tdigest_fix_off`toutcome`tticks"
+            )
+        }
+        foreach ($line in $header) { [void]$sb.AppendLine($line) }
         foreach ($r in $rows) { [void]$sb.AppendLine(($r -join "`t")) }
         [IO.File]::WriteAllText($matrixPath, ($sb.ToString() -replace "`r`n", "`n"),
                                 (New-Object System.Text.UTF8Encoding($false)))
@@ -204,7 +254,7 @@ try {
 
     # ---- check mode ----
     if (-not (Test-Path $matrixPath)) { throw "no matrix at $matrixPath" }
-    $pass = 0; $fail = 0; $blank = 0; $checked = 0
+    $pass = 0; $fail = 0; $blank = 0; $checked = 0; $onCrashed = 0
     $blankNames = New-Object Collections.ArrayList
     foreach ($line in Get-Content $matrixPath) {
         if ($line.StartsWith("#") -or $line.Trim() -eq "") { continue }
@@ -219,13 +269,31 @@ try {
             Write-Host ("  FAIL  {0}: the fix-off build does not compile" -f $t) -ForegroundColor Red
             $fail++; continue
         }
-        $id = (& $exe -id).Trim()
-        if ($id -ne $t) {
-            Write-Host ("  FAIL  {0}: the fix-off binary reports itself as '{1}'" -f $t, $id) -ForegroundColor Red
+        $idRun = Invoke-Nofix $exe @("-id")
+        if (-not $idRun.ok) {
+            Write-Host ("  FAIL  {0}: the fix-off binary crashed before reporting its identity -- {1}" -f $t, (Format-Exit $idRun.rc)) -ForegroundColor Red
             $fail++; continue
         }
-        $gotOn  = ((& $defaultExe -one $f[1]) -split "`t")[0]
-        $gotOff = ((& $exe -one $f[1]) -split "`t")[0]
+        if ($idRun.text -ne $t) {
+            Write-Host ("  FAIL  {0}: the fix-off binary reports itself as '{1}'" -f $t, $idRun.text) -ForegroundColor Red
+            $fail++; continue
+        }
+        $onRun  = Invoke-Nofix $defaultExe @("-one", $f[1])
+        $offRun = Invoke-Nofix $exe @("-one", $f[1])
+        if (-not $onRun.ok) {
+            Write-Host ("  FAIL  {0}: the fix-ON (default, shipped) engine CRASHED on seed {1} -- {2}" -f $t, $f[1], (Format-Exit $onRun.rc)) -ForegroundColor Red
+            if ($onCrashed -eq 0) {
+                Write-Host "        No toggle is involved in that build. The engine itself is broken:" -ForegroundColor Red
+                Write-Host "        look at what changed in mslogic.c, encoding.c or random.c, not at the matrix." -ForegroundColor Red
+            }
+            $onCrashed++; $fail++; continue
+        }
+        if (-not $offRun.ok) {
+            Write-Host ("  FAIL  {0}: the fix-OFF build crashed on seed {1} -- {2} -- while the fix-on build did not" -f $t, $f[1], (Format-Exit $offRun.rc)) -ForegroundColor Red
+            $fail++; continue
+        }
+        $gotOn  = $onRun.fields[0]
+        $gotOff = $offRun.fields[0]
 
         if ($gotOn -eq $gotOff) {
             Write-Host ("  FAIL  {0}: seed {1} no longer tells the two builds apart" -f $t, $f[1]) -ForegroundColor Red
@@ -245,6 +313,10 @@ try {
     Write-Host ""
     Write-Host ("NO_FIX_* differential matrix: {0} passed, {1} failed, of {2} witness(es)" -f $pass, $fail, $checked)
     Write-Host ("{0} toggle(s) have no witness and were not checked -- see test\nofix\nofix.c" -f $blank)
+    if ($onCrashed -gt 0) {
+        Write-Host ("THE SHIPPED ENGINE CRASHED on {0} of {1} witness seed(s). Every failure above with" -f $onCrashed, $checked) -ForegroundColor Red
+        Write-Host "'fix-ON ... CRASHED' is that one engine defect, not that many toggle regressions." -ForegroundColor Red
+    }
     if ($checked -eq 0) { throw "no witnesses in the matrix at all -- refusing to report success" }
 
     # 🔴 THE SECOND ORACLE: a witness-less toggle may still be guarded by a NAMED
@@ -271,6 +343,33 @@ try {
     $unitOpen = @()
     Write-Host ""
     Write-Host "--- witness-less toggles: is a unit case guarding them? ---"
+
+    # 🔴 THE CONTROL. "Fails with the toggle defined" only means "guarded" if the
+    # same test PASSES with nothing defined. Without this, a mslogic_test.c that
+    # is red for any unrelated reason -- a broken engine, a bad fixture, a
+    # compile error -- makes EVERY witness-less toggle read as guarded, and the
+    # ratchet below would count that as the matrix getting stronger.
+    $controlExe = Join-Path ([IO.Path]::GetTempPath()) "nofixunit-control.exe"
+    $controlLog = Join-Path $work "unit-control.log"
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $Cc -std=gnu11 -w -I $stub -x c -o $controlExe $unitSrc 2>&1 | Out-File -FilePath $controlLog -Encoding ascii
+    $controlBuilt = ($LASTEXITCODE -eq 0)
+    $controlRc = -1
+    if ($controlBuilt) {
+        & $controlExe 2>&1 | Out-File -FilePath $controlLog -Encoding ascii
+        $controlRc = $LASTEXITCODE
+    }
+    $ErrorActionPreference = $prev
+    Remove-Item -LiteralPath $controlExe -Force -ErrorAction SilentlyContinue
+    $controlOk = ($controlBuilt -and $controlRc -eq 0)
+    if (-not $controlOk) {
+        Write-Host ("  FAIL  mslogic_test.c does not pass with NO toggle defined ({0}), so a failure" -f $(if ($controlBuilt) { Format-Exit $controlRc } else { "did not compile" })) -ForegroundColor Red
+        Write-Host "        under a toggle proves nothing. Not measuring the unit guards; see $controlLog" -ForegroundColor Red
+        $fail++
+        $blankNames = New-Object Collections.ArrayList
+    }
+
     foreach ($t in $blankNames) {
         $exe = Join-Path ([IO.Path]::GetTempPath()) ("nofixunit-" + $t + ".exe")
         $unitLog = Join-Path $work "unit.log"
@@ -301,6 +400,70 @@ try {
         foreach ($t in $unitOpen) { Write-Host ("    {0}" -f $t) -ForegroundColor Yellow }
         Write-Host "  See test\nofix\nofix-matrix.tsv for which of these need harness"
         Write-Host "  capability rather than a fixture."
+    }
+
+    # 🔴 THE RATCHET. Everything above reports on the rows the matrix HAPPENS to
+    # contain, so deleting a row weakened the suite without failing it -- an
+    # audit blanked NO_FIX_TANK_ON_CLONER's witness and this script exited 0,
+    # having quietly moved the toggle into the "UNGUARDED" list it prints in
+    # yellow and then ignores.
+    #
+    # The matrix now declares its own floor on the line beginning `#!EXPECT`, and
+    # that is what makes a deletion visible: the counts stop matching and the
+    # only way to make them match again is to edit the declaration, in a diff,
+    # on purpose. Same shape as the unit suite's check floors.
+    $expectFile = Join-Path $PSScriptRoot "nofix\nofix-matrix.tsv"
+    $expectLine = @(Get-Content -LiteralPath $expectFile |
+                    Where-Object { $_ -like '#!EXPECT*' }) | Select-Object -First 1
+    if (-not $expectLine) {
+        Write-Host ""
+        Write-Host "nofix-matrix.tsv declares no #!EXPECT line -- refusing to report a pass" -ForegroundColor Red
+        Write-Host "  Without it a deleted row silently weakens this layer. Add:" -ForegroundColor Yellow
+        Write-Host ("  #!EXPECT`twitnesses={0}`tguarded={1}" -f $checked, $unitGuarded) -ForegroundColor Yellow
+        exit 1
+    }
+    # ⚠ FAIL CLOSED ON A MALFORMED LINE. Defaulting an unparsed number to 0 would
+    # make every count "at or above" it -- a ratchet that a typo disarms.
+    if ($expectLine -notmatch 'witnesses=(\d+)') {
+        Write-Host "the #!EXPECT line has no witnesses=N -- refusing to report a pass: $expectLine" -ForegroundColor Red
+        exit 1
+    }
+    $wantWitnesses = [int]$Matches[1]
+    if ($expectLine -notmatch 'guarded=(\d+)') {
+        Write-Host "the #!EXPECT line has no guarded=N -- refusing to report a pass: $expectLine" -ForegroundColor Red
+        exit 1
+    }
+    $wantGuarded = [int]$Matches[1]
+
+    # 🔴 EXACT, NOT A FLOOR -- the unit suite's rule, for the unit suite's reason:
+    # slack in a floor is room for a later deletion to hide in. Gain a witness
+    # without raising the line, lose a different one next month, and a floor
+    # reads the pair as no change. So growth fails too, with a different message.
+    $problems = @()
+    if (-not $controlOk) {
+        $problems += "unit-guarded: NOT MEASURABLE -- mslogic_test.c fails with no toggle defined (see above)"
+    } elseif ($unitGuarded -ne $wantGuarded) {
+        $problems += ("unit-guarded: {0} declared, {1} present" -f $wantGuarded, $unitGuarded)
+    }
+    if ($checked -ne $wantWitnesses) {
+        $problems += ("witnesses: {0} declared, {1} present" -f $wantWitnesses, $checked)
+    }
+    if ($problems.Count) {
+        Write-Host ""
+        Write-Host "########## THE NO_FIX MATRIX DOES NOT MATCH ITS #!EXPECT LINE ##########" -ForegroundColor Red
+        foreach ($p in $problems) { Write-Host ("  " + $p) -ForegroundColor Red }
+        if ($controlOk -and ($checked -lt $wantWitnesses -or $unitGuarded -lt $wantGuarded)) {
+            Write-Host "  FEWER than declared: a blanked row or a rotted guard is not a passing run." -ForegroundColor Yellow
+            Write-Host "  Restore it, or lower the line deliberately and say why in the commit." -ForegroundColor Yellow
+        }
+        if ($checked -gt $wantWitnesses -or ($controlOk -and $unitGuarded -gt $wantGuarded)) {
+            Write-Host "  MORE than declared: good news -- raise the #!EXPECT line to match, in the" -ForegroundColor Yellow
+            Write-Host "  same commit, so the new guard cannot quietly be lost again." -ForegroundColor Yellow
+        }
+        $fail++
+    } else {
+        Write-Host ("  ratchet: {0} witness(es) and {1} unit guard(s), exactly as declared" -f
+                    $checked, $unitGuarded) -ForegroundColor Green
     }
 
     if ($fail -gt 0) { exit 1 }

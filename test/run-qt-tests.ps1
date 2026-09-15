@@ -91,6 +91,11 @@ function Skip([string]$why) {
     Write-Host "  These cover oshw-qt\ - the .ccx parser, which nothing else in the"
     Write-Host "  suite can reach, and the main window itself. CI runs them; this"
     Write-Host "  machine did not."
+    # The root run-tests.ps1 sets this so its summary can name the skip instead
+    # of printing "all green" over a layer that never ran.
+    if ($env:TW_SKIP_REPORT) {
+        Add-Content -LiteralPath $env:TW_SKIP_REPORT -Value ("qt ({0})" -f $why) -Encoding UTF8
+    }
     exit 0
 }
 

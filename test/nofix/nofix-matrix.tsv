@@ -146,6 +146,19 @@
 #
 # Rebuild with:  powershell -File test\run-nofix.ps1 -Search
 # Check with:    powershell -File test\run-nofix.ps1   (or test/run-nofix.sh)
+#
+# 🔴 A RATCHET, AND THE REASON IT EXISTS. An adversarial audit blanked one
+# witness row and this suite stayed GREEN: the toggle simply migrated from the
+# witness list into the witness-less list, and the exit code is driven by the
+# witness loop only. The layer built to protect the desync machinery could not
+# notice the deletion of its own evidence.
+#
+# So the file declares what it must contain, and run-nofix.ps1 asserts it.
+# Lowering either number is now a visible edit to this line that has to be
+# argued for in a diff -- the same discipline tw_expect_atleast(N) gives the
+# unit suite. RAISE them when you add a witness or a guard; never lower one to
+# make a run pass.
+#!EXPECT	witnesses=18	guarded=9
 NO_FIX_BLOCKED_MOVE_REDRAW	91599	7b78cdaa3a16cb1b	e8247cb88c79a64e	lost	61
 NO_FIX_BLUE_BUTTON_TIMING	1575	7254a75a541a5fd8	05b6b70943c76e98	lost	25
 NO_FIX_BOUNCE_REFACE	-	-	-	-	-

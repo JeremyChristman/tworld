@@ -28,10 +28,11 @@ careless change there invalidates solutions people spent years recording.
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1                  # -> build-static\tworld2.exe (ships)
 powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic  # much faster; for development
-powershell -ExecutionPolicy Bypass -File run-tests.ps1              # ALL SIX layers
+powershell -ExecutionPolicy Bypass -File run-tests.ps1              # ALL SIX layers, then verify-docs
 powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Build       # build first
-powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Sanitize    # just the UBSan layer (~11s)
+powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Sanitize    # just the UBSan layer (~12s)
 powershell -ExecutionPolicy Bypass -File verify-docs.ps1            # the docs still match the code
+powershell -ExecutionPolicy Bypass -File verify-docs.ps1 -SelfTest  # plant a defect per check class; it must bite
 powershell -ExecutionPolicy Bypass -File package.ps1                # -> dist\TileWorld-<tag>.zip
 powershell -ExecutionPolicy Bypass -File verify-defaults.ps1         # stock ini vs. settings.cpp
 powershell -ExecutionPolicy Bypass -File test\run-golden.ps1        # engine snapshot; run after ANY engine edit
@@ -43,7 +44,9 @@ powershell -ExecutionPolicy Bypass -File mutate.ps1 -Split <tsv>    # sort survi
 ```
 
 Machine-readable results: `run-tests.ps1 -ResultsPath test-results` writes JUnit XML and JSON. Exit
-code is 0 only if every layer that ran passed.
+code is 0 only if every layer that ran passed. ⚠ **A layer that SKIPPED still exits 0** (no built
+executable, no Qt5) — so read the summary's last lines: it names each skip under `NOT RUN` and will
+not print `all green` over one. The Qt layer is the only thing that reaches the `.ccx` parser.
 
 ## The six rules
 
@@ -100,7 +103,7 @@ that is no longer true**: jc-57's direct cases for `movelaw_block()` and `movela
 fail the plain pass with real assertions. Escalating the whole 2026-09-11 census through `-Sanitize`
 found it catches **7 of 949 plain-pass survivors, 0.7%** — small, and not a reason to skip it.
 
-⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 95% of the 23,308.
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 23,336.
 Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
 than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
 The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.
@@ -110,11 +113,14 @@ into the 39% a test already reaches (cheap: add an assertion) and the 60% nothin
 new case). See `CLAUDE.md` §5 and
 [`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
 
-`CLAUDE.md` §5 lists what is deliberately **not** covered — the Qt **widgets**, and **14 of the 32
-`NO_FIX_*` toggles**. Both are measured numbers rather than impressions: the differential matrix
-(`test/run-nofix.ps1`) holds a witness for 18 of the 32, and the golden master alone distinguishes
-only 2. The Lynx engine and both `oshw-qt` parsers are no longer on that list. Read §5 before
-claiming a green run means more than it does.
+`CLAUDE.md` §5 lists what is deliberately **not** covered — anything the GUI **draws** (its
+*decisions* are tested under Qt's offscreen platform; its pixels are not), and **five of the 32
+`NO_FIX_*` toggles**. Both are measured rather than impressions: the differential matrix
+(`test/run-nofix.ps1`) holds a witness for 18 of the 32, a named unit case guards 9 of the other 14,
+and the golden master alone distinguishes only 2. The remaining five are intra-tick, recorded with
+the measurement that withdrew each. The matrix declares both counts on its `#!EXPECT` line and the
+runner requires them **exactly**, so losing a witness or a guard fails the run instead of quietly
+moving a toggle into the unguarded list. Read §5 before claiming a green run means more than it does.
 
 ## Style
 

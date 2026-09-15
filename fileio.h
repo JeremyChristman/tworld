@@ -100,10 +100,26 @@ extern int isreservedfilename(char const *name);
 extern char *skippathname(char const *name);
 
 /* Append the path and/or file contained in path to dir, storing the
- * result in dest. dest and dir can point to the same buffer. dest is
- * assumed to be a buffer of size getpathbufferlen(). If the resulting
- * path is longer than this, FALSE is returned and errno is set to
- * ENAMETOOLONG.
+ * result in dest. dest and dir can point to the same buffer.
+ *
+ * ⚠ dest MUST BE A getpathbuffer(), i.e. getpathbufferlen() + 1 BYTES, and
+ * the "+ 1" is load-bearing rather than slack. An absolute path of exactly
+ * getpathbufferlen() characters is ACCEPTED and written with its terminator --
+ * 261 bytes on Windows, measured, not inferred.
+ *
+ * This comment used to say "a buffer of size getpathbufferlen()". Nothing in
+ * the tree was ever overrun, because getpathbuffer() allocates PATH_MAX + 1 and
+ * is the only way these buffers are made -- settings.cpp says so in as many
+ * words, and tworld.c depends on it, since sprintf("%.*s", getpathbufferlen(),
+ * ...) writes that many characters PLUS a terminator. But a NEW caller who
+ * believed the comment and wrote `char buf[PATH_MAX]` would be overrun by one.
+ *
+ * 🔴 DO NOT "FIX" THIS BY MAKING getpathbufferlen() RETURN PATH_MAX + 1.
+ * That widens the same sprintf's precision by one and turns a correct write
+ * into a real overflow. The number is a LENGTH LIMIT; the buffer is one larger.
+ *
+ * If the resulting path is longer than the limit, FALSE is returned and errno
+ * is set to ENAMETOOLONG.
  */
 extern int combinepath(char *dest, char const *dir, char const *path);
 

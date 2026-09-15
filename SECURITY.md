@@ -175,7 +175,7 @@ backport to. Fixes ship in the next tagged build.
   largest gap: an engine crash reachable from a malformed level that *survives* `readleveldata()`.
   That is jc-45's exact shape — a file the parser accepted, then dereferenced out of bounds inside
   `initgame()` — and no parser target could have found it. `fuzz_mslogic.c` and `fuzz_lxlogic.c`
-  load a level and play it; `lxlogic.c` went from 0% to 49.1% line coverage.
+  load a level and play it; `lxlogic.c` went from 0% to 58.8% line coverage.
 - ⚠ **What remains uncovered in the engines is behavior, not memory safety.** A change that is
   merely *different* rather than unsafe is caught by the solution-corpus differential, not by
   anything in CI. ⚠ This bullet used to add that the `NO_FIX_*` toggles "have no differential test"

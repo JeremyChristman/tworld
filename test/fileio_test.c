@@ -61,7 +61,55 @@ int main(void)
     int		n;
 
     tw_begin("fileio");
-    tw_expect_atleast(32);
+    /* 🔴 THE BUFFER CONVENTION, which the header got wrong by one until
+     * 2026-09-15 and which nothing pinned.
+     *
+     * getpathbufferlen() is a LENGTH LIMIT (PATH_MAX). getpathbuffer() hands
+     * out one MORE byte than that, and combinepath() relies on it: an absolute
+     * path of exactly the limit is accepted and written WITH its terminator.
+     * The header used to promise a buffer "of size getpathbufferlen()", which a
+     * new caller could have believed and been overrun by one byte.
+     *
+     * ⚠ The fix is NOT to widen getpathbufferlen(). tworld.c formats save-file
+     * names with sprintf("%.*s", getpathbufferlen(), ...), which writes that
+     * many characters plus a terminator -- widen the limit and that becomes the
+     * overflow this case exists to prevent. The limit is pinned here; the
+     * buffer's extra byte is pinned by the Linux ASan job, not by an assertion:
+     * the first case below writes lim + 1 bytes into a getpathbuffer(), so
+     * shrinking that allocation by one is a heap-buffer-overflow report there.
+     * ⚠ No plain assertion can see an allocation's size -- an earlier draft of
+     * this case "checked" it by re-deriving strlen, which cannot fail.
+     */
+    tw_case("🔴 an absolute path of EXACTLY the length limit is accepted");
+    {
+	int const lim = getpathbufferlen();
+	char *buf = getpathbuffer();
+	char *absolute = malloc((size_t)lim + 2);
+	int i;
+
+	CHECK_MSG(buf != NULL && absolute != NULL, "allocation failed");
+	absolute[0] = DIRSEP_CHAR;
+	for (i = 1 ; i < lim ; ++i) absolute[i] = 'a';
+	absolute[lim] = '\0';
+	CHECK_INT((int)strlen(absolute), lim);
+
+	CHECK_MSG(combinepath(buf, "", absolute) == TRUE,
+		  "an absolute path of exactly getpathbufferlen() (%d) characters was"
+		  " refused; the bound moved", lim);
+	CHECK_INT((int)strlen(buf), lim);
+
+	tw_case("...and one character MORE than the limit is refused");
+	absolute[lim] = 'a';
+	absolute[lim + 1] = '\0';
+	CHECK_MSG(combinepath(buf, "", absolute) == FALSE,
+		  "an absolute path of %d characters was accepted; that overruns even a"
+		  " getpathbuffer()", lim + 1);
+
+	free(absolute);
+	free(buf);
+    }
+
+    tw_expect_atleast(37);
 
     tw_case("an absolute path ignores the directory entirely");
     {

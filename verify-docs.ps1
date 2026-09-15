@@ -60,7 +60,37 @@ and deliberately does not pretend to check the fourth.
     before believing it.
 #>
 param(
-    [switch]$Quiet
+    [switch]$Quiet,
+
+    # 🔴 CANARY DISCIPLINE FOR THIS GATE, added 2026-09-15 after an adversarial
+    # audit walked straight through it.
+    #
+    # A retired claim is matched by a REGEX over prose, and prose can be
+    # reworded. SECURITY.md had told researchers three times that unslist.c is
+    # dead code, each time in different words; the pattern enumerated the three
+    # wordings that had already happened. The audit appended a FOURTH --
+    # "unreachable dead code ... never called" -- and this script reported
+    # `ok  retired claim stays retired: unslist-unreachable`, exit 0.
+    #
+    # So every claim now DECLARES the phrasings it must catch, in a fifth column
+    # of docs/retired-claims.tsv: `+text` must match, `-text` must not. -SelfTest
+    # runs those and fails if any is wrong, which is the same thing
+    # mutate.ps1's five canaries do for the census.
+    #
+    # ⚠ WHAT THIS DOES NOT DO: it cannot catch a phrasing nobody thought of. It
+    # makes the check's INTENT explicit and testable, and it turns "someone
+    # reworded it" from a silent pass into a one-line addition. A regex over
+    # English has no complete answer and this file should not pretend otherwise.
+    #
+    # 🔴 AND EVERY OTHER CHECK CLASS GETS A PLANTED DEFECT. The same audit found
+    # the derived-count check reporting ok on a fact NO document stated, and its
+    # recommendation was one canary per class. -SelfTest copies the tracked tree
+    # to a scratch directory, confirms the copy verifies CLEAN (the control --
+    # without it a canary could "fail" for a reason unrelated to its plant),
+    # then plants one defect per class and requires THIS script, run for real
+    # against the copy, to fail naming it: a stale count, a fact nothing asserts,
+    # a reworded retired claim, a dead link, a deleted truth source.
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = "Stop"
@@ -104,6 +134,199 @@ function Fail([string]$what, [string]$detail) {
 }
 function Pass([string]$what) { Say ("  ok    " + $what) "DarkGreen" }
 
+# ------------------------------------------------------------- 0. self test --
+#
+# Runs FIRST and exits: a gate whose own canaries fail has no business reporting
+# on anything else.
+
+if ($SelfTest) {
+    $bad = 0
+
+    # --- 0a. the retired-claim probes: does each pattern mean what it says? ---
+    Write-Host ""
+    Write-Host "-- retired-claim probes (docs/retired-claims.tsv, fifth column) --"
+    $selfFile = Join-Path $repo "docs/retired-claims.tsv"
+    $ran = 0
+    if (-not (Test-Path $selfFile)) {
+        Write-Host "  FAIL  docs/retired-claims.tsv is missing" -ForegroundColor Red
+        ++$bad
+    } else {
+        foreach ($line in (Read-Lines $selfFile)) {
+            if (-not $line -or $line -match '^\s*#' -or $line -match '^id\s') { continue }
+            $parts = $line -split "`t"
+            if ($parts.Count -lt 5 -or -not $parts[4]) {
+                Write-Host ("  FAIL  {0} declares no probes" -f $parts[0]) -ForegroundColor Red
+                Write-Host "        Add a fifth column: +text it must catch;-text it must not."
+                ++$bad
+                continue
+            }
+            $id = $parts[0]; $pattern = $parts[1]; $exempt = $parts[2]
+            foreach ($probe in ($parts[4] -split ';')) {
+                if (-not $probe) { continue }
+                $want = $probe.Substring(0, 1)
+                $text = $probe.Substring(1)
+                ++$ran
+                # The same THREE tests the real check applies, in the same order:
+                # the pattern, the quoted-span exemption, then the exempt column.
+                # (This said "two" and skipped the quote test -- a review caught
+                # that a quoted probe would then disagree with the real gate.)
+                $pm = [regex]::Match($text, $pattern)
+                $hit = $pm.Success
+                if ($hit -and (Test-InsideQuotes $text $pm.Index)) { $hit = $false }
+                if ($hit -and $exempt -and $text -match $exempt) { $hit = $false }
+                if ($want -eq '+' -and -not $hit) {
+                    Write-Host ("  FAIL  {0}: this SHOULD be caught and is not:" -f $id) -ForegroundColor Red
+                    Write-Host ("          {0}" -f $text) -ForegroundColor Red
+                    ++$bad
+                } elseif ($want -eq '-' -and $hit) {
+                    Write-Host ("  FAIL  {0}: this should NOT be caught and is:" -f $id) -ForegroundColor Red
+                    Write-Host ("          {0}" -f $text) -ForegroundColor Red
+                    ++$bad
+                } else {
+                    Say ("  ok    {0}: {1}{2}" -f $id, $want, $text)
+                }
+            }
+        }
+        if ($ran -eq 0) {
+            Write-Host "  FAIL  no probes ran -- refusing to report a pass" -ForegroundColor Red
+            ++$bad
+        } else {
+            Write-Host ("  {0} probe(s) run" -f $ran)
+        }
+    }
+
+    # --- 0b. one planted defect per check class, caught by THIS script -------
+    #
+    # The probes above test a regex in isolation. These test the whole gate --
+    # file discovery, the scan, the verdict, the exit code -- by running it for
+    # real against a scratch copy of the tracked tree with one thing broken.
+    Write-Host ""
+    Write-Host "-- planted defects: this script, run against a broken scratch copy --"
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ("tw-verify-docs-selftest-" + $PID)
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    try {
+        if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
+        $null = New-Item -ItemType Directory -Path $scratch
+        # The WORKING-TREE copy of every tracked file, so an uncommitted edit to a
+        # document -- or to this script -- is what gets tested.
+        $tracked = @(& git -C $repo ls-files)
+        if ($LASTEXITCODE -ne 0 -or $tracked.Count -eq 0) { throw "git ls-files listed nothing, so there is no tree to copy" }
+        foreach ($rel in $tracked) {
+            $src = Join-Path $repo $rel
+            if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
+            $dst = Join-Path $scratch $rel
+            $dir = Split-Path -Parent $dst
+            if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+            [IO.File]::Copy($src, $dst, $true)
+        }
+
+        # The same host that is running this, so pwsh on the Linux CI runner and
+        # Windows PowerShell 5.1 on the desktop each test themselves.
+        $hostExe = (Get-Process -Id $PID).Path
+        $childArgs = @("-NoProfile")
+        if ($env:OS -eq "Windows_NT") { $childArgs += @("-ExecutionPolicy", "Bypass") }
+        $childArgs += @("-File", (Join-Path $scratch "verify-docs.ps1"))
+        function Invoke-ScratchCopy {
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $out = (& $hostExe @childArgs 2>&1 | Out-String)
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = $prev
+            # pwsh can color redirected output with VT escapes; strip them so a
+            # FAIL line still starts with FAIL on the Linux runner.
+            $out = [regex]::Replace($out, "\x1B\[[0-9;]*[A-Za-z]", "")
+            return @{ rc = $code; text = $out }
+        }
+        # Returns $true only if the edit actually changed the file -- a plant
+        # whose anchor text has gone would otherwise "pass" by planting nothing.
+        function Edit-Scratch([string]$rel, [scriptblock]$change) {
+            $p = Join-Path $scratch $rel
+            $before = [IO.File]::ReadAllText($p)
+            $after = & $change $before
+            if ($after -ceq $before) { return $false }
+            [IO.File]::WriteAllText($p, $after, $utf8)
+            return $true
+        }
+
+        # THE CONTROL. Unless the untouched copy verifies clean, a canary that
+        # fails proves nothing about its plant.
+        $control = Invoke-ScratchCopy
+        if ($control.rc -ne 0) {
+            Write-Host ("  FAIL  control: the UNMODIFIED copy does not verify clean (exit {0})" -f $control.rc) -ForegroundColor Red
+            Write-Host "        so no planted defect below could mean anything. Run this script" -ForegroundColor Red
+            Write-Host "        without -SelfTest and fix what it reports first:" -ForegroundColor Red
+            foreach ($l in @($control.text -split "`r?`n" | Where-Object { $_ -match '^\s*FAIL\s' } | Select-Object -First 6)) {
+                Write-Host ("        " + $l.Trim()) -ForegroundColor Red
+            }
+            ++$bad
+        } else {
+            Write-Host "  ok    control: the unmodified copy verifies clean"
+
+            $canaries = @(
+                @{ name = "a stale derived count"
+                   expect = "the documented unit checks count is stale"
+                   plant = { if (Edit-Scratch "CLAUDE.md" { param($t) [regex]::Replace($t, '(unit runs, )[\d,]+( checks)', '${1}99,999${2}') }) { "CLAUDE.md" } } },
+                @{ name = "a fact no document asserts any more"
+                   expect = "no document asserts the NO_FIX toggles count"
+                   plant = { foreach ($rel in $tracked) {
+                                 if ($rel -notmatch '\.(md|txt|tsv|lock|yml)$') { continue }
+                                 if (Edit-Scratch $rel { param($t) $t.Replace("behavior toggles", "engine switches") }) { $rel }
+                             } } },
+                @{ name = "a retired claim, reworded the way the audit reworded it"
+                   expect = "a retired claim is being asserted again: unslist-unreachable"
+                   plant = { if (Edit-Scratch "SECURITY.md" { param($t) $t + "`nNote for researchers: unslist.c is unreachable dead code and is never called by any shipped build.`n" }) { "SECURITY.md" } } },
+                @{ name = "a relative link to nothing"
+                   expect = "a relative link does not resolve"
+                   plant = { if (Edit-Scratch "AGENTS.md" { param($t) $t + "`nSee [a decision nobody wrote](docs/adr/9999-never-written.md).`n" }) { "AGENTS.md" } } },
+                @{ name = "a deleted truth source"
+                   expect = "the truth source engine-snapshot.tsv is missing"
+                   plant = { $p = Join-Path $scratch "test/golden/engine-snapshot.tsv"
+                             if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force; "test/golden/engine-snapshot.tsv" } } }
+            )
+            foreach ($c in $canaries) {
+                $touched = @(& $c.plant)
+                if ($touched.Count -eq 0) {
+                    Write-Host ("  FAIL  {0}: the plant changed nothing -- its anchor is gone, so this canary would pass vacuously" -f $c.name) -ForegroundColor Red
+                    ++$bad
+                    continue
+                }
+                $r = Invoke-ScratchCopy
+                foreach ($rel in $touched) { [IO.File]::Copy((Join-Path $repo $rel), (Join-Path $scratch $rel), $true) }
+                $fails = @($r.text -split "`r?`n" | Where-Object { $_ -match '^\s*FAIL\s' })
+                if ($r.rc -eq 0) {
+                    Write-Host ("  FAIL  {0}: planted, and the script still exited 0" -f $c.name) -ForegroundColor Red
+                    ++$bad
+                } elseif (-not $r.text.Contains($c.expect)) {
+                    Write-Host ("  FAIL  {0}: exited {1}, but never said `"{2}`"" -f $c.name, $r.rc, $c.expect) -ForegroundColor Red
+                    foreach ($l in $fails) { Write-Host ("        " + $l.Trim()) -ForegroundColor Red }
+                    ++$bad
+                } elseif ($fails.Count -ne 1) {
+                    # Exactly one: otherwise the plant broke something else too, and
+                    # the expected message may have come from the collateral damage.
+                    Write-Host ("  FAIL  {0}: caught, but with {1} failures instead of exactly one" -f $c.name, $fails.Count) -ForegroundColor Red
+                    foreach ($l in $fails) { Write-Host ("        " + $l.Trim()) -ForegroundColor Red }
+                    ++$bad
+                } else {
+                    Write-Host ("  ok    {0} ({1} file(s) planted) -> {2}" -f $c.name, $touched.Count, $c.expect)
+                }
+            }
+        }
+    } catch {
+        Write-Host ("  FAIL  the self-test could not run: " + $_.Exception.Message) -ForegroundColor Red
+        ++$bad
+    } finally {
+        if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    Write-Host ""
+    if ($bad -gt 0) {
+        Write-Host ("{0} self-test failure(s): this gate cannot be trusted until they are fixed" -f $bad) -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "self-test: every probe and every planted defect behaved correctly" -ForegroundColor Green
+    exit 0
+}
+
 # The documents this script polices. Source files are included for the retired
 # claims only: settings.cpp carried one of them in a comment for four builds.
 $docFiles = @()
@@ -135,7 +358,12 @@ foreach ($pattern in @("*.lock", "*.tsv")) {
     $docFiles += Get-ChildItem -LiteralPath (Join-Path $repo "docs") -Filter $pattern -File -ErrorAction SilentlyContinue
 }
 $docFiles += Get-ChildItem -LiteralPath (Join-Path $repo ".github/workflows") -Filter "*.yml" -File -ErrorAction SilentlyContinue
-$docFiles = @($docFiles | Where-Object { $_ })
+# 🔴 THE REGISTRY CANNOT BE SCANNED AGAINST ITSELF. docs\retired-claims.tsv
+# necessarily WRITES DOWN every dead claim -- that is the whole file -- so every
+# pattern matches its own row and its own header. It was only ever invisible
+# because the patterns were narrow enough to miss the header's paraphrase;
+# broadening them in 2026-09-15 made the file report itself.
+$docFiles = @($docFiles | Where-Object { $_ -and $_.Name -ne 'retired-claims.tsv' })
 
 $sourceFiles = @()
 foreach ($pattern in @("*.c", "*.cpp", "*.h")) {
@@ -243,7 +471,28 @@ if (Need-Source $matrix "It records which NO_FIX_* engine toggles have a differe
         id = "NO_FIX toggles"
         value = $rows.Count
         source = "test/nofix/nofix-matrix.tsv"
-        patterns = @('(\d+)\s+`?NO_FIX_\*?`?\s+behavior toggles')
+        # ⚠ WORDS AS WELL AS DIGITS. Every document that states this writes
+        # "thirty-two `NO_FIX_*` behavior toggles", so a digits-only pattern
+        # matched NOTHING and the fact reported ok while verifying nothing --
+        # found 2026-09-15 by the unasserted-fact check further down, which
+        # exists for exactly this. Resolve-Number already knows the words.
+        patterns = @('([\w-]+)\s+`?NO_FIX_\*?`?\s+behavior toggles')
+    }
+}
+
+# The mutation harness’s own canaries. This number was written in THREE places and
+# was wrong in two of them: mutate.ps1’s comment said "Four canaries", CLAUDE.md said
+# four and enumerated four, AGENTS.md said five, and five is what runs. Nothing
+# checked it, so it is derived here from the script itself.
+$mutate = Join-Path $repo "mutate.ps1"
+if (Need-Source $mutate "It defines the census self-test canaries this count describes.") {
+    $canaryCount = @(Get-Content $mutate |
+                     Where-Object { $_ -match '^\s*\$canaries \+= @{' }).Count
+    $facts += @{
+        id = "mutate.ps1 self-test canaries"
+        value = $canaryCount
+        source = "mutate.ps1"
+        patterns = @('[Ii]t plants ([\w-]+) mutants', 'plants ([\w-]+) mutants whose verdicts')
     }
 }
 
@@ -331,12 +580,19 @@ if (Need-Source $counts "the unit runner writes it on a complete run; it carries
 $baseline = Join-Path $repo "docs/coverage-baseline.tsv"
 if (Need-Source $baseline "coverage.ps1 -UpdateBaseline writes it; it carries the per-file coverage.") {
     $covRows = Get-Content $baseline | Where-Object { $_ -and $_ -notmatch '^\s*#' -and $_ -notmatch '^file\s' }
-    $facts += @{
-        id = "coverage-baseline files"
-        value = $covRows.Count
-        source = "docs/coverage-baseline.tsv"
-        patterns = @('coverage baseline lists (\d+) files')
-    }
+    # 🔴 NO FACT IS DERIVED FROM THIS FILE, DELIBERATELY -- the source is still
+    # required above, so its absence is a failure rather than a skip.
+    #
+    # There used to be one: "coverage baseline lists (\d+) files". No document has
+    # ever contained that sentence, because CLAUDE.md makes the opposite promise in
+    # bold: "THE NUMBERS LIVE IN docs/coverage-baseline.tsv, AND THERE IS NO COPY OF
+    # THEM HERE ON PURPOSE." So the check could only ever match nothing -- and until
+    # 2026-09-15 matching nothing printed ok. It was a check of a sentence the
+    # project had decided never to write.
+    #
+    # Removed rather than repaired: writing the count into a document to give this
+    # something to verify would recreate exactly the duplicate that section forbids.
+    # coverage.ps1 -CheckBaseline is what polices these numbers.
 }
 
 # Spelled-out numbers, so "eight targets" is checkable and not just "8".
@@ -361,6 +617,13 @@ function Resolve-Number([string]$token) {
 foreach ($fact in $facts) {
     $script:checks++
     $bad = @()
+    # 🔴 HOW MANY TIMES THIS FACT WAS ACTUALLY FOUND. Without it the verdict
+    # below cannot tell "every document agrees" from "no document says this and
+    # the pattern has been dead for months" -- both leave $bad empty and both
+    # printed ok. An audit found one of these nine facts matching NO text in any
+    # document while reporting green, which is the same vacuous pass Need-Source
+    # above exists to refuse.
+    $seen = 0
     foreach ($file in $docFiles) {
         # ⚠ CHANGELOG.md IS HISTORY AND IS EXEMPT FROM COUNT CHECKS. Its release
         # entries record what was true AT THAT RELEASE -- "13 of 32 engine
@@ -396,6 +659,7 @@ foreach ($fact in $facts) {
                     # how a correction is written -- there is no third option.
                     if (Test-InsideQuotes $line $m.Index) { continue }
                     $claimed = Resolve-Number $m.Groups[1].Value
+                    if ($null -ne $claimed) { $seen++ }
                     if ($null -ne $claimed -and $claimed -ne $fact.value) {
                         $bad += ("{0}:{1}  claims {2}, but {3} says {4}`n          {5}" -f `
                                  $file.Name, $lineNo, $claimed, $fact.source, $fact.value, $line.Trim())
@@ -406,8 +670,16 @@ foreach ($fact in $facts) {
     }
     if ($bad.Count) {
         Fail ("the documented " + $fact.id + " count is stale") ($bad -join "`n")
+    } elseif ($seen -eq 0) {
+        Fail ("no document asserts the " + $fact.id + " count") `
+             ("This fact is derived from " + $fact.source + " and checked against every" +
+              " document, and NOTHING matched -- so it verified nothing while reporting" +
+              " success.`nEither a document stopped stating it (drop the fact from this" +
+              " script, and say why), or the pattern stopped matching the way it is" +
+              " written (fix the pattern). Both are silent failures; this is the check" +
+              " that makes them loud.")
     } else {
-        Pass ($fact.id + " = " + $fact.value + " (from " + $fact.source + ")")
+        Pass ($fact.id + " = " + $fact.value + " (from " + $fact.source + ", asserted " + $seen + "x)")
     }
 }
 

@@ -113,10 +113,13 @@ from a sanitize pass that never ran.
 
 COST. Roughly 1,270 ROR mutants across the sixteen sources the tests compile, at
 about one to eight seconds each depending on how many tests cover the file and
-whether an early one kills it. Expect somewhere near an hour and a half. That is
+whether an early one kills it. The 2026-09-11 census took about half an hour on
+the desktop (this said "an hour and a half" before that was measured). That is
 why this is a deliberate instrument like coverage.ps1 and test\run-nofix.ps1
--Search, and NOT a seventh layer of run-tests.ps1, which is 8.2 seconds and gates
-package.ps1.
+-Search, and NOT a seventh layer of run-tests.ps1 -- whose whole default run is
+about a minute and gates package.ps1. (This sentence used to say "8.2 seconds",
+which was the UNIT layer alone, and named the entry point; an audit timed the
+entry point at 71.6. Its summary prints each layer's time now -- read that.)
 
   -Module        one or more source file names to census (default: all sixteen).
   -Operator      mutation operators to apply (phase 1 ships ROR only).
@@ -951,7 +954,7 @@ try {
     }
 
     # --- self-test ----------------------------------------------------------
-    # Four canaries with known answers. The census does not run if any is wrong.
+    # Five canaries with known answers. The census does not run if any is wrong.
     Write-Host ""
     Write-Host "--- self-test ---"
     $canaries = @()

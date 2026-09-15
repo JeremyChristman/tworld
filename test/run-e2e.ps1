@@ -135,8 +135,14 @@ function Invoke-TileWorld {
 
 # Find a built executable. The dynamic build is preferred for testing because it
 # is what CI and a developer will have; the static one is what ships.
+#
+# 🔴 ONLY THE TWO DIRECTORIES build.ps1 WRITES. This list used to end in
+# "build-jc43\tworld2.exe" -- a leftover from the desync project -- so a
+# checkout whose current builds were missing tested an AUGUST binary and
+# reported the result as if it described HEAD. Same trap package.ps1's old
+# `-Exe build-jc35` default was. A frozen build is never a fallback.
 if (-not $Exe) {
-    foreach ($candidate in @("build-dynamic\tworld2.exe", "build-static\tworld2.exe", "build-jc43\tworld2.exe")) {
+    foreach ($candidate in @("build-dynamic\tworld2.exe", "build-static\tworld2.exe")) {
         $full = Join-Path $repo $candidate
         if (Test-Path $full) { $Exe = $candidate; break }
     }
