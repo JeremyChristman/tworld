@@ -2,7 +2,7 @@
 # NOT comparable to the 2026-09-08 hand-run audit: that was 233 hand-chosen
 # mutations, this is a mechanical census whose blended rate moves with the
 # operator mix. Read the per-file rows.
-# commit: ee3bd258142bb0951c8d902ba3a9ba11b9fd982a
+# commit: 28353931c9c1a4bb93735d41e2365b35049c1a62
 file	operators	killed	survived	invalid	timeout	flaky	error
 encoding.c	ROR	27	1	0	0	0	0
 fileio.c	ROR	23	18	0	0	0	0
@@ -10,7 +10,7 @@ generic/dirinput.c	ROR	4	1	0	0	0	0
 generic/in.c	ROR	18	28	0	0	0	0
 generic/tile.c	ROR	23	66	0	0	0	0
 lxlogic.c	ROR	80	138	0	0	0	0
-mslogic.c	ROR	141	237	0	2	0	0
+mslogic.c	ROR	152	225	0	3	0	0
 play.c	ROR	8	20	0	0	0	0
 random.c	ROR	2	1	0	0	0	0
 res.c	ROR	13	20	0	0	0	0
