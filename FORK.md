@@ -1614,6 +1614,58 @@ exactly what's mine:
    is recorded as inert -- equivalent or nearly so, and the audit said as much); and the one sighting
    it could not reproduce in 576 runs, which the runner race above explains.
 
+44. **The other two shared-witness pairs hid the same hole: the jc-13 fix and a teleport pop were
+   guarded by nothing** (`test/mslogic_test.c`, `test/tw_fixture.h`, `test/nofix/nofix-matrix.tsv`,
+   `CLAUDE.md`). Not shipped code; it rides with the next release.
+
+   Item 43 found that the KEEPSLOT pair's shared witness proved only one half. The RFF and TELEPORT
+   pairs have the same shape -- A off, B off and both off give one digest -- and were examined the
+   same way: list the code each toggle gates ALONE, mutate it, run unit, sanitize, golden and the
+   matrix.
+
+   | mutation | unit | sanitize | golden | matrix |
+   |---|---|---|---|---|
+   | `DRAW_ONCE`'s block/monster half (`rff_keepdir` always NIL there) | survived | survived | survived | survived |
+   | `CHIP_REARM`'s chip half (control) | survived | survived | survived | **killed** |
+   | `STALE_FG`'s second `poptile(oldpos)` made a no-op | survived | survived | survived | survived |
+   | `BROKEN_DYNAMIC`'s block-exposed override removed | survived | survived | survived | **killed** |
+
+   The mechanism is the same in both, turned around. `rff_keepdir`'s consumer in
+   `startfloormovement()` is compiled only under `FIX_RFF_DRAW_ONCE`, so switching that toggle off
+   silently disables `CHIP_REARM` too, and seed 7572 -- a Chip scenario -- proves the chip half.
+   `prepush_destfloor` is written only under `STALE_FG` and read by `BROKEN_DYNAMIC`, so seed 2294
+   proves the override. **The unguarded halves were the jc-13 fix itself (credited with six
+   desyncs) and SuperCC's second pop of a pusher's old cell.**
+
+   ⚠ **A first measurement of the teleport half was wrong, and the harness said so only on
+   inspection.** Replacing `poptile(oldpos);` with `;` left an empty `if` body; `-Werror` refused to
+   compile it, and a script that read "not all green" as "killed" scored unit and golden as kills.
+   The sanitize build (`-w`) and the matrix compiled it and let it survive. Re-run as
+   `(void)oldpos;`, it survived all four. A compile failure is not a detection -- the exact failure
+   mode `mutate.ps1`'s header lists first.
+
+   **Two cases, each fixture swept rather than reasoned:**
+   - *"a push that exposes a teleport pops Chip's old cell TWICE"* -- Chip stands on gravel and
+     pushes a block off a teleport it covered at load (so `FS_BROKEN`, reachable only through the
+     override). The correct engine teleports on tick 1 and leaves Chip's old cell Empty; the no-op
+     leaves the gravel; `-DNO_FIX_TELEPORT_STALE_FG` never teleports.
+   - *"a block BOUNCING off ice onto a random force floor costs ONE draw"* -- the oracle is the RNG
+     itself, every tick's draws counted by stepping `nextvalue()` from the old value to the new.
+     **It took three fixtures.** A block sliding from one random force floor to another draws ONCE
+     in every build: two layouts built on that assumption passed in all three builds. The second
+     draw comes only from the re-arm after a SUCCESSFUL BOUNCE, and a bounce exists only on ICE --
+     so the working layout is one random force floor with ice north of it, a wall past the ice, and
+     a conveyor returning the block when it slides back. Correct engine: never more than one draw
+     in 120 ticks. Half removed, or `-DNO_FIX_RFF_DRAW_ONCE`: two on every bounce, first at tick 31.
+
+   Each case fails under its mutation and its toggle, plain and `-Sanitize`. The matrix's header and
+   `CLAUDE.md` §5 now say that six of its rows are three measurements, and what each proves.
+
+   **And the mechanic paid twice, as mechanics do here.** `mutate.ps1 -Recheck -Module mslogic.c`
+   against the `ee3bd25` census: **12 of 237 recorded ROR survivors now die** -- the random force
+   floor's consumer and `keepdir` predicate, six sites along the teleport path, a block-push guard
+   and the slip-list lookup -- none of them aimed at. A scenario walks the whole call chain.
+
 
 ## Testing
 

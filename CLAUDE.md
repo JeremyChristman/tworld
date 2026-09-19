@@ -250,13 +250,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,454 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
+Current state: **19 unit runs, 23,463 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,454 AS A MEASURE OF REACH. Three files are 94% of it.**
+🔴 **DO NOT READ 23,463 AS A MEASURE OF REACH. Three files are 94% of it.**
 `random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,275. That leaves about
-**1,434 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+**1,443 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -529,9 +529,24 @@ misreading in the parser is faithfully reproduced and never caught.
   half and nothing else. **That was a real gap**: deleting the creature half's movelaws term
   survived every layer. It is now guarded by a named case in `mslogic_test.c` ("a Ball blocked by a
   creature over GRAVEL keeps its slip-list slot"), which fails under
-  `-DNO_FIX_KEEPSLOT_OCCUPANT` and under that deletion. ⚠ The RFF and TELEPORT pairs have NOT been
-  examined for code only one toggle gates. Do that before trusting either of their rows as more
-  than a statement about the shared path.
+  `-DNO_FIX_KEEPSLOT_OCCUPANT` and under that deletion.
+
+  🔴 **The other two pairs had the same hole, and it was the other way round in each.** Examined
+  2026-09-19 by mutating each toggle's OWN code and running unit, sanitize, golden and the matrix:
+
+  | pair | what one toggle's off-switch also disables | witness proves | the unguarded half | now guarded by |
+  |---|---|---|---|---|
+  | RFF | `rff_keepdir`'s CONSUMER is compiled only under `FIX_RFF_DRAW_ONCE`, so it takes `CHIP_REARM` with it | the CHIP half | `DRAW_ONCE`'s block-and-monster half — **the jc-13 fix itself** | "a block BOUNCING off ice onto a random force floor costs ONE draw" |
+  | TELEPORT | `prepush_destfloor` is WRITTEN only under `STALE_FG` and READ by `BROKEN_DYNAMIC` | the block-exposed override | `STALE_FG`'s second `poptile(oldpos)` | "a push that exposes a teleport pops Chip's old cell TWICE" |
+
+  Removing each unguarded half survived all four layers; each case fails under it, under the
+  toggle, and under `-Sanitize`. ⚠ **The RFF one took three fixtures.** The double draw is NOT on
+  every random-force-floor move — a block sliding from one to the next draws once in every build.
+  It comes only from the re-arm after a SUCCESSFUL BOUNCE, and a bounce exists only on ICE. Two
+  fixtures built on the wrong mechanism passed in all three builds before a probe showed why.
+
+  **The rule this generalizes to:** when two toggles share a witness, list the code each one gates
+  ALONE and mutate it. A shared seed is a measurement of the intersection.
 - **No PAINTED PIXEL is asserted on**, and that limit is deliberate — but "no widget is tested" is
   no longer true. Qt ships an `offscreen` platform plugin, and under it the real `TileWorldMainWnd`
   constructs, runs and destroys with no display at all, which is what

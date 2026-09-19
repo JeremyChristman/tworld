@@ -12,6 +12,16 @@
 # preprocessed source, so none is dead code. A blank row is NEVER grounds for
 # deleting a fix.
 #
+# 🔴 AND SIX FILLED ROWS ARE ONLY THREE MEASUREMENTS. RFF_CHIP_REARM/RFF_DRAW_ONCE
+# (7572), TELEPORT_BROKEN_DYNAMIC/TELEPORT_STALE_FG (2294) and
+# KEEPSLOT_BLOCK_OCCUPANT/KEEPSLOT_OCCUPANT (487376) share a seed AND a digest:
+# in each pair one toggle's off-switch also disables the other, so A, B and both
+# off all give one result. A shared witness proves only the code BOTH toggles
+# gate. The code each gates ALONE was unguarded in all three pairs -- removing it
+# survived unit, sanitize, golden and this matrix -- and each is now guarded by a
+# named case in mslogic_test.c (blind audit #5, 2026-09-18/19). CLAUDE.md section
+# 5 has the table. When you add a toggle that shares a witness, do the same.
+#
 # 🔴 BUT FOR THREE OF THEM THAT SENTENCE IS FALSE, AND NO SEED BUDGET WILL EVER
 # FILL THE ROW. They are unreachable by this generator by construction rather
 # than by luck, so do not spend a -Search on them:

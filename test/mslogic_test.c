@@ -326,7 +326,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(299);
+    tw_expect_atleast(308);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1341,6 +1341,130 @@ int main(void)
 	CHECK_MSG(ballslot == 0,
 		  "the Ball is at slip slot %d on tick 8 (list holds %d); gravel"
 		  " refuses it, so it must keep slot 0", ballslot, slipcount);
+    }
+
+    tw_case("🔴 a push that exposes a teleport pops Chip's old cell TWICE, as SuperCC does");
+    {
+	/* FIX_TELEPORT_STALE_FG's OWN code -- step 2, the second poptile(oldpos) --
+	 * which its committed witness never proved. The TELEPORT pair shares seed
+	 * 2294, and turning off either toggle gives one digest: prepush_destfloor
+	 * is WRITTEN only under STALE_FG and READ by BROKEN_DYNAMIC, so switching
+	 * STALE_FG off switches BROKEN_DYNAMIC off too, and the witness proves the
+	 * shared override and nothing else. Measured: replacing the second pop
+	 * with a no-op survived unit, sanitize, golden and all 18 witnesses.
+	 *
+	 * SuperCC captures the destination's top tile BEFORE the push, and when
+	 * that was a block, pops the mover's old cell a second time (measured with
+	 * shadow_poplayer.ps1 -- see the fix's header). So the observable is what
+	 * Chip was standing ON: gravel under him survives one pop and not two.
+	 * The teleport is covered by a block at load, so it is FS_BROKEN and only
+	 * BROKEN_DYNAMIC's block-exposed override lets Chip through at all -- the
+	 * one route by which a teleport is reached with a block as its old top.
+	 * Swept: the correct engine teleports on tick 1 and leaves Empty; the
+	 * no-op mutant teleports and leaves Gravel; -DNO_FIX_TELEPORT_STALE_FG
+	 * never teleports. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_EAST);
+	fix_setbot(&lv, 5, 5, FIX_GRAVEL);	/* what the second pop removes */
+	fix_settop(&lv, 6, 5, FIX_BLOCK);
+	fix_setbot(&lv, 6, 5, FIX_TELEPORT);	/* covered at load: FS_BROKEN */
+	fix_settop(&lv, 20, 20, FIX_TELEPORT);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.map[6 + CXGRID * 5].bot.state & FS_BROKEN,
+		  "the block-covered teleport was not flagged FS_BROKEN at load, so"
+		  " this case no longer reaches the block-exposed override");
+	tick(CmdEast);
+	CHECK_MSG(chipx() == 20 && chipy() == 20,
+		  "pushing the block off the teleport did not send Chip through it"
+		  " (he is at %d,%d) -- the block-exposed override refused, or the"
+		  " case no longer reaches the second pop", chipx(), chipy());
+	CHECK_MSG(teststate.map[7 + CXGRID * 5].top.id == Block_Static,
+		  "the block was not pushed to (7,5): its cell holds %02X",
+		  teststate.map[7 + CXGRID * 5].top.id);
+	CHECK_MSG(teststate.map[5 + CXGRID * 5].top.id == Empty,
+		  "Chip's old cell holds %02X, not Empty: the gravel under him"
+		  " survived, so it was popped ONCE -- SuperCC pops it twice when the"
+		  " teleport was exposed by a push",
+		  teststate.map[5 + CXGRID * 5].top.id);
+    }
+
+    tw_case("🔴 a block BOUNCING off ice onto a random force floor costs ONE draw");
+    {
+	/* FIX_RFF_DRAW_ONCE's BLOCK-AND-MONSTER half -- the jc-13 fix itself,
+	 * credited with 6 desyncs -- which no automated layer guarded. The RFF
+	 * pair shares seed 7572, and the consumer of rff_keepdir in
+	 * startfloormovement() is compiled only under DRAW_ONCE, so switching
+	 * DRAW_ONCE off silently disables CHIP_REARM as well: the witness is a
+	 * CHIP scenario and proves the chip half. Measured: making this half's
+	 * `rff_keepdir = ac ? keepdir : NIL` always NIL survived unit, sanitize,
+	 * golden and all 18 witnesses.
+	 *
+	 * ⚠ THE DOUBLE DRAW IS NOT ON EVERY MOVE, and the first two fixtures
+	 * written for this proved nothing because they assumed it was. A block
+	 * sliding from one random force floor to another draws ONCE in every
+	 * build. The second draw comes only from the re-arm after a SUCCESSFUL
+	 * BOUNCE, and in this slip pass a bounce exists only on ICE: slide into a
+	 * wall, bounce back the way you came -- and if that lands on a random
+	 * force floor, entry draws once and the re-arm draws again. SuperCC draws
+	 * once per move. So: one random force floor, ice north of it, a wall past
+	 * the ice, walls either side, and a conveyor that returns the block
+	 * whenever it slides back south.
+	 *
+	 * The oracle is the draw count itself, read off the PRNG: every tick is
+	 * stepped with nextvalue() from its old value to its new one. Swept over
+	 * 120 ticks: the correct engine never spends more than one draw in a
+	 * tick; the half removed, and -DNO_FIX_RFF_DRAW_ONCE, spend two on every
+	 * bounce, the first at tick 31. */
+	unsigned long before, v;
+	int y, t, p, draws, pos, prevpos = -1, bounces = 0, bouncedraws = -1;
+	int maxdraws = 0;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	for (y = 12 ; y <= 23 ; ++y) {
+	    fix_settop(&lv, 9, y, FIX_WALL);
+	    fix_settop(&lv, 11, y, FIX_WALL);
+	}
+	fix_settop(&lv, 10, 12, FIX_WALL);
+	fix_settop(&lv, 10, 13, FIX_ICE);
+	fix_settop(&lv, 10, 14, FIX_SLIDE_RANDOM);
+	for (y = 15 ; y <= 22 ; ++y)
+	    fix_settop(&lv, 10, y, FIX_SLIDE_NORTH);	/* the conveyor */
+	fix_settop(&lv, 10, 23, FIX_BLOCK);
+	fix_settop(&lv, 10, 24, FIX_CHIP_NORTH);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	for (t = 1 ; t <= 120 ; ++t) {
+	    before = teststate.mainprng.value;
+	    tick(t <= 2 ? CmdNorth : NIL);
+	    for (v = before, draws = 0 ; v != teststate.mainprng.value && draws < 16 ; ++draws)
+		v = nextvalue(v);
+	    if (draws > maxdraws)
+		maxdraws = draws;
+	    pos = -1;
+	    for (p = 10 + CXGRID * 13 ; p <= 10 + CXGRID * 23 ; p += CXGRID)
+		if (teststate.map[p].top.id == Block_Static
+			|| (iscreature(teststate.map[p].top.id)
+			    && creatureid(teststate.map[p].top.id) == Block))
+		    pos = p;
+	    if (prevpos == 10 + CXGRID * 13 && pos == 10 + CXGRID * 14) {
+		++bounces;
+		if (bouncedraws < 0)
+		    bouncedraws = draws;
+	    }
+	    if (pos >= 0)
+		prevpos = pos;
+	}
+	CHECK_MSG(bounces > 0,
+		  "the block never bounced off the ice back onto the random force"
+		  " floor in 120 ticks, so this case proves nothing");
+	CHECK_MSG(bouncedraws == 1,
+		  "the first bounce onto the random force floor cost %d draw(s);"
+		  " SuperCC draws once per move", bouncedraws);
+	CHECK_MSG(maxdraws == 1,
+		  "some tick spent %d draws; a block on this field must never cost"
+		  " more than one", maxdraws);
     }
 
     /* ================================================================== */

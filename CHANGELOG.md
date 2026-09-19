@@ -49,6 +49,16 @@ size guard, `encoding.c`'s one-byte field 2, the Lynx engine's off-map trap and 
 `springtrap()`'s own bound, and `FIX_KEEPSLOT_OCCUPANT`'s creature half. Each was reproduced
 surviving the plain and sanitize passes, and each now fails both.
 
+### Fixed — two more engine fixes that no layer guarded
+
+The RFF and TELEPORT `NO_FIX_*` pairs share a witness the way the KEEPSLOT pair did, and each hid
+the same hole: one toggle's off-switch disables the other, so the shared seed proves only the
+overlap. Removing **the jc-13 fix's block-and-monster half** (a block bouncing off ice onto a random
+force floor drew the RNG twice) and **`STALE_FG`'s second pop of Chip's old cell** each survived the
+unit, sanitize, golden and matrix layers. Both are now guarded by named cases that fail under the
+removal and under the toggle; the same two cases also kill 12 of 237 recorded `mslogic.c` mutation
+survivors. `FORK.md` item 44.
+
 ### Measured
 
 - **The published jc-58 binary replays the whole collection identically** to a local build of the
