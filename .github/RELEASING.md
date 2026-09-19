@@ -114,6 +114,18 @@ Two mechanical guards back this up:
 7. **Publish.** The tag push runs the release workflow, which re-verifies, re-packages, and creates a
    **draft** release with the zip attached. Download that asset, launch it once, then publish.
 
+   🔴 **If the release touched the engine, replay the corpus through THE ASSET before publishing.**
+   Step 4's corpus run judged the executable YOU built, with the local compiler; what ships is the
+   one CI built, with the compiler `docs/toolchain.lock` pins, and those have differed (16.1.0 here
+   against 16.2.0 there — nothing checks the local one). Record step 4's run with `-Out`, then:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File test\run-corpus.ps1 -Exe "<extracted zip>\Tile World.exe" -Out <scratch>\corpus-asset -Against <scratch>\corpus-local
+   ```
+   and require `IDENTICAL: 0 of N per-set outputs differ`. A blind audit found this gap: nothing had
+   ever replayed a recorded solution through a published binary. The first run of it, jc-58's asset
+   against a local build of the same engine, was identical across all 303 sets — so it has held so
+   far; this is what keeps it a measurement rather than an assumption.
+
    The draft is deliberate: CI builds on a different machine than the maintainer's, and the playtest
    gate is a human act CI cannot perform.
 

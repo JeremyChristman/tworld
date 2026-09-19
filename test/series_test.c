@@ -287,7 +287,7 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(129);
+    tw_expect_atleast(133);
 
     tw_case("every committed fuzz corpus input still reads safely");
     {
@@ -527,6 +527,51 @@ int main(void)
 	for (k = 0 ; series.games && k < series.count ; ++k)
 	    free(series.games[k].leveldata);
 	free(series.games);
+    }
+
+    tw_case("🔴 a .dat whose SIGNATURE is wrong is refused; the right one is read");
+    {
+	/* readseriesheader() is the first thing a downloaded .dat meets, and
+	 * deleting its signature test survived every layer: nothing in the suite
+	 * ever handed it a file that was not a level set. One bit off (0xAAAD),
+	 * with a valid ruleset word and a nonzero level count after it, so only
+	 * the signature test can refuse it -- and the correctly signed control
+	 * proves the refusal is not something else about the file. */
+	static unsigned short const sigs[2] = { 0xAAAD, SIG_DATFILE };
+	int k;
+	for (k = 0 ; k < 2 ; ++k) {
+	    gameseries series;
+	    unsigned char hdr[6];
+	    FILE *f = fopen(scratchname, "wb");
+	    int r;
+	    if (!f) {
+		tw_skip("could not create a temporary .dat in the working directory");
+		break;
+	    }
+	    put16(hdr, sigs[k]);
+	    put16(hdr + 2, SIG_DATFILE_MS);
+	    put16(hdr + 4, 1);                  /* one level */
+	    fwrite(hdr, 1, sizeof hdr, f);
+	    fclose(f);
+	    memset(&series, 0, sizeof series);
+	    series.ruleset = Ruleset_None;
+	    clearfileinfo(&series.mapfile);
+	    if (!fileopen(&series.mapfile, scratchname, "rb", NULL)) {
+		tw_skip("could not reopen the temporary .dat");
+		remove(scratchname);
+		break;
+	    }
+	    r = readseriesheader(&series);
+	    fileclose(&series.mapfile, NULL);
+	    remove(scratchname);
+	    if (k == 0) {
+		CHECK_MSG(!r, "a file signed 0xAAAD was accepted as a level set");
+	    } else {
+		CHECK_MSG(r, "a correctly signed MS .dat header was refused");
+		CHECK_INT(series.ruleset, Ruleset_MS);
+		CHECK_INT(series.count, 1);
+	    }
+	}
     }
 
     /* ================================================================== */

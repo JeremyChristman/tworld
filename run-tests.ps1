@@ -134,15 +134,22 @@ function Read-Skips {
 # has a per-binary deadline of its own, but golden, nofix, sanitize and e2e all run
 # engine code too, so the ceiling lives here, once, for all of them.
 #
-# Start-Process in the SAME console (-NoNewWindow, no redirects), so a layer's
-# output and colors look exactly as before. `$null = $p.Handle` BEFORE waiting,
-# or ExitCode reads back empty -- measured in test\run-tests.ps1. On a timeout
-# the tree is killed by PID (never by name) and $LASTEXITCODE is set to 124,
-# timeout(1)'s convention, so the existing exit checks below need no change.
+# Launched in the SAME console (no redirects), so a layer's output and colors
+# look exactly as before. Through [Diagnostics.Process]::Start rather than
+# Start-Process, because only the former keeps the handle it was created with:
+# Start-Process -PassThru returns an object looked up by PID, whose ExitCode
+# reads back $null if the child has exited before anything touches .Handle --
+# measured in test\run-tests.ps1, where that race scored green runs FAILED. On a
+# timeout the tree is killed by PID (never by name) and $LASTEXITCODE is set to
+# 124, timeout(1)'s convention, so the existing exit checks below need no change.
 function Invoke-Layer([string]$name, [string[]]$arguments) {
     $quoted = @($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } })
-    $p = Start-Process -FilePath "powershell.exe" -ArgumentList $quoted -NoNewWindow -PassThru
-    $null = $p.Handle
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "powershell.exe"
+    $psi.Arguments = $quoted -join ' '
+    $psi.UseShellExecute = $false
+    $psi.WorkingDirectory = (Get-Location).Path
+    $p = [System.Diagnostics.Process]::Start($psi)
     if (-not $p.WaitForExit($LayerTimeoutSec * 1000)) {
         & taskkill /T /F /PID $p.Id 2>&1 | Out-Null
         $p.WaitForExit(10000) | Out-Null

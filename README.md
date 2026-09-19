@@ -10,8 +10,9 @@ use, and for years they disagreed: a solution recorded in one would desync in th
 seconds, on levels nobody could explain. Every disagreement is a bug in somebody's emulation of the
 MS ruleset. This fork closed them one at a time, by finding the exact rule each engine applied and
 making Tile World match the reference. **When the work started, 135 solutions replayed correctly in
-SuperCC and desynced here. That count has been zero since jc-28**, across a collection of 274 level
-sets and roughly 22,000 solutions, with no release ever costing a solution that replayed before.
+SuperCC and desynced here. That count has been zero since jc-28**, across the desync project's
+collection of 274 level sets and roughly 22,000 solutions (its jc-28 measurement), with no release
+ever costing a solution that replayed before.
 
 Since then the changes have been quality-of-life and correctness: a settings file of its own, a
 choosable background color, a death counter, a tileset picker, level-navigation wrapping, and six

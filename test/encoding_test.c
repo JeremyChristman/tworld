@@ -129,7 +129,7 @@ int main(void)
     int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(106);
+    tw_expect_atleast(108);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {
@@ -1077,6 +1077,37 @@ int main(void)
 	CHECK_MSG(teststate.chipsneeded == 77,
 		  "a two-byte field 2 was ignored as too short, leaving the"
 		  " header's chip count in place");
+    }
+
+    tw_case("🔴 a ONE-byte field 2 is ignored, and nothing past it is read as the count");
+    {
+	/* The other side of that guard, which nothing wrote: deleting `size < 2`
+	 * outright survived every layer. readword() then takes the field's one
+	 * byte PLUS the byte after it, so the chip count is assembled partly from
+	 * whatever follows the field. The byte after it is poisoned (0xAB) so the
+	 * unguarded read cannot land on the header's value by luck; the loop
+	 * stops there because two bytes remain, not three. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 5);      n += 2;		/* header says 5 chips	*/
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 10; raw[n++] = FIX_WALL;
+	put16(raw + n, 3);      n += 2;
+	raw[n++] = 0xFF; raw[n++] = 20; raw[n++] = FIX_GRAVEL;
+	put16(raw + n, 5);      n += 2;		/* metadata: 5 bytes	*/
+	raw[n++] = 2; raw[n++] = 1;		/* field 2, ONE byte	*/
+	raw[n++] = 0x07;
+	raw[n++] = 0xAB; raw[n++] = 0x00;	/* poison past it	*/
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.chipsneeded == 5,
+		  "a one-byte field 2 set the chip count to %d (0x%04X) -- read"
+		  " past its own byte", (int)teststate.chipsneeded,
+		  (unsigned)(unsigned short)teststate.chipsneeded);
+	/* ⚠ THE CHIP COUNT IS THE ORACLE, NOT THE WARNING COUNT. This minimal
+	 * level warns twice for reasons of its own, so "exactly one warning"
+	 * failed on correct code -- measured before it could be trusted. */
     }
 
     tw_case("a ten-byte record is exactly a header, and is not refused for size");

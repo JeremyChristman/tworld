@@ -201,7 +201,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1244);
+    tw_expect_atleast(1275);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -443,6 +443,64 @@ int main(void)
 		fclose(file.fp);
 		free(g.solutiondata);
 	    }
+	    remove(path);
+	}
+    }
+
+    tw_case("🔴 a 6-byte record is a PASSWORD-ONLY entry; a 3-byte one is refused");
+    {
+	/* readsolution() refuses a record of 16 bytes or fewer UNLESS it is
+	 * exactly 6 -- level number and password, the format's way of remembering
+	 * a password for a level with no solution yet (solution.c's header).
+	 * Nothing wrote a record of either kind, and inverting `size != 6`
+	 * survived every layer: it REFUSES the legitimate password record and
+	 * ACCEPTS a 3-byte one, whose memcpy of four password bytes then reads
+	 * past the three-byte allocation. Both directions are pinned here. */
+	static unsigned char const pwonly[6] = { 0x07, 0x00, 'W', 'X', 'Y', 'Z' };
+	static unsigned char const runt[3] = { 0x07, 0x00, 'W' };
+	unsigned char const *recs[2];
+	int sizes[2], r;
+	char const *path = "tw_pwonly_test.tws";
+
+	recs[0] = pwonly; sizes[0] = (int)sizeof pwonly;
+	recs[1] = runt;   sizes[1] = (int)sizeof runt;
+	for (r = 0 ; r < 2 ; ++r) {
+	    FILE *f = fopen(path, "wb");
+	    fileinfo file;
+	    gamesetup g;
+	    unsigned char len[4];
+	    if (!f) {
+		tw_skip("could not create a temporary .tws in the working directory");
+		break;
+	    }
+	    len[0] = (unsigned char)sizes[r]; len[1] = len[2] = len[3] = 0;
+	    fwrite(len, 1, 4, f);
+	    fwrite(recs[r], 1, (size_t)sizes[r], f);
+	    fclose(f);
+	    clearfileinfo(&file);
+	    file.name = (char*)path;
+	    file.fp = fopen(path, "rb");
+	    if (!file.fp) {
+		tw_skip("could not reopen the temporary .tws");
+		remove(path);
+		break;
+	    }
+	    memset(&g, 0, sizeof g);
+	    if (r == 0) {
+		CHECK_MSG(readsolution(&file, &g) == TRUE,
+			  "a 6-byte password-only record was refused");
+		CHECK_INT(g.number, 7);
+		CHECK_STR(g.passwd, "WXYZ");
+		CHECK_MSG(g.sgflags & SGF_HASPASSWD,
+			  "the password-only record did not mark the level as"
+			  " having a password");
+	    } else {
+		CHECK_MSG(readsolution(&file, &g) == FALSE,
+			  "a 3-byte record was accepted, and its 4-byte password"
+			  " was read past the end of it");
+	    }
+	    fclose(file.fp);
+	    free(g.solutiondata);
 	    remove(path);
 	}
     }
@@ -825,6 +883,54 @@ int main(void)
 	game.solutiondata = NULL;
     }
 
+    tw_case("🔴 a MOUSE move round-trips at every size the long format switches on");
+    {
+	/* The case above reaches the long format only through DIAGONALS, and a
+	 * diagonal takes that format only at delta >= 2048 -- so its first two
+	 * size switches, `delta < (1 << 2)` and `delta < (1 << 10)`, are
+	 * reachable by a MOUSE move and nothing else. An adversarial audit
+	 * loosened each by one and both survived every layer, while silently
+	 * corrupting every mouse move of delta 4 (or 1024) the program recorded:
+	 * "mouse move 1 delta 4: wrote when=8 read back when=4". The golden master
+	 * drives only the keyboard and the corpus only READS recordings, so this
+	 * is the one place the encoder's mouse path is checked.
+	 *
+	 * Each delta sits at one of the values where the correct comparison and
+	 * its off-by-one choose different sizes: 3/4 (two bytes or three), 1023/
+	 * 1024 (three or four), 2^18 - 1 / 2^18 (four or five). 0x2A and 0x155 are
+	 * raw mouse targets -- not direct moves, so ismousemove() is TRUE -- and
+	 * both fit the nine bits the format carries. */
+	static int const deltas[] = { 0, 3, 4, 1023, 1024, (1 << 18) - 1, 1 << 18 };
+	int when = 0;
+	memset(&game, 0, sizeof game);
+	initmovelist(&sol.moves);
+	sol.rndseed = 11;
+	sol.flags = 0;
+	sol.rndslidedir = NORTH;
+	sol.stepping = 0;
+	addmove(&sol, NORTH, when);
+	for (i = 0 ; i < (int)(sizeof deltas / sizeof *deltas) ; ++i) {
+	    when += deltas[i] + 1;              /* delta is the gap MINUS ONE */
+	    addmove(&sol, (i & 1) ? 0x155 : 0x2A, when);
+	}
+	CHECK_INT(contractsolution(&sol, &game), TRUE);
+	CHECK_INT(expandsolution(&back, &game), TRUE);
+	CHECK_INT(back.moves.count, sol.moves.count);
+	for (i = 0 ; i < sol.moves.count && i < back.moves.count ; ++i) {
+	    CHECK_MSG(back.moves.list[i].when == sol.moves.list[i].when,
+		      "move %d: wrote when=%d, read back %d -- a mouse move was"
+		      " corrupted", i, sol.moves.list[i].when,
+		      back.moves.list[i].when);
+	    CHECK_MSG(back.moves.list[i].dir == sol.moves.list[i].dir,
+		      "move %d: wrote dir=%d, read back %d", i,
+		      sol.moves.list[i].dir, back.moves.list[i].dir);
+	}
+	destroymovelist(&sol.moves);
+	destroymovelist(&back.moves);
+	free(game.solutiondata);
+	game.solutiondata = NULL;
+    }
+
     tw_case("🔴 a .tws recorded under the OTHER ruleset is refused at its header");
     {
 	/* readsolutionheader() refuses a file whose ruleset byte differs from the
@@ -869,6 +975,39 @@ int main(void)
 		fclose(file.fp);
 		remove(path);
 	    }
+	}
+    }
+
+    tw_case("🔴 a .tws whose SIGNATURE is wrong is refused, even with the right ruleset");
+    {
+	/* The case above varies only the ruleset byte, so the signature test in
+	 * front of it never decided anything: deleting it survived every layer.
+	 * One bit off in the signature, the ruleset byte correct -- only the
+	 * signature check can refuse this. */
+	char const *path = "tw_badsig_test.tws";
+	FILE *f = fopen(path, "wb");
+	if (!f) {
+	    tw_skip("could not create a temporary .tws in the working directory");
+	} else {
+	    fileinfo file;
+	    int flags = -1, extrasize = -1;
+	    unsigned char extra[256];
+	    unsigned char hdr[8] = { 0x34, 0x33, 0x9B, 0x99, 0, 0, 0, 0 };
+	    hdr[4] = (unsigned char)Ruleset_MS;
+	    fwrite(hdr, 1, sizeof hdr, f);
+	    fclose(f);
+	    clearfileinfo(&file);
+	    file.name = (char*)path;
+	    file.fp = fopen(path, "rb");
+	    if (!file.fp) {
+		tw_skip("could not reopen the temporary .tws");
+	    } else {
+		CHECK_MSG(!readsolutionheader(&file, Ruleset_MS, &flags,
+					      &extrasize, extra),
+			  "a file signed 0x999B3334 was accepted as a solution file");
+		fclose(file.fp);
+	    }
+	    remove(path);
 	}
     }
 
@@ -1061,6 +1200,48 @@ int main(void)
 	    CHECK_MSG(got == len, "expected a set name of %d bytes, got %d", len, got);
 	    CHECK_STR(fenced.buf, setname);
 	    CHECK_MSG(fenced.canary[0] == 0x5A, "a short set name still overran the buffer");
+	    remove(path);
+	}
+    }
+
+    tw_case("a first record with no room for a name reports NO set name, not an error");
+    {
+	/* `size = dwrd - 16; if (size <= 0) goto nosetname;` -- a record of
+	 * exactly 16 bytes (a header with nothing after it) or fewer holds no
+	 * name. Nothing wrote one, and deleting that guard survived every layer:
+	 * the function went on to read a zero- or NEGATIVE-length name and
+	 * reported a bad file (-1) instead of "no name" (0). Both lengths are
+	 * written, and the fenced buffer must come back empty and untouched. */
+	static int const reclens[] = { 16, 10 };
+	char const *path = "tw_setname_none.tws";
+	int k;
+	for (k = 0 ; k < (int)(sizeof reclens / sizeof *reclens) ; ++k) {
+	    struct { char buf[64]; unsigned char canary[16]; } fenced;
+	    unsigned char hdr[8] = { 0x35, 0x33, 0x9B, 0x99, 0x00, 0x00, 0x00, 0x00 };
+	    unsigned char rec[32];
+	    FILE *f;
+	    int got;
+
+	    memset(&fenced, 0x77, sizeof fenced.buf);
+	    memset(fenced.canary, 0x5A, sizeof fenced.canary);
+	    f = fopen(path, "wb");
+	    if (!f) {
+		tw_skip("could not create a temporary .tws in the working directory");
+		break;
+	    }
+	    fwrite(hdr, 1, 8, f);
+	    memset(rec, 0, sizeof rec);
+	    rec[0] = (unsigned char)reclens[k];     /* the record length */
+	    fwrite(rec, 1, 4, f);
+	    fwrite(rec + 4, 1, sizeof rec - 4, f);  /* zeros: number 0, empty password */
+	    fclose(f);
+
+	    got = loadsolutionsetname(path, fenced.buf, (int)sizeof fenced.buf);
+	    CHECK_MSG(got == 0,
+		      "a %d-byte first record returned %d, expected 0 (no set name)",
+		      reclens[k], got);
+	    CHECK_MSG(fenced.buf[0] == '\0', "the buffer was not left empty");
+	    CHECK_MSG(fenced.canary[0] == 0x5A, "the buffer was overrun");
 	    remove(path);
 	}
     }

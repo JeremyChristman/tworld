@@ -135,6 +135,28 @@ static bool preview(TileWorldMainWnd *w, QColor const &c)
 				     Qt::DirectConnection, Q_ARG(QColor, c));
 }
 
+/* Wait until TW_GetTicks() has moved PAST `t`, polling a millisecond at a time,
+ * with a two-second ceiling. Returns whether it got there.
+ *
+ * 🔴 THIS REPLACES `TW_Delay(5)`, WHICH FLAKED -- 3 runs in 300 of an untouched
+ * tree failed "labelrole(w): expected 6, got 7" (and an audit saw 3 in 180). A
+ * fixed sleep is elapsed time used as the oracle for a count, the exact shape
+ * CLAUDE.md section 8.1 forbids after it burned the jc-55 tag: TW_Delay is
+ * sleep_for, i.e. Windows Sleep(), which Microsoft documents may return EARLY
+ * when the interval is below the system timer's resolution -- so "slept 5 ms"
+ * does not mean "the millisecond clock advanced". What the window compares is
+ * `nCurTime > nMsgBoldUntil`, so the property to wait for is exactly that the
+ * clock has passed the push, and this waits for THAT. */
+static bool waitpast(uint32_t t)
+{
+    for (int spins = 0 ; spins < 2000 ; ++spins) {
+	if (TW_GetTicks() > t)
+	    return true;
+	TW_Delay(1);
+    }
+    return TW_GetTicks() > t;
+}
+
 /* --- the window exists at all -------------------------------------------- */
 
 static void test_construction(TileWorldMainWnd *w)
@@ -206,10 +228,11 @@ static void test_shortmsg(TileWorldMainWnd *w)
      * for the millisecond it arrives on and Text thereafter. Pinned because it
      * is a boundary, and because it is why the next case has to wait. */
     w->SetDisplayMsg("plain", 5000, 0);
+    uint32_t const pushed = TW_GetTicks();	/* >= the push's own reading */
     CHECK_INT(labelrole(w), (int)QPalette::BrightText);
 
     tw_case("...and Text once the bold window has lapsed");
-    TW_Delay(5);
+    CHECK_MSG(waitpast(pushed), "the millisecond clock did not advance in two seconds");
     w->SetDeathCount(-1);		/* forces a refresh, pushes no message */
     CHECK_INT(labelrole(w), (int)QPalette::Text);
 
@@ -236,7 +259,10 @@ static void test_shortmsg(TileWorldMainWnd *w)
     w->SetDisplayMsg("", 0, 0);
     w->SetDisplayMsg("(paused)", FOREVER, 0);
     w->SetDisplayMsg("blip", 1, 0);
-    TW_Delay(40);
+    /* "blip" lives until push + 1, and expires once the clock is PAST that.
+     * Same reasoning as waitpast(): wait for the clock, not for a duration. */
+    CHECK_MSG(waitpast(TW_GetTicks() + 1),
+	      "the millisecond clock did not advance in two seconds");
     w->SetDeathCount(-1);		/* any refresh; the counter stays off */
     CHECK_STR(labeltext(w).toUtf8().constData(), "(paused)");
 
@@ -849,6 +875,6 @@ int main(int argc, char **argv)
      * Exact, and both runners now check that it is -- see run-tests.ps1 and
      * run-sanitizers.sh. Nothing here is platform-dependent: the offscreen
      * platform is the same everywhere, which is most of why it was used. */
-    tw_expect_atleast(103);
+    tw_expect_atleast(105);
     return tw_end();
 }

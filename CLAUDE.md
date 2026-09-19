@@ -138,6 +138,14 @@ the process runs on detached afterwards. A test written this way asserts nothing
 files.** With `-PassThru` but no `-Wait`, `$p.ExitCode` can still read back empty even after
 `WaitForExit(ms)`. `test\run-e2e.ps1` has the working form.
 
+🔴 **And when you need a DEADLINE (so no `-Wait`), use `[Diagnostics.Process]::Start`, not
+`Start-Process`.** The object `Start-Process -PassThru` returns was looked up by PID and holds no
+handle, so `ExitCode` is readable only if something opens one before the child exits. The unit
+runner used to touch `$p.Handle` on the next line and hope: delaying that touch 300 ms made
+`ExitCode` `$null` in 10 of 10 launches, and `$null -ne 0` scored green runs FAILED — seen twice
+under load by an audit. `Process.Start` keeps the handle it was created with; `test\run-tests.ps1`
+has that form, with both streams read asynchronously so a full pipe cannot deadlock it.
+
 (From a POSIX shell such as Git Bash, ordinary redirection *does* work — which is exactly how this
 trap stays hidden until someone writes the PowerShell version.)
 
@@ -186,7 +194,7 @@ a by-hand comparison found the script had been silent about that class the whole
 | Path | What it is |
 |---|---|
 | `tworld.c` | `main()`, option parsing, `initdirs()`, the navigation commands, batch verify |
-| `mslogic.c` | **The MS engine.** 4,800 lines; where this fork lives. 80+ `MOD (Jeremy)` edits |
+| `mslogic.c` | **The MS engine.** Nearly 5,000 lines; where this fork lives. 80+ `MOD (Jeremy)` edits |
 | `lxlogic.c` | The Lynx engine. Barely touched by this fork |
 | `encoding.c` | `.dat` level-record expansion — the untrusted-input parser |
 | `series.c` | `.dac` config parsing, `.dat` level reading, series enumeration |
@@ -242,13 +250,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,402 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 219 checks;
+Current state: **19 unit runs, 23,454 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,402 AS A MEASURE OF REACH. Three files are 94% of it.**
+🔴 **DO NOT READ 23,454 AS A MEASURE OF REACH. Three files are 94% of it.**
 `random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
-thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,244. That leaves about
-**1,413 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,275. That leaves about
+**1,434 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -329,10 +337,12 @@ Two more layers do not run from `run-tests.ps1`, because neither can run on Wind
   engines**: `fuzz_mslogic.c` and `fuzz_lxlogic.c` load a level *and play it*. And **two PROPERTY
   targets**, which assert that the code means something rather than merely that it does not crash:
   `fuzz_rc.c` re-derives the tileset-name rule independently and aborts on disagreement (a guard
-  that wrongly returns TRUE does not crash) — it found jc-47 on its first run, a 64-byte leak in
-  `prepareplayback()`; and `fuzz_settings.cpp` asserts that reading `tw_settings.ini` is idempotent
-  under writing it, and found a real defect on ITS first run too (jc-54, a value ending in a
-  carriage return did not survive its own round trip).
+  that wrongly returns TRUE does not crash); and `fuzz_settings.cpp` asserts that reading
+  `tw_settings.ini` is idempotent under writing it, and found a real defect on its first run
+  (jc-54, a value ending in a carriage return did not survive its own round trip).
+  ⚠ This passage used to credit `fuzz_rc.c` with jc-47. It did not find it and cannot have:
+  `fuzz_rc.c` does not compile `play.c`, where that leak lived. jc-47 was LeakSanitizer on the
+  **solution** target's first run, from the seed now committed as `fmt3-packed` — `FORK.md` item 19.
   ⚠ **`fuzz_settings.cpp` is C++ and the script has two lanes for that reason.** `settings.cpp` is
   C++ and CMake compiles it only as C++; the C targets, conversely, cannot be built as C++ at all
   because `fileio.c` and friends rely on C's implicit `void*` conversion. Same split as ADR 0004.
@@ -459,8 +469,8 @@ misreading in the parser is faithfully reproduced and never caught.
   its `cmd` argument entirely during a replay.** ⚠ One case is deliberately narrower than it looks —
   the death-counter ceiling is enforced twice, so the case pins the *behavior*, not either guard; the
   case says so.
-- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 135
-  checks over 26 cases, 0% → 58.8% lines. ⚠ Read its header before adding to it: Lynx commits a
+- ~~The Lynx engine (`lxlogic.c`) has no unit test at all~~ — **closed**: `test/lxlogic_test.c`, 141
+  checks over 27 cases, 0% → 58.8% lines. ⚠ Read its header before adding to it: Lynx commits a
   creature's **position when the move begins**, not when it ends, and `advancegame()` withholds the
   result for a **13-tick endgame timer** after the level is decided. Both make naive tick arithmetic
   look like engine bugs. And **never use `chipisalive()` from a test** — it is `id == Chip`, which is
@@ -508,13 +518,20 @@ misreading in the parser is faithfully reproduced and never caught.
   | `TELEPORT_STALE_FG` / `TELEPORT_BROKEN_DYNAMIC` | 2294 |
   | `KEEPSLOT_OCCUPANT` / `KEEPSLOT_BLOCK_OCCUPANT` | 487376 |
 
-  For the first two that is explainable: each is the pair whose declarations were tangled together,
-  and they touch the same path. ⚠ **The third is not explained, and nobody has looked** — this
-  passage said "two pairs" until an independent review counted three, and the reasoning built on
-  "two" never had to account for it. Identical digests mean the generator cannot tell the two
-  toggles apart, and `mslogic.c:234` gates `FIX_KEEPSLOT_OCCUPANT` in a way that suggests
-  `NO_FIX_KEEPSLOT_BLOCK_OCCUPANT` may be **subsumed** by it rather than independent. Worth an hour
-  before anyone trusts that matrix row as two separate witnesses.
+  🔴 **So each pair's two rows are ONE measurement, not two** — measured by a blind audit: for all
+  three pairs, turning off A, turning off B and turning off both give the same digest. What a
+  pair's witness proves is that the code BOTH toggles gate is live; it says nothing about code only
+  one of them gates. For the first two pairs that is the tangled-declarations history (each is a
+  pair whose declarations had to be made to require both flags). The third was recorded here as
+  unexplained, and the explanation is one line: `mslogic.c`'s block half is compiled under
+  `#if defined(FIX_KEEPSLOT_BLOCK_OCCUPANT) && defined(FIX_KEEPSLOT_OCCUPANT)`, so switching
+  OCCUPANT off switches the block half off too, and seed 487376 — a BLOCK slider — proves the block
+  half and nothing else. **That was a real gap**: deleting the creature half's movelaws term
+  survived every layer. It is now guarded by a named case in `mslogic_test.c` ("a Ball blocked by a
+  creature over GRAVEL keeps its slip-list slot"), which fails under
+  `-DNO_FIX_KEEPSLOT_OCCUPANT` and under that deletion. ⚠ The RFF and TELEPORT pairs have NOT been
+  examined for code only one toggle gates. Do that before trusting either of their rows as more
+  than a statement about the shared path.
 - **No PAINTED PIXEL is asserted on**, and that limit is deliberate — but "no widget is tested" is
   no longer true. Qt ships an `offscreen` platform plugin, and under it the real `TileWorldMainWnd`
   constructs, runs and destroys with no display at all, which is what
@@ -530,7 +547,7 @@ misreading in the parser is faithfully reproduced and never caught.
     password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
     `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
     `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
-  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 103 checks, the largest file that ships. It links
+  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 105 checks, the largest file that ships. It links
     the window against most of the core (27 declared sources; `tworld.c` owns `main()` and is
     stubbed) and drives it under `QT_QPA_PLATFORM=offscreen`. What it asserts are DECISIONS, never
     drawings: the jc-37/jc-38 short-message precedence, the death-counter menu, the window title
@@ -661,7 +678,7 @@ measurement says it pays.
 Three rows deserve explanation rather than embarrassment. **`series.c`** and **`fileio.c`** are each
 compiled into a test aimed at a couple of functions — `readleveldata()`, `readconfigfile()`, and the
 file primitives they need — so the other five hundred lines of series enumeration count against
-them without being aimed at. **`mslogic.c`** is 4,800 lines of two rulesets' worth of creature
+them without being aimed at. **`mslogic.c`** is nearly 5,000 lines of two rulesets' worth of creature
 behavior; it was 0% before this suite existed. ⚠ This paragraph used to quote all three percentages,
 in the section that promises it holds no copy of them, and all three had gone stale — an audit
 found `mslogic.c` quoted at 44.8% against a baseline of 60.3%. Read the TSV.
@@ -1109,9 +1126,15 @@ in `CHANGELOG.md`.
 
 It is committed, so it applies to anyone running a coding agent in a clone of this repo.
 
-**It reduces prompts; it does not contain an agent.** The `allow` entries are deliberately exact
-rather than wildcarded, because a trailing `:*` would permit arbitrary extra arguments — and these
-scripts have arguments that matter: `build.ps1 -BuildDir` and `-Manifest` write to any path. The
+**It reduces prompts; it does not contain an agent.** The `allow` entries for the repository's
+SCRIPTS are exact rather than wildcarded, because a trailing `:*` would permit arbitrary extra
+arguments — and these scripts have arguments that matter: `build.ps1 -BuildDir` and `-Manifest`
+write to any path. ⚠ **The git entries are NOT all exact, and this sentence used to say they
+were.** `git status`, `diff`, `log`, `show`, `blame`, `ls-files` and the two `check-*` commands
+are wildcarded as read commands — but the diff family (`diff`, `log`, `show`) accepts
+`--output=<file>` and will write wherever it is told, which an audit demonstrated. `git branch`
+used to be `git branch:*` too, which admits `-D` — deleting a branch and any unmerged work on it —
+and is now a list of exact read-only forms. The
 `deny` list is a typo-catcher for the obvious forms and nothing more; it is literal prefix matching,
 so `git push origin main --force` sails straight past it. **The real protection for "two builds must
 never report the same tag" is a GitHub ruleset on `refs/tags/jc-*` blocking deletion and

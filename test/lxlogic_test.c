@@ -76,9 +76,20 @@ char const     *err_cfile_ = 0;
 unsigned long	err_lineno_ = 0;
 
 static int warn_count = 0;
+static int warn_offmap = 0;
 static int errmsg_count = 0;
 
-void warn_(char const *fmt, ...) { (void)fmt; ++warn_count; }
+/* warn_offmap counts the warnings whose FORMAT says "off-map". A plain count
+ * cannot tell the load-time wiring guard from the check behind it: delete the
+ * guard and the next test (`floorat(xy->to) != Beartrap`) still warns once and
+ * still disables the wiring -- having read the map far out of bounds to decide.
+ * Only the wording differs, so the wording is the plain-pass oracle. */
+void warn_(char const *fmt, ...)
+{
+    ++warn_count;
+    if (fmt && strstr(fmt, "off-map"))
+	++warn_offmap;
+}
 void errmsg_(char const *prefix, char const *fmt, ...)
 {
     (void)prefix; (void)fmt; ++errmsg_count;
@@ -296,7 +307,7 @@ int main(void)
     int		r;
 
     tw_begin("lxlogic");
-    tw_expect_atleast(135);
+    tw_expect_atleast(141);
 
     /* ================================================================== *
      * The level loads at all.
@@ -684,6 +695,38 @@ int main(void)
 		  " spring it -- an unwired trap holds until a button releases it",
 		  chipx());
 	CHECK_INT(chipy(), 9);
+    }
+
+    tw_case("🔴 an OFF-MAP beartrap or cloner wiring is refused at load, by its own guard");
+    {
+	/* jc-45's class, in the Lynx engine, where nothing had tested it. A
+	 * wiring's coordinates come straight out of the .dat and readpos()
+	 * validates only X, so a wiring to row 200 arrives as position 6405
+	 * against a 1024-cell map. initgame's loop refuses it first thing; with
+	 * that test deleted the loop goes on to `floorat(xy->to)` -- a read 5,000
+	 * cells past the map -- and an audit measured it surviving all seven
+	 * layers. -Sanitize traps the read once a case executes it; the plain
+	 * pass sees the warning's wording, via warn_offmap. */
+	int w0, o0;
+	openroom(&lv);
+	fix_settop(&lv, 5, 5, FIX_BUTTON_BROWN);
+	fix_addtrap(&lv, 5, 5, 5, 200);          /* x in range, y far off the map */
+	fix_settop(&lv, 6, 6, FIX_BUTTON_RED);
+	fix_addcloner(&lv, 6, 6, 6, 200);
+	w0 = warn_count;
+	o0 = warn_offmap;
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.trapcount == 1 && teststate.clonercount == 1,
+		  "the wirings did not load (traps %d, cloners %d) -- the case"
+		  " tests nothing", teststate.trapcount, teststate.clonercount);
+	CHECK_MSG(warn_offmap - o0 == 2,
+		  "expected the off-map guard to refuse both wirings, got %d"
+		  " off-map warning(s) of %d", warn_offmap - o0, warn_count - w0);
+	CHECK_INT(warn_count - w0, 2);
+	if (teststate.trapcount == 1)
+	    CHECK_INT(teststate.traps[0].from, -1);
+	if (teststate.clonercount == 1)
+	    CHECK_INT(teststate.cloners[0].from, -1);
     }
 
     tw_case("🔴 applyicewallturn's full truth table, all four corners");

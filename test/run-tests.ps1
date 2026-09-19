@@ -246,7 +246,7 @@ foreach ($test in $tests) {
         $compiler = if ($testLang -eq "c") { $Cc } else { $Cxx }
         # gnu11/gnu++11, NOT c99/c++11. This is not a style preference and it is not
         # negotiable: -std=c99 sets __STRICT_ANSI__, under which MinGW defines _WIN32
-        # but NOT bare WIN32 -- and fileio.c:20 branches on `#ifdef WIN32` to choose
+        # but NOT bare WIN32 -- and fileio.c:21 branches on `#ifdef WIN32` to choose
         # DIRSEP_CHAR and createdir(). Under a strict-ANSI dialect the tests would
         # compile the POSIX branch, which is not the branch that ships, so a green run
         # would be evidence about code no Windows user ever executes. (It happens not
@@ -353,21 +353,36 @@ foreach ($test in $tests) {
         # second argument-less WaitForExit() so ExitCode reads back reliably
         # (see CLAUDE.md section 3.1 on why it can come back empty otherwise).
         #
-        # ⚠ Redirected to FILES, not `2>&1`: on PowerShell 5.1 that would wrap each
-        # stderr line in a NativeCommandError. Read back as UTF-8, which is what
-        # the tests write -- their case names carry emoji.
-        $outFile = "$exe.stdout.txt"
-        $errFile = "$exe.stderr.txt"
-        $proc = Start-Process -FilePath $exe -WorkingDirectory (Get-Location).Path -NoNewWindow -PassThru `
-                              -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-        # 🔴 TOUCH THE HANDLE NOW, OR ExitCode READS BACK EMPTY. Measured on the
-        # first version of this block: all 19 runs reported 0 failures and were
-        # scored FAILED, because $proc.ExitCode was $null and `$null -ne 0` is
-        # true. The argument-less WaitForExit() below did NOT fix it on its own
-        # (mutate.ps1's comment claims it does, for a use that never reads the
-        # code). Caching the handle before the process can exit is what keeps
-        # .NET able to ask for its exit status.
-        $null = $proc.Handle
+        # 🔴 [Diagnostics.Process]::Start, NOT Start-Process -- AND NOT FOR STYLE.
+        # Start-Process -PassThru hands back a Process object that holds no handle
+        # to the child: it was looked up by PID after the launch. .NET can read
+        # ExitCode only through a handle, so the old block touched $proc.Handle on
+        # the next line and hoped the test had not finished yet. MEASURED: delay
+        # that touch by 300 ms and ExitCode reads back $null in 10 of 10 launches
+        # (0 of 10 without the delay) -- and `$null -ne 0` scored a green run
+        # FAILED. That is a race against the machine's load, and this file runs
+        # sub-10-ms tests: an audit saw "encoding_test.c 106 checks, 0 failures
+        # [failed]" twice under parallel load and could not reproduce it idle.
+        # mutate.ps1 scores a mutant from these rows, so the same race could
+        # credit it a false KILL. Process.Start keeps the handle it was created
+        # with, so ExitCode is always there.
+        #
+        # ⚠ Streams are read ASYNCHRONOUSLY, both of them, before waiting: a
+        # child that fills one pipe while we block on the other deadlocks. They
+        # are decoded as UTF-8, which is what the tests write -- their case names
+        # carry emoji. A stream read is itself bounded after a kill, because a
+        # killed tree can leave a pipe that never reports end-of-file.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $exe
+        $psi.WorkingDirectory = (Get-Location).Path
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
         $timedOut = $false
         if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
             $timedOut = $true
@@ -377,13 +392,12 @@ foreach ($test in $tests) {
             $proc.WaitForExit()
         }
         $exit = $proc.ExitCode
+        $outText = if ($outTask.Wait(10000)) { $outTask.Result } else { "" }
+        $errText = if ($errTask.Wait(10000)) { $errTask.Result } else { "" }
         $output = @()
-        if (Test-Path -LiteralPath $outFile) { $output = @([IO.File]::ReadAllLines($outFile, [Text.Encoding]::UTF8)) }
+        if ($outText) { $output = @($outText.TrimEnd("`r", "`n") -split "\r?\n") }
         $output | ForEach-Object { if ($_ -notmatch '^TW(CASE|SUMMARY)\t') { Write-Host $_ } }
-        if (Test-Path -LiteralPath $errFile) {
-            foreach ($l in [IO.File]::ReadAllLines($errFile, [Text.Encoding]::UTF8)) { Write-Host $l }
-        }
-        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+        if ($errText) { foreach ($l in @($errText.TrimEnd("`r", "`n") -split "\r?\n")) { Write-Host $l } }
         if ($timedOut) {
             Write-Host ("TIMED OUT after {0}s and killed -- a test that never returns is a failure, not a slow pass" -f $TimeoutSec) -ForegroundColor Red
             $record.status = "timed-out"

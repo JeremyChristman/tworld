@@ -86,9 +86,18 @@ char const     *err_cfile_ = 0;
 unsigned long	err_lineno_ = 0;
 
 static int warn_count = 0;
+static int warn_offmap = 0;
 static int errmsg_count = 0;
 
-void warn_(char const *fmt, ...) { (void)fmt; ++warn_count; }
+/* warn_offmap counts warnings whose FORMAT names an off-map position ("Off-map
+ * trap opening attempted"). The wording, not the count, is what tells a bounds
+ * guard firing from whatever the engine does after reading past the map. */
+void warn_(char const *fmt, ...)
+{
+    ++warn_count;
+    if (fmt && strstr(fmt, "ff-map"))
+	++warn_offmap;
+}
 void errmsg_(char const *prefix, char const *fmt, ...)
 {
     (void)prefix; (void)fmt; ++errmsg_count;
@@ -317,7 +326,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(290);
+    tw_expect_atleast(299);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1265,6 +1274,75 @@ int main(void)
 		  slipcount, ballslot);
     }
 
+    tw_case("🔴 a Ball blocked by a creature over GRAVEL keeps its slip-list slot");
+    {
+	/* FIX_KEEPSLOT_OCCUPANT's CREATURE half -- the jc-17 rule itself. The
+	 * predicate is two terms, `!(movelaw_creature(bot) & dir)` OR the fire
+	 * clause, and the case above reaches only the second. Deleting the first
+	 * survived every layer, because the toggle's committed witness (seed
+	 * 487376) is a BLOCK slider: `#if defined(FIX_KEEPSLOT_BLOCK_OCCUPANT) &&
+	 * defined(FIX_KEEPSLOT_OCCUPANT)` means switching OCCUPANT off switches
+	 * the block half off too, so that witness proves the block half live and
+	 * says nothing about this one.
+	 *
+	 * Same shape as the Walker case, for the same reasons: two sliders so a
+	 * drop is visible as a reorder, a creature ON TOP of the destination so
+	 * the occupied branch runs, sliders that WALK onto the ice. The terrain
+	 * under the Fireball is GRAVEL, which refuses every monster -- the
+	 * movelaws term, not the fire clause, is what must keep the slot. The
+	 * Fireball is a bare tile, not on the monster list, so it never moves. */
+	int	n, ballslot, gliderslot;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 2, 2, FIX_CHIP_SOUTH);
+
+	fix_settop(&lv, 10, 8, 0x4A);		/* a Ball, facing south      */
+	fix_addcreature(&lv, 10, 8);
+	fix_settop(&lv, 10, 9, FIX_ICE);
+	fix_settop(&lv, 10, 10, FIX_ICE);
+	fix_settop(&lv, 10, 11, 0x46);		/* a Fireball on top ...     */
+	fix_setbot(&lv, 10, 11, FIX_GRAVEL);	/* ... over GRAVEL           */
+
+	fix_settop(&lv, 20, 18, 0x52);		/* a Glider: the second slider */
+	fix_addcreature(&lv, 20, 18);
+	fix_settop(&lv, 20, 19, FIX_ICE);
+	fix_settop(&lv, 20, 20, FIX_ICE);
+
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	/* Tick 6: both are sliding, the Ball at slot 0. This is the tick the
+	 * Ball meets the Fireball, so the precondition is the whole setup. */
+	runticks(6, NIL);
+	CHECK_MSG(slipcount == 2 && slips[0].cr->id == Ball
+		  && slips[1].cr->id == Glider,
+		  "at tick 6 the slip list should hold the Ball then the Glider"
+		  " (it holds %d) -- the case no longer sets up the collision",
+		  slipcount);
+
+	/* Tick 8, SWEPT rather than reasoned (ticks 1-16, all three builds): the
+	 * correct engine keeps the Ball at slot 0, it bounces north, and the
+	 * Glider gets its move and slides off the ice. Drop the Ball's slot and
+	 * the Glider shifts DOWN into slot 0 -- the slot the iterator has just
+	 * left -- so it is SKIPPED, and at tick 8 it is still on the ice while
+	 * the Ball is gone: exactly the TomP2#56 shape the fix's header records.
+	 * -DNO_FIX_KEEPSLOT_OCCUPANT and deleting the movelaws term both give
+	 * that second picture, measured. */
+	runticks(2, NIL);
+	ballslot = -1; gliderslot = -1;
+	for (n = 0 ; n < slipcount ; ++n) {
+	    if (slips[n].cr->id == Ball) ballslot = n;
+	    if (slips[n].cr->id == Glider) gliderslot = n;
+	}
+	CHECK_MSG(gliderslot < 0,
+		  "the Glider is still sliding at slot %d on tick 8 -- it was SKIPPED"
+		  " when the Ball blocked by a creature over GRAVEL dropped its slot"
+		  " instead of keeping it", gliderslot);
+	CHECK_MSG(ballslot == 0,
+		  "the Ball is at slip slot %d on tick 8 (list holds %d); gravel"
+		  " refuses it, so it must keep slot 0", ballslot, slipcount);
+    }
+
     /* ================================================================== */
     tw_case("🔴 a block BURIED under a creature cannot be pushed");
     {
@@ -1508,6 +1586,43 @@ int main(void)
 	CHECK_MSG(chipx() > 7,
 		  "the trap was held open by a covered button and still caught"
 		  " Chip: he is at x=%d", chipx());
+    }
+
+    tw_case("🔴 stepping on a button wired OFF THE MAP is refused by springtrap itself");
+    {
+	/* jc-45 bounded the wiring in initgame(), but that loop only declines to
+	 * READ an off-map trap -- it leaves the wiring in place, so pressing the
+	 * button during play still calls springtrap() with position 6407, and
+	 * springtrap's own `pos >= CXGRID * CYGRID` test is the only thing
+	 * between that and `cellat(6407)`. Nothing pressed such a button: an
+	 * audit deleted that test and all seven layers stayed green. Chip walks
+	 * over the button here; -Sanitize traps the read if the guard goes, and
+	 * the plain pass sees the guard's own warning disappear. */
+	int o0;
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 7, 5, FIX_BUTTON_BROWN);
+	fix_addtrap(&lv, 7, 5, 7, 200);          /* x in range, y far off the map */
+	o0 = warn_offmap;
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.trapcount == 1 && teststate.traps[0].to >= CXGRID * CYGRID,
+		  "the off-map wiring did not load as off-map (count %d) -- the case"
+		  " tests nothing", teststate.trapcount);
+	CHECK_MSG(warn_offmap == o0,
+		  "loading alone produced %d off-map warning(s); the button has not"
+		  " been pressed yet", warn_offmap - o0);
+	runticks(24, CmdEast);
+	CHECK_MSG(chipx() > 7,
+		  "Chip never crossed the button (he is at x=%d), so it was never"
+		  " pressed", chipx());
+	/* ⚠ AT LEAST once, not exactly: the button is pressed on every tick Chip
+	 * stands on it, and this walk produced five. Without the guard there are
+	 * none at all, which is the difference that matters. */
+	CHECK_MSG(warn_offmap - o0 > 0,
+		  "pressing an off-map-wired button produced no off-map warning --"
+		  " springtrap() went on to read the map at position %d",
+		  7 + CXGRID * 200);
     }
 
     /* ================================================================== */

@@ -54,6 +54,15 @@ param(
 $ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent $PSScriptRoot
 
+# 🔴 THE CHECK FLOOR, EXACT, like every unit test's tw_expect_atleast(N). This
+# layer had none: an audit deleted all five replay-verdict assertions -- the only
+# automated "a valid solution verifies, an invalid one fails" through the real
+# executable -- and the run said "13 case(s), 33 checks ... all green". Raise it
+# when you add a check; never lower it to make a run pass. It sits at the start of
+# its own line because .github/check-floor-ratchet.sh reads it from there and
+# refuses a decrease without a `Test-Floor-Lowered:` trailer.
+$CheckFloor = 38
+
 # --------------------------------------------------------------- reporting --
 
 $script:cases = @()
@@ -547,6 +556,18 @@ if ($script:failures -gt 0) {
 if ($script:cases.Count -eq 0 -or $script:checks -eq 0) {
     Write-Host "no end-to-end case ran -- refusing to report a pass" -ForegroundColor Red
     exit 1
+}
+# Exact only when nothing skipped: the one skip path (no gcc, so no fixture set)
+# legitimately removes that case's checks, and says so in the summary above.
+if ($skipped -eq 0) {
+    if ($script:checks -ne $CheckFloor) {
+        Write-Host ("CHECK FLOOR: {0} checks ran but `$CheckFloor is {1}. A check was added" -f $script:checks, $CheckFloor) -ForegroundColor Red
+        Write-Host "  (raise the floor to match) or a check stopped running (put it back)." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ("  check floor verified exact ({0})" -f $CheckFloor)
+} else {
+    Write-Host ("  check floor NOT verified: {0} case(s) skipped" -f $skipped) -ForegroundColor Yellow
 }
 Write-Host "all end-to-end cases passed" -ForegroundColor Green
 exit 0

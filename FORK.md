@@ -1526,6 +1526,94 @@ exactly what's mine:
    limit); and golden `-Update` accepting an engine change, which is what it is for -- it now says,
    when it rewrites the baseline, that only the corpus differential can speak to replay.
 
+43. **Blind audit #5: a ratchet beaten by a comment, a flaky release gate, a runner race, and eleven
+   guards no case reached** (`.github/check-floor-ratchet.sh`, `test/run-tests.ps1`,
+   `run-tests.ps1`, `test/run-e2e.ps1`, six test files, `.claude/settings.json`, four documents).
+   Not shipped code; it rides with the next release per `.github/RELEASING.md`.
+
+   A fifth double-blind audit ran on clean jc-58 with an independent mutation generator (372
+   mutants, three operators, restricted to lines that survive preprocessing) and judged the
+   world-class claim **false**. Every load-bearing finding was reproduced before it was conceded.
+
+   **The ratchet was beaten by a comment.** `check-floor-ratchet.sh` summed every
+   `tw_expect_atleast(N)` it could grep, across all files, from raw text. Delete jc-50's case, drop
+   its floor 290 -> 280, add the COMMENT `/* ... tw_expect_atleast(10) ... */` to `random_test.c`:
+   sum unchanged, "no floor went down", every local layer green with half of jc-50 restored. It now
+   strips comments and string literals, compares each file with itself and each declaration in
+   order, flags a change in how many a file declares (an extra call in dead code), counts a
+   narrowed `TESTLANG` as a lost run (the same audit dropped `input_test.c`'s C++ build unnoticed,
+   against ADR 0004), and ratchets a new exact end-to-end floor. Eight scenarios were replayed
+   against it in a scratch clone -- the audit's attack, a dead call, a string literal, a narrowed
+   language, a deleted file, a lowered e2e floor, a lowering WITH a trailer (passes, says why), and
+   the real change set (passes) -- and each gave the verdict it should.
+
+   **The end-to-end layer had no floor.** Deleting all five replay-verdict assertions -- the only
+   automated "a valid solution verifies, an invalid one fails" through the real executable --
+   printed "13 case(s), 33 checks ... all green". `$CheckFloor` is exact now whenever nothing skipped.
+
+   **A flaky test inside the release gate, of the exact kind that burned jc-55.**
+   `mainwnd_test.cpp` slept `TW_Delay(5)` and asserted the message bar's bold window had lapsed.
+   Measured on an untouched tree: 3 failures in 300 runs ("labelrole(w): expected 6, got 7").
+   `TW_Delay` is `sleep_for`, i.e. `Sleep()`, which Microsoft documents may return early below the
+   timer resolution. Both waits now poll until the millisecond clock has passed the push: 0 in 300.
+
+   **A race in the unit runner that could score a passing run FAILED -- and credit a mutant a false
+   kill.** `Start-Process -PassThru` returns a Process looked up by PID, holding no handle; the runner
+   touched `.Handle` on the next line and hoped the test was still running. Delaying that touch by
+   300 ms made `ExitCode` read back `$null` in 10 of 10 launches (0 of 10 undelayed), and
+   `$null -ne 0` is a failure. The audit had twice seen "106 checks, 0 failures [failed]" under
+   parallel load. `mutate.ps1` scores mutants from those rows. Both `test/run-tests.ps1` and the root
+   runner's layer launcher now use `[Diagnostics.Process]::Start`, which keeps its creation handle.
+
+   **Eleven guards no case reached -- each reproduced SURVIVING plain and `-Sanitize` on the
+   untouched tree, and each now KILLED on both:** the mouse-move encoder's `delta < 4` and
+   `delta < 1024` (reachable only by a mouse move; the round-trip test used keyboard and diagonals.
+   Measured against the new case: the mutant writes the delta-4 move at tick 10 and reads it back
+   at 6, and because times accumulate, EVERY later move reads back 4 ticks early -- "wrote
+   when=526348, read back 526344" -- the rest of the recording shifted, not one move); `readsolution()`'s
+   `size != 6` (a password-only record refused, a 3-byte record accepted and read past);
+   `readsolutionheader()`'s signature test and `readseriesheader()`'s (no case ever handed either a
+   file that was not one); `loadsolutionsetname()`'s `size <= 0`; `encoding.c`'s one-byte field 2
+   (the count assembled from the byte after it -- 0xAB07 from a poisoned byte); the Lynx engine's
+   off-map trap and cloner wiring guards (jc-45's class, with no Lynx case at all -- the plain-pass
+   oracle is the warning's WORDING, because deleting the guard still warns once, from the check
+   behind it, after reading 5,000 cells past the map); `springtrap()`'s own bound in `mslogic.c`
+   (`initgame()` only declines to READ an off-map trap, so pressing the button still reached it);
+   and `FIX_KEEPSLOT_OCCUPANT`'s creature half.
+
+   **That last one resolves a question this repository had left open.** Three `NO_FIX_*` pairs
+   share a witness seed, and `CLAUDE.md` recorded the KEEPSLOT pair as "not explained, and nobody
+   has looked". The audit measured all three pairs: turning off A, B or both gives one digest. For
+   KEEPSLOT the cause is `#if defined(FIX_KEEPSLOT_BLOCK_OCCUPANT) && defined(FIX_KEEPSLOT_OCCUPANT)`
+   -- switching OCCUPANT off switches the block half off too, so the witness (a BLOCK slider) proved
+   the block half and nothing else, and deleting the creature half's movelaws term survived every
+   layer. Swept ticks 1-16 in three builds to find the case: at tick 8 the correct engine holds
+   `[Ball]` on the slip list and the Glider has slid clear; the toggle-off build and the deletion both
+   hold `[Glider at 20,20]` -- the Glider SKIPPED, the TomP2#56 shape the fix's header records.
+
+   **Measured, not assumed: the published binary replays the corpus identically.** Nothing had ever
+   replayed a recorded solution through a CI-built asset; the corpus gate runs against a local
+   build, and the local compiler (16.1.0) is not the pinned one (16.2.0). jc-58's published asset
+   against a local build of the same engine: **0 of 303 per-set outputs differ, warnings identical,
+   18,644 valid / 1,107 invalid under both.** `.github/RELEASING.md` step 7 now does this every
+   engine release.
+
+   **Documents.** `CLAUDE.md` credited `fuzz_rc.c` with jc-47, which it cannot have found (it does
+   not compile `play.c`; LeakSanitizer found it through the solution target -- item 19);
+   `mslogic.c` is nearly 5,000 lines, not 4,800; a stale `fileio.c:20`; `README.md`'s corpus figure
+   now says it is the desync project's jc-28 measurement; `CLAUDE.md` §11 said the agent allow-list
+   was exact, and the git entries were not -- `git branch:*` admitted `-D`, and is now exact forms.
+
+   **Defended, with reasons:** the three corpus figures (README's is the desync project's jc-28
+   corpus of 274 sets, the others are dated Tile World `.tws` measurements from jc-43 and jc-47 --
+   different collections and dates, now labeled); the mutation baseline being recorded at an
+   earlier commit (it says which, and is refreshed with this change); the comment-to-code ratio of
+   the fork's `MOD` blocks (a convention: CLAUDE.md §9 requires every fork edit to say what trap
+   motivated it); many of the audit's 35 surviving MS-engine mutants (row-32 map loops that stay in
+   bounds, the debug `dumpmap`, guard pairs that mask each other's deletion, `mslogic.c:4617`, which
+   is recorded as inert -- equivalent or nearly so, and the audit said as much); and the one sighting
+   it could not reproduce in 576 runs, which the runner race above explains.
+
 
 ## Testing
 

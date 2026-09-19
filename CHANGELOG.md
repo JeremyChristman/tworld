@@ -23,7 +23,45 @@ stay attached to something someone can see.
 
 ## Unreleased
 
-Nothing yet.
+**Blind audit #5 — no change to the shipped executable.** A fifth double-blind audit judged the
+world-class claim false. Every finding was reproduced before it was conceded; the full record,
+including what was defended and why, is `FORK.md` item 43.
+
+### Fixed — gates that could be walked past
+
+- **The floor ratchet was beaten by a comment.** It summed floors grepped from raw text, so a
+  `tw_expect_atleast(10)` inside a comment paid for a deleted guard case. It now reads code only,
+  compares each file with itself, flags a changed number of declarations, treats a narrowed
+  `TESTLANG` as a lost run, and ratchets the new end-to-end floor.
+- **The end-to-end layer had no check floor**; deleting all five replay-verdict assertions stayed
+  green. `$CheckFloor` is now exact.
+- **A flaky test sat in the release gate** — 3 failures in 300 runs of an untouched tree, from a
+  fixed `TW_Delay(5)`. It now waits for the clock itself: 0 in 300.
+- **The unit runner could score a passing run FAILED** (and credit a mutant a false kill): it read
+  a child's exit code through a handle it might open too late. Measured 10 of 10 with a 300 ms delay.
+  Now uses `Process.Start`, which keeps the handle.
+
+### Fixed — eleven guards no test reached
+
+The mouse-move encoder's two size thresholds (loosening either corrupted every later move in a
+recording), the password-only `.tws` record, the `.tws` and `.dat` signature checks, the set-name
+size guard, `encoding.c`'s one-byte field 2, the Lynx engine's off-map trap and cloner wiring guards,
+`springtrap()`'s own bound, and `FIX_KEEPSLOT_OCCUPANT`'s creature half. Each was reproduced
+surviving the plain and sanitize passes, and each now fails both.
+
+### Measured
+
+- **The published jc-58 binary replays the whole collection identically** to a local build of the
+  same engine: 0 of 303 per-set outputs differ. Nothing had checked a CI-built asset against the
+  corpus before; `.github/RELEASING.md` now does, every engine release.
+
+### Documentation
+
+- The KEEPSLOT witness pair is explained (one toggle's `#if` includes the other), and what each
+  shared-seed pair does and does not prove is stated.
+- Corrected: `fuzz_rc.c` did not find jc-47; `mslogic.c`'s size; a stale line citation; README's
+  corpus figure is labeled as the desync project's jc-28 measurement; the agent allow-list was not
+  "exact" for git, and `git branch` no longer admits `-D`.
 
 ## jc-58 — 2026-09-15
 
