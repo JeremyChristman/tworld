@@ -250,13 +250,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,463 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
+Current state: **19 unit runs, 23,479 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,463 AS A MEASURE OF REACH. Three files are 94% of it.**
+🔴 **DO NOT READ 23,479 AS A MEASURE OF REACH. Three files are 94% of it.**
 `random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
-thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,275. That leaves about
-**1,443 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,279. That leaves about
+**1,455 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -475,11 +475,25 @@ misreading in the parser is faithfully reproduced and never caught.
   result for a **13-tick endgame timer** after the level is decided. Both make naive tick arithmetic
   look like engine bugs. And **never use `chipisalive()` from a test** — it is `id == Chip`, which is
   false whenever Chip is `Pushing_Chip`, i.e. straining against a wall while perfectly alive.
-- **The row-32 cloner glitch is only half covered.** `mslogic_test.c` pins the *loading* half
-  (`readpos()` keeping `(x, 32)` distinct from `POS_INVALID`), which is unconditional. The half that
-  `NO_FIX_ROW32_CLONER` actually guards — what happens when such a cloner **fires** — is not tested:
-  building that file with `-DNO_FIX_ROW32_CLONER` still passes every case. That was measured, and
-  **the golden master does not catch it either** — it was measured there too.
+- ~~**The row-32 cloner glitch is only half covered.**~~ — **closed, and this entry was stale for
+  builds.** `mslogic_test.c` pins the *loading* half (`readpos()` keeping `(x, 32)` distinct from
+  `POS_INVALID`, unconditional) **and** the firing half, in "a cloner wired into ROW 32 still fires";
+  `run-nofix.ps1` lists `NO_FIX_ROW32_CLONER` among the toggles a named unit case guards. An audit
+  found the retired claim still asserted here AND in a comment in the test file itself — the same
+  sentence in two places, which is what §8 says this file stopped doing. The part that remains true:
+  **the golden master does not catch that toggle**, measured.
+- **Five shipped sources have no test of any kind, and this list did not name them** (an audit
+  noticed the omission, in the section that exists to be complete): `cmdline.c`, `err.c`, `help.c`,
+  `messages.cpp` and `generic/timer.c`. None has a row in `docs/coverage-baseline.tsv` either,
+  because nothing compiles them into a test.
+  🔴 **`cmdline.c` is the one that matters**: it is the option parser, 128 lines, and
+  `test/tworld_test.c` explicitly STUBS `initoptions()` and `readoption()` rather than compiling it
+  — so the layer nearest it deliberately looks away. jc-52 shipped a defect on the path that reaches
+  it (an uninitialized pointer on a path-qualified command line), and §8.2's `-v` defect is in the
+  very option string it parses. **This repository's cheapest lesson is that the parser with no test
+  was the parser with the bugs** (§8, jc-48); this is the last parser in the C core with none.
+  `err.c` and `messages.cpp` are the error and message surfaces every test already stubs;
+  `generic/timer.c` is wall-clock and `help.c` is static text, which is why they rank below it.
 - 🔴 **14 of the 32 `NO_FIX_*` toggles have no differential witness — down from 30, and every number
   here is measured.** `test/nofix/` searches for an input whose result differs between a fix-on and a
   fix-off build; such an input is a **witness** that the fix is live and reachable, and the 18 found
@@ -728,6 +742,19 @@ COPY OF THEM HERE**, for exactly the reason the coverage table above is not dupl
 hand, aimed at guards. This is a mechanical census, and its blended rate is a function of the
 operator mix — turning on a second operator moves the headline without one thing about the suite
 changing. The two numbers measure different quantities. Read the per-file column.
+
+🔴 **AND KNOW THE ONE CLASS ROR CANNOT EXPRESS, BECAUSE IT IS THIS FORK'S OWN CLASS.** For the idiom
+that dominates these parsers — `ptr + k > end` — a boundary shift can only make the bound
+**stricter**. Loosening it means mutating an OPERAND (`end` → `end + 1`, `k` → `k - 1`, or a buffer's
+declared size), and no operator here does that. Measured by a blind audit and reproduced: three real
+gaps sat outside the census's reach — `encoding.c`'s optional-field clamp (a demonstrated read past
+a downloaded record), `openfileindir()`'s `PATH_MAX + 1` buffer, and `solution.c`'s set-name clamp
+against `name[256]`. Each is now covered by a case, and the `fileio.c` one by a `_Static_assert`
+that makes the shrink a compile error. **So do not read the census percentage as coverage of the
+off-by-one class.** It measures relational boundaries; operand off-by-ones are measured by hand
+until a constant/offset operator exists. ⚠ The ROR mutation at that clamp (`>` → `>=`) IS an
+equivalent mutant — it assigns a value that is already equal — which is why the census files it as a
+permanent survivor and why "survivor" there never pointed at the real hole.
 
 ⚠ **`-SelfTest` is not optional before believing a census.** It plants FIVE mutants whose verdicts
 are known in advance — one that must be killed, one that must not compile, one that must survive

@@ -201,7 +201,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1275);
+    tw_expect_atleast(1279);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -610,6 +610,76 @@ int main(void)
 			  "the solution data was freed for a record that is not a set name");
 		fclose(file.fp);
 		free(g.solutiondata);
+	    }
+	    remove(path);
+	}
+    }
+
+    tw_case("🔴 an OVERLONG set name is clamped to the buffer, and stops before passwd");
+    {
+	/* `if (size > 255) size = 255;` in front of
+	 * `memcpy(game->name, ..., size); game->name[size] = '\0';`, against
+	 * `char name[256]` (defs.h) with `passwd[256]` directly after it. Both
+	 * the clamp and the buffer were unpinned: an audit loosened the clamp to
+	 * 256 -- which writes name[256], i.e. passwd[0] -- and separately shrank
+	 * name to 200, and BOTH survived every layer. `size` here is
+	 * (record length - 16) straight out of a `.tws`, and `.tws` files are
+	 * handed around between players.
+	 *
+	 * ⚠ THE OBVIOUS POISON DOES NOT WORK, so read before changing this. A
+	 * set-name record must have an EMPTY password (that is half the
+	 * condition selecting this branch), and readsolution() memcpy's those
+	 * four zero bytes into passwd before getting here -- so passwd[0..3] are
+	 * already 0 and the loosened clamp writes a 0 over a 0, invisibly.
+	 * The two oracles that do work:
+	 *   - strlen(name) == 255 catches the LOOSENED CLAMP (256 name bytes
+	 *     land in the buffer and the terminator goes one further, so the
+	 *     name reads back a byte longer);
+	 *   - passwd[4], which readsolution() never assigns (it writes
+	 *     passwd[0..3] and passwd[5]), catches a SHRUNKEN name array: the
+	 *     255-byte copy then runs off the end of name and through passwd. */
+	char const *path = "tw_setname_long.tws";
+	FILE *f = fopen(path, "wb");
+	if (!f) {
+	    tw_skip("could not create a temporary .tws in the working directory");
+	} else {
+	    fileinfo file;
+	    gamesetup g;
+	    unsigned char rec[16];
+	    unsigned char len[4];
+	    int k;
+
+	    memset(rec, 0, sizeof rec);		/* number 0, password empty */
+	    len[0] = (unsigned char)((16 + 256) & 0xFF);
+	    len[1] = (unsigned char)(((16 + 256) >> 8) & 0xFF);
+	    len[2] = 0; len[3] = 0;
+	    fwrite(len, 1, 4, f);
+	    fwrite(rec, 1, sizeof rec, f);
+	    for (k = 0 ; k < 256 ; ++k)		/* 256 bytes of name, no NUL */
+		fputc('A' + (k % 26), f);
+	    fclose(f);
+
+	    clearfileinfo(&file);
+	    file.name = (char*)path;
+	    file.fp = fopen(path, "rb");
+	    if (!file.fp) {
+		tw_skip("could not reopen the temporary .tws");
+	    } else {
+		memset(&g, 0, sizeof g);
+		g.passwd[4] = 'Q';		/* the poison readsolution never writes */
+		CHECK_INT(readsolution(&file, &g), TRUE);
+		CHECK_MSG(g.sgflags & SGF_SETNAME,
+			  "a level-0 record with an empty password and a 256-byte name"
+			  " was not read as the set name, so this case proves nothing");
+		CHECK_MSG(strlen(g.name) == 255,
+			  "the set name came back %d bytes long, not 255 -- the clamp"
+			  " let the copy run one byte past the end of name[]",
+			  (int)strlen(g.name));
+		CHECK_MSG(g.passwd[4] == 'Q',
+			  "passwd[4] holds %02X, not the poison: a 255-byte set name"
+			  " was written through the end of name[] and into passwd",
+			  (unsigned char)g.passwd[4]);
+		fclose(file.fp);
 	    }
 	    remove(path);
 	}

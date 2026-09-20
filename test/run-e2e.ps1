@@ -299,7 +299,7 @@ Start-Case "-v prints the version number"
 # 🔴 KNOWN DEFECT, PINNED HERE ON PURPOSE -- and it is UPSTREAM's, not this
 # fork's. `git blame` puts it in the 2.3.1 import (929d9c6).
 #
-# The option specification at tworld.c:2205 is
+# The option specification at tworld.c:2256 is
 #     "abD:dFfHhL:lm:n:PpqR:rS:stVv:c"
 # in which `v:` declares that -v TAKES AN ARGUMENT. Its handler
 # (`case 'v': puts(VERSION); exit(EXIT_SUCCESS);`) takes none, and the built-in

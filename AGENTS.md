@@ -105,7 +105,7 @@ that is no longer true**: jc-57's direct cases for `movelaw_block()` and `movela
 fail the plain pass with real assertions. Escalating the whole 2026-09-11 census through `-Sanitize`
 found it catches **7 of 949 plain-pass survivors, 0.7%** — small, and not a reason to skip it.
 
-⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 23,463.
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 94% of the 23,479.
 Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
 than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
 The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.

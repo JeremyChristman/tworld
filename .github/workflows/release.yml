@@ -87,7 +87,50 @@ jobs:
         # -Exe rather than -Build: the static executable was just built above and
         # is the one being released, so the end-to-end layer should drive THAT
         # binary rather than building a second, different one.
-        run: powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Exe build-static\tworld2.exe -ResultsPath test-results
+        #
+        # 🔴 A SKIPPED LAYER EXITS 0 BY DESIGN, so the exit code alone is not
+        # enough here. ci.yml has asserted for a while that the Qt layer really
+        # ran; this workflow -- the one whose output the public downloads --
+        # trusted the exit code, which an audit caught.
+        #
+        # 🔴 THE LAYERS ARE NAMED RATHER THAN DEFAULTED, and that is not a way of
+        # excusing the Qt layer -- it is what makes the assertion mean anything
+        # HERE. This runner installs qt5-static, because that is what the shipped
+        # binary links, and qt5-static carries no pkg-config metadata: the Qt
+        # layer therefore SKIPS by design (test/run-qt-tests.ps1 documents this
+        # against the jc-49 release it once broke). A default run would print
+        # "green, but 1 layer(s) did NOT run" forever, so an "all green"
+        # assertion over the default set would fail every release -- caught in
+        # review before it shipped. Installing dynamic Qt5 beside qt5-static to
+        # make it run is the wrong trade: it puts a second Qt on the PATH of the
+        # job that builds the STATIC executable being released. The Qt layer runs
+        # on every push in ci.yml, on a runner with the right Qt.
+        #
+        # So: request the six layers this runner can provide, and require the
+        # summary's "all green", which appears only when every REQUESTED layer
+        # ran and passed.
+        #
+        # ⚠ BE PRECISE ABOUT WHAT THIS ADDS over the exit-code check above, since
+        # these comments are the record of what the gate means. Only the e2e and
+        # Qt layers can report a SKIP at all (they are the only writers of
+        # TW_SKIP_REPORT); unit, sanitize, golden, nofix and docs either run or
+        # fail. Qt is not requested here. So the one case this catches that the
+        # exit code does not is the e2e layer refusing a STALE executable -- which
+        # is exactly the shape that would ship a release whose end-to-end layer
+        # never drove the binary being released. A missing compiler or a missing
+        # -Exe target is a failure, not a skip, and the line above has it.
+        #
+        # ⚠ Tee-Object, not Out-String: the output has to reach the log AS IT
+        # HAPPENS. Buffering the whole suite into a variable leaves an empty step
+        # log exactly when the job times out mid-run, which is when it is needed.
+        run: |
+          $ErrorActionPreference = "Continue"
+          powershell -ExecutionPolicy Bypass -File run-tests.ps1 -Unit -Sanitize -E2E -Golden -NoFix -Docs -Exe build-static\tworld2.exe -ResultsPath test-results 2>&1 |
+            Tee-Object -Variable out
+          if ($LASTEXITCODE -ne 0) { throw "the test suite failed" }
+          if (($out -join "`n") -notmatch 'all green') {
+            throw "a requested layer did not run on the release runner (the summary did not say 'all green') - a release must not ship over a skipped layer"
+          }
 
       - name: Package
         # package.ps1 runs the unit tests again itself and refuses to package if

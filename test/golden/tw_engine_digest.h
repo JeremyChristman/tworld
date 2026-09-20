@@ -154,7 +154,7 @@ static void hash_state(u64 *h, gamestate const *st, int result)
 	hash_byte(h, st->map[i].bot.state);
     }
 
-    /* The creature list, walked the way generic/tile.c:497 walks it: id == 0
+    /* The creature list, walked the way generic/tile.c:502 walks it: id == 0
      * terminates. That is the renderer's convention and the only one reachable
      * from outside; the engines' private working lists are not. */
     if (st->creatures) {

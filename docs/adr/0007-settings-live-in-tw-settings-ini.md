@@ -31,7 +31,7 @@ forgiving in some ways and deliberately strict in others, and the differences ma
   running is overwritten, possibly within seconds.
 
   ⚠ **Corrected jc-54.** This bullet used to say "rewritten on a clean exit", and that had been
-  untrue since jc-31. There are six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:72`, three in
+  untrue since jc-31. There are six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:84`, three in
   `oshw-qt/TWMainWnd.cpp`, and `shutdownsystem()` in `tworld.c` — and the comment at `play.c:338`
   says why: a setting is written the instant it changes *because* a crash skips the atexit handler.
   The write frequency is not a detail. It is the whole reason the in-place truncating writer that

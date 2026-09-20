@@ -77,6 +77,16 @@ inversion (`==`↔`!=`). Deliberately **not** `<`→`>`: a sign reversal is a gr
 any test kills, so it pads the numerator with mutants that prove nothing, while every memory-safety
 defect this fork has shipped and fixed — jc-44, jc-45, jc-50, jc-51 — was an off-by-one.
 
+🔴 **THAT LAST SENTENCE IS THE HALF-TRUTH IN THIS ADR, and a blind audit called it (2026-09-20).**
+Those off-by-ones were in **operands and buffer sizes**, and a relational boundary shift models only
+some of them. For `ptr + k > end`, the dominant idiom in these parsers, ROR can only make the bound
+*stricter* — the dangerous direction is unreachable, because loosening means editing `end`, `k` or a
+declared array size. The audit found three real gaps there, all invisible to this census; each now
+has a case, and `openfileindir()`'s buffer has a `_Static_assert` instead, since no test on Windows
+can see a one-byte stack overflow. **Phase 2 is a constant/offset operator** (`+ k` → `+ k±1`, array
+dimensions, literal bounds). Until it exists, this census's percentage is not evidence about the
+operand off-by-one class, and `CLAUDE.md` §5 says so where the number is quoted.
+
 ## Consequences
 
 - **The number is reproducible and re-runnable.** 1,267 mutants over the sixteen sources the tests

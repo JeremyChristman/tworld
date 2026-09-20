@@ -616,11 +616,15 @@ int main(void)
 	 * ⚠ SCOPE, stated so nobody reads more into a green run than it earns.
 	 * This half is UNCONDITIONAL -- readpos() carries no #ifdef. The part
 	 * that NO_FIX_ROW32_CLONER actually guards is what happens when such a
-	 * cloner FIRES (mslogic.c:2612-2844, 2869, 4464), and that is NOT covered
-	 * here: building this file with -DNO_FIX_ROW32_CLONER still passes all 22
-	 * cases, which was measured, not assumed. Covering the firing half needs
-	 * a button, a clone machine and a creature template, and belongs in its
-	 * own case. Listed as a known gap in CLAUDE.md. */
+	 * cloner FIRES (mslogic.c:2715, :2888-2947, :2972), and this case does
+	 * not reach it.
+	 *
+	 * ⚠ THIS PARAGRAPH WAS STALE IN THREE WAYS and an audit caught it: the
+	 * three line numbers had all moved, "all 22 cases" is long out of date,
+	 * and the firing half IS covered now -- by "a cloner wired into ROW 32
+	 * still fires", further down this file, which is why run-nofix.ps1 lists
+	 * NO_FIX_ROW32_CLONER among the toggles a named unit case guards. Keep
+	 * the scope note; it is still true of THIS case. */
 	int found = 0, invalid = 0;
 	fix_init(&lv);
 	fix_border(&lv);

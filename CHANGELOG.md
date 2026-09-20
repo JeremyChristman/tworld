@@ -59,6 +59,25 @@ unit, sanitize, golden and matrix layers. Both are now guarded by named cases th
 removal and under the toggle; the same two cases also kill 12 of 237 recorded `mslogic.c` mutation
 survivors. `FORK.md` item 44.
 
+### Fixed — three guards the mutation census structurally cannot reach
+
+A sixth audit judged the repository "mostly true, oversold in exactly one dimension": for
+`ptr + k > end`, a relational boundary shift can only make a bound *stricter*, so the committed
+census is blind in the dangerous direction. Three real gaps sat there, each surviving every layer
+when loosened — `encoding.c`'s optional-field clamp (a read past a downloaded record),
+`solution.c`'s set-name clamp against `name[256]`, and `openfileindir()`'s `PATH_MAX + 1` buffer.
+The first two now have cases at the exact disagreeing input; the third has a `_Static_assert`,
+because no test on Windows can see a one-byte stack overflow. The blind spot is documented where the
+percentage is quoted, and a constant/offset operator is ADR 0013's Phase 2. `FORK.md` item 45.
+
+Also: `series.c`'s optional-field loop — correct as shipped, and now pinned by a case, because
+loosening it by one made two trailing bytes parse as a zero-length field and wipe the level's
+password; `release.yml` now refuses a release over a skipped test
+layer, which `ci.yml` already did; a maximal trap-wiring case covers the stride loops; six stale
+`file:line` citations corrected, one of them repeated in three documents; and a scope note that had
+gone stale in three separate ways. `series.c:234` and `:253` were measured to be equivalent mutants
+and are recorded as such.
+
 ### Measured
 
 - **The published jc-58 binary replays the whole collection identically** to a local build of the

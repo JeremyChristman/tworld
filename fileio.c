@@ -527,6 +527,34 @@ int openfileindir(fileinfo *file, char const *dir, char const *filename,
     char	buf[PATH_MAX + 1];
     int		m, n;
 
+    /* MOD (Jeremy): tie the buffer's size to the guard below, at COMPILE time.
+     *
+     * The guard accepts m + n + 1 == PATH_MAX, and the join then writes
+     * buf[n] = separator followed by m + 1 bytes ending at index m + n + 1 ==
+     * PATH_MAX -- so the buffer needs PATH_MAX + 1 entries and is EXACTLY that
+     * size. An audit shrank it by one and every layer stayed green: the write
+     * is one byte past a stack array, which no behavioral assertion can see
+     * (the string reads back correctly either way), and ASan cannot run on this
+     * toolchain -- mingw-w64 ships no libasan, so the Linux job is the only
+     * place that would catch it.
+     *
+     * ⚠ AND THE REASON UBSAN MISSES IT IS NARROWER THAN "IT DOES NOT WATCH
+     * ARRAYS", which is what this comment said first: -fsanitize=undefined
+     * includes -fsanitize=bounds, and that DOES instrument indexed accesses --
+     * it catches shrinking state.h's traps[256], measured. What it does not
+     * instrument is a library call, and the overflowing write here is the
+     * memcpy below. The only indexed write, buf[n++], stays in range.
+     *
+     * A test cannot close that on Windows. This can: the relationship is a
+     * constant expression, so the compiler refuses the shrink outright,
+     * everywhere, and it cannot rot. test/fileio_test.c already drives the
+     * maximal accepted path (n + D + 1 == PATH_MAX) for ASan's benefit. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    _Static_assert(sizeof buf == PATH_MAX + 1,
+		   "openfileindir's buffer must hold PATH_MAX + 1 bytes: the guard"
+		   " accepts m + n + 1 == PATH_MAX and the join writes that index");
+#endif
+
     if (!dir || !*dir || strchr(filename, DIRSEP_CHAR))
 	return fileopen(file, filename, mode, msg);
 

@@ -563,6 +563,17 @@ function Get-CodeMask([string]$text) {
 # test kills, so it pads the numerator with mutants that prove nothing. Every
 # memory-safety defect this fork has shipped and fixed -- jc-44, jc-45, jc-50,
 # jc-51 -- was an off-by-one, which is what a boundary shift models.
+#
+# 🔴 BUT ONLY IN ONE DIRECTION, AND THAT LIMIT BELONGS HERE RATHER THAN IN A
+# FOOTNOTE. For `ptr + k > end` -- the idiom these parsers are made of -- a
+# boundary shift can only make the bound STRICTER. Loosening it means mutating
+# an operand (`end` -> `end + 1`, `k` -> `k - 1`, or a declared buffer size), and
+# nothing here does that, so the census cannot ask the question those four
+# defects were. A blind audit (2026-09-20) found three real gaps in exactly that
+# blind spot; they have cases now, but they were found BY HAND. Worse, at
+# encoding.c's optional-field clamp the only ROR edit available (`>` -> `>=`) is
+# a provable no-op, so the census files that site as a survivor forever while
+# never touching the mutation that matters. See docs/adr/0013, "Phase 2".
 function Get-RorMutants([string]$text, $mask, $compiledLines, [string]$file) {
     $out = New-Object Collections.ArrayList
     $n = $text.Length

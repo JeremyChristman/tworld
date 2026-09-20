@@ -182,8 +182,8 @@ static int chipy(void) { return chippos() / CXGRID; }
 
 /* 🔴 DO NOT USE chipisalive() FROM A TEST. It is `getchip()->id == Chip`, and
  * between ticks Chip's id is legitimately Pushing_Chip (0x70) whenever he is
- * straining against something: lxlogic.c:1737 sets it during display
- * preparation at the END of a tick, and lxlogic.c:1628 resets it to Chip at the
+ * straining against something: lxlogic.c:1748 sets it during display
+ * preparation at the END of a tick, and lxlogic.c:1640 resets it to Chip at the
  * START of the next one.
  *
  * So a test, which by definition looks between advancegame() calls, sees "not

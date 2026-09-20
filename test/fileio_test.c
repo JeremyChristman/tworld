@@ -215,7 +215,11 @@ int main(void)
 	 * `m + n + 1 > PATH_MAX` is exactly the bound, and one byte looser writes
 	 * one byte past a stack array. combinepath() had its exact-fit case
 	 * above; this twin had none, and an adversarial audit loosened it with
-	 * every layer green -- UBSan included, which does not watch arrays.
+	 * every layer green -- UBSan included, because the overflowing write is a
+	 * memcpy and -fsanitize=bounds instruments indexed accesses, not library
+	 * calls. (It is NOT that UBSan ignores arrays: it catches shrinking
+	 * state.h's traps[256], measured. See openfileindir()'s own comment, where
+	 * a _Static_assert now ties the buffer's size to the guard.)
 	 *
 	 * Both forms fail to open a file that does not exist, so the return value
 	 * is not the oracle. Neither is errno, as it turned out: a review caught

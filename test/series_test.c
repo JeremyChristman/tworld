@@ -287,7 +287,7 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(133);
+    tw_expect_atleast(139);
 
     tw_case("every committed fuzz corpus input still reads safely");
     {
@@ -527,6 +527,87 @@ int main(void)
 	for (k = 0 ; series.games && k < series.count ; ++k)
 	    free(series.games[k].leveldata);
 	free(series.games);
+    }
+
+    tw_case("🔴 TWO trailing bytes in the field block are not read as a field");
+    {
+	/* `while (data + 2 < dataend)` is the loop over [type][size][payload]
+	 * records, and it must stop with two bytes left: a field header needs
+	 * two bytes AND a payload position after them. An audit loosened it to
+	 * `data + 1 < dataend` and every layer stayed green.
+	 *
+	 * The damage is not a read past the record -- those two bytes are
+	 * present. It is that they get PARSED. A trailing pair whose first byte
+	 * is 6 becomes a zero-length password field, and `case 6` ends with
+	 * `game->passwd[n] = '\0'` with n == 0, wiping the real password read a
+	 * moment earlier; the level is then refused for having no password. So
+	 * a level that loads today would stop loading, which for a downloaded
+	 * set is the whole set past that point.
+	 *
+	 * The two bytes are added INSIDE the declared block (its size word is
+	 * patched) so the record stays self-consistent and raises no warning --
+	 * otherwise "inconsistent size data" would be the thing under test. */
+	fix_init(&lv);
+	fix_border(&lv);
+	lv.number = 7;
+	lv.time = 120;
+	strcpy(lv.name, "TRAILER");
+	strcpy(lv.passwd, "WXYZ");
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	rec = fix_build(&lv, &size);
+	CHECK_MSG(rec != NULL, "the fixture builder returned nothing");
+	if (rec) {
+	    unsigned char *wide = malloc((size_t)size + 2);
+	    int upperlen = rec[8] | (rec[9] << 8);
+	    int lowerpos = 10 + upperlen;
+	    int lowerlen = rec[lowerpos] | (rec[lowerpos + 1] << 8);
+	    int metapos = lowerpos + 2 + lowerlen;
+	    int meta = rec[metapos] | (rec[metapos + 1] << 8);
+	    CHECK_MSG(metapos + 2 + meta == size,
+		      "the fixture's field block is not where this case thinks it is"
+		      " (block ends at %d, record is %d) -- do not trust the result",
+		      metapos + 2 + meta, size);
+	    if (wide && metapos + 2 + meta == size) {
+		memcpy(wide, rec, (size_t)size);
+		wide[metapos] = (unsigned char)((meta + 2) & 0xFF);
+		wide[metapos + 1] = (unsigned char)(((meta + 2) >> 8) & 0xFF);
+		wide[size] = 6;		/* would be a password field ... */
+		wide[size + 1] = 0;	/* ... of length zero */
+		r = readrecord(wide, size + 2, &game);
+		CHECK_MSG(r == TRUE,
+			  "a level with two trailing bytes in its field block was"
+			  " REFUSED: the loop read them as a zero-length password"
+			  " field and wiped the password it had just read");
+		if (r) {
+		    CHECK_STR(game.passwd, "WXYZ");
+		    CHECK_STR(game.name, "TRAILER");
+		    CHECK_MSG(warn_count == 0,
+			      "the record raised %d warning(s); it is meant to be"
+			      " self-consistent", warn_count);
+		    free(game.leveldata);
+		}
+	    }
+	    free(wide);
+	    free(rec);
+	}
+
+	/* ⚠ TWO NEIGHBORING BOUNDS ARE EQUIVALENT MUTANTS -- do not spend an
+	 * afternoon on them. An audit reported all three of this function's
+	 * pointer bounds as survivors; only the loop above is reachable.
+	 *
+	 *   series.c:234  `data + 2 >= dataend` -> `data + 1 >=`   (loosened)
+	 *   series.c:253  `data + 2 >  dataend` -> `data + 3 >`    (tightened)
+	 *
+	 * Each disagrees with the shipped form on exactly one input shape: a
+	 * record with two bytes left at that point. MEASURED, baseline against
+	 * each mutant, on both shapes -- a 12-byte record with an empty upper
+	 * layer, and a 16-byte record whose field block is the size word alone:
+	 * readrecord() returns FALSE with one errmsg and no warning in ALL
+	 * THREE builds. The reason is structural rather than lucky: after the
+	 * loosened bound there are no bytes left for the next check to accept,
+	 * and a record whose field block is empty carries no password, which
+	 * the function refuses a few lines later. Nothing observable differs,
+	 * so no case here can kill them. */
     }
 
     tw_case("🔴 a .dat whose SIGNATURE is wrong is refused; the right one is read");

@@ -9,7 +9,7 @@
  * 🔴 AND IT IS THE ONE FILE THE PROGRAM CAN DESTROY. Every other parser here
  * only READS what a stranger wrote; this module rewrites a file the user owns,
  * in place, many times per session -- savesettings() is called from play.c:340,
- * TWTheme.cpp:72, three sites in TWMainWnd.cpp, and shutdownsystem() in
+ * TWTheme.cpp:84, three sites in TWMainWnd.cpp, and shutdownsystem() in
  * tworld.c. What it does when that write goes wrong is not a display detail.
  *
  * WHAT IS PINNED HERE, and why each one is not obvious:

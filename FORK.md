@@ -968,7 +968,7 @@ exactly what's mine:
 
    Three things made it worse than it sounds:
 
-   - **It is not an exit-time write.** Six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:72`,
+   - **It is not an exit-time write.** Six call sites — `play.c:340`, `oshw-qt/TWTheme.cpp:84`,
      three in `oshw-qt/TWMainWnd.cpp`, and `shutdownsystem()` — write the file the instant a
      setting changes, *because* a crash skips the atexit handler. ADR 0007 and `CLAUDE.md` both said
      "rewritten on a clean exit", which had been untrue since jc-31. Both are corrected.
@@ -1665,6 +1665,82 @@ exactly what's mine:
    against the `ee3bd25` census: **12 of 237 recorded ROR survivors now die** -- the random force
    floor's consumer and `keepdir` predicate, six sites along the teleport path, a block-push guard
    and the slip-list lookup -- none of them aimed at. A scenario walks the whole call chain.
+
+
+45. **Blind audit #6: the census cannot express the defect class this fork is made of**
+   (`encoding.c` and `solution.c` cases, `fileio.c`, `series.c` case,
+   `.github/workflows/release.yml`, `mutate.ps1`, `docs/adr/0013`, `CLAUDE.md`, five citations).
+   Not shipped code except one compile-time assertion; it rides with the next release.
+
+   A sixth double-blind audit ran 69 hand-aimed mutants in four operator classes and judged the
+   claim **"mostly true, and oversold in exactly one dimension"** -- 51 of 69 killed, and **24 of 24
+   guard DELETIONS killed**, which is a stronger operator than the census uses. Its gate attacks all
+   failed: a blanked witness, a corrupted golden digest, a deleted baseline row, a removed settings
+   key and a deliberately red control build were each caught, the last by `run-nofix.ps1` refusing
+   to measure. Both self-tests behaved. Every documented count and all 21 `file:line` citations in
+   `CLAUDE.md` were verified exact by execution.
+
+   🔴 **THE ONE THAT MATTERS: for `ptr + k > end`, a relational boundary shift can only make the
+   bound STRICTER.** Loosening means mutating an operand, and `mutate.ps1` ships ROR only -- so the
+   census is blind in the dangerous direction, at the idiom these parsers are built from. Three real
+   gaps sat in that blind spot, all reproduced here (each SURVIVED plain and `-Sanitize`):
+
+   | site | loosened | now caught by |
+   |---|---|---|
+   | `encoding.c:278` optional-field clamp | `> dataend` → `> dataend + 1` | a case at the exact disagreeing input |
+   | `solution.c:529` set-name clamp | `> 255` → `> 256` | a case that poisons `passwd[4]` |
+   | `fileio.c:527` `buf[PATH_MAX + 1]` | shrunk by one | a `_Static_assert` |
+
+   ⚠ **At the `encoding.c` clamp the ROR mutant is an EQUIVALENT mutant** (`>` → `>=` assigns a
+   value already equal), so the census files that site as a permanent survivor while never asking
+   the question that matters. The clamp's existing case declares 250 bytes with 4 present, so it
+   fires in any build that has a clamp at all; the disagreeing input is a field declaring exactly
+   ONE more byte than remains. Field 10's count is `size / 2`, so the parser's reach reads out as a
+   number: 1 creature clamped, 2 unclamped, the second assembled from a poison byte past the record.
+
+   🔴 **`fileio.c` got an assertion rather than a test, and that was the honest answer.** The guard
+   accepts `m + n + 1 == PATH_MAX` and the join then writes index `PATH_MAX`, so the buffer is
+   exactly right and one byte short is an out-of-bounds WRITE. No behavioral assertion can see it
+   (the string reads back correctly either way), UBSan does not watch arrays, and mingw-w64 ships no
+   `libasan` -- confirmed, and `-fstack-protector-all`, `-D_FORTIFY_SOURCE=2 -O2` and both together
+   were measured NOT to catch it either. `test/fileio_test.c` already drove the maximal accepted
+   path, so the audit's "no committed test has an input of this shape" was wrong -- the input is
+   there for ASan's benefit on the Linux job. What was missing was a guard that works everywhere:
+   `_Static_assert(sizeof buf == PATH_MAX + 1, ...)` makes the shrink a compile error and cannot rot.
+
+   **Also fixed:** `series.c`'s optional-field loop (`while (data + 2 < dataend)`) -- loosened, two
+   trailing bytes get parsed as a zero-length field, and a trailing `6` wipes the password the
+   parser just read, so a level that loads today stops loading; now a case. `release.yml` trusted
+   the exit code where `ci.yml` asserts no layer skipped -- a skip exits 0 by design, and that is the
+   workflow whose output the public downloads. Nothing drove more than four trap or cloner wirings
+   (`traps[256]` shrunk to `[4]` survived everything); a maximal-count case covers the stride now,
+   and the sanitizer catches the shrink. Six stale `file:line` citations, one of them repeated in
+   THREE documents; and a scope note in `mslogic_test.c` that was stale three ways -- its line
+   numbers, its case count, and its claim that the row-32 firing half is untested, which
+   `CLAUDE.md` §5 still repeated although a case has guarded it for builds.
+
+   **Defended, with measurements:**
+   - **`series.c:234` and `:253` are EQUIVALENT MUTANTS.** Each disagrees with the shipped form on
+     exactly one record shape; both shapes were built and run against the baseline and each mutant:
+     `readrecord()` returns FALSE with one errmsg and no warning in all three builds. After the
+     loosened bound no bytes remain for the next check, and a record whose field block is empty
+     carries no password, which the function refuses regardless. Recorded in `series_test.c`.
+   - **A line-number resolver in `verify-docs.ps1` was NOT added.** Measured against all six stale
+     citations (five from the audit, a sixth found by the review of this change -- in the very
+     sentence the diff had just corrected, one clause over): a resolver checking that each
+     `file:line` exists and is non-blank would have caught exactly ONE (`tworld.c:2205`, a blank
+     line). The other five point at real code, just the wrong line, which only a semantic check
+     could tell -- and that is the shape of check this repository already rejected for crying wolf.
+     The stop rule of 2026-09-14 applies. ⚠ The sixth is the more useful datum: a line number one
+     clause away from one being fixed still went unnoticed, so treat a citation near an edit as
+     suspect and re-resolve the whole sentence, not the number you came for.
+   - **`cmdline.c` has no test and now says so** rather than getting one at the end of a long
+     session. It is named in `CLAUDE.md` §5 with why it ranks above the other four untested files.
+
+   **Not done, and it is the next step:** the constant/offset operator (`+ k` → `+ k±1`, array
+   dimensions, literal bounds). It would have surfaced all three gaps mechanically. It is a new
+   mutant class with its own runtime, INVALID rate and baseline schema, and shipping it unmeasured
+   would be the opposite of what this instrument is for. ADR 0013 calls it Phase 2.
 
 
 ## Testing

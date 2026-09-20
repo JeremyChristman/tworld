@@ -129,7 +129,7 @@ int main(void)
     int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(108);
+    tw_expect_atleast(114);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {
@@ -789,6 +789,94 @@ int main(void)
 		  " parser built %d trap(s) from it -- it read %d bytes past the"
 		  " end of the record. The clamp at encoding.c is gone.",
 		  teststate.trapcount, teststate.trapcount * 10);
+    }
+
+    tw_case("🔴 a field declaring EXACTLY one byte more than remains is still clamped");
+    {
+	/* The case above declares 250 bytes with 4 present, so the clamp fires
+	 * in any build that has one at all. It cannot see the clamp being
+	 * LOOSENED BY ONE -- and an audit loosened it (`> dataend` to
+	 * `> dataend + 1`) and watched all seven layers print "all green".
+	 *
+	 * ⚠ THIS IS NOT THE MUTATION THE PROJECT RECORDED AS EQUIVALENT. That
+	 * one is the ROR edit `>` to `>=`, which is a provable no-op here: it
+	 * assigns `size = dataend - data` when size already equals it. Shifting
+	 * the OPERAND is a different question, and the census cannot ask it --
+	 * mutate.ps1 generates ROR only, and for `data + size > dataend` a
+	 * boundary shift can only make the bound STRICTER. See CLAUDE.md §5.
+	 *
+	 * The disagreeing input is a field declaring exactly one byte more than
+	 * the record holds. Field 10 is the creature list and its count is
+	 * `size / 2`, so the parser's reach comes out as a NUMBER rather than a
+	 * crash: 3 bytes present, 4 declared. Clamped, that is 3/2 = 1 creature.
+	 * Unclamped it is 2, and the second one is assembled half from the
+	 * poison byte sitting one past the end of the record. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;    /* level number */
+	put16(raw + n, 0);      n += 2;    /* time */
+	put16(raw + n, 0);      n += 2;    /* chips */
+	put16(raw + n, 1);      n += 2;    /* detail */
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 5);      n += 2;    /* metadata: 2 header + 3 payload */
+	raw[n++] = 10;                     /* field type: creature list */
+	raw[n++] = 4;                      /* the lie: one byte more than remains */
+	raw[n++] = 5; raw[n++] = 5;        /* one whole creature at (5,5) */
+	raw[n++] = 6;                      /* half of a second one */
+	raw[n] = 0x5A;                     /* POISON, one byte past the record */
+
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.crlistcount == 1,
+		  "a field declaring one byte more than the record holds built %d"
+		  " creature(s), not 1 -- the parser read past the end of the"
+		  " record and took the poison byte with it",
+		  teststate.crlistcount);
+    }
+
+    tw_case("🔴 a field carrying the MAXIMUM number of trap and cloner wirings loads them all");
+    {
+	/* Nothing drove more than four of either: shrinking state.h's
+	 * traps[256] to traps[4] survived every layer, so the stride loops were
+	 * exercised only at their first entries. A field size is one byte, so
+	 * 25 traps (250 bytes) and 31 cloners (248) are the most a level can
+	 * carry -- the arrays are sized 256 and the margin is real, which is
+	 * why this is a coverage case and not a bounds fix. The LAST entry is
+	 * what the stride has to get right. */
+	int t;
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 2 + 250);   n += 2;	/* one field: 25 trap wirings */
+	raw[n++] = 4;
+	raw[n++] = 250;
+	for (t = 0 ; t < 25 ; ++t) {		/* button (t,1) -> trap (t,2) */
+	    put16(raw + n, t);     n += 2;
+	    put16(raw + n, 1);     n += 2;
+	    put16(raw + n, t);     n += 2;
+	    put16(raw + n, 2);     n += 2;
+	    raw[n++] = 0; raw[n++] = 0;
+	}
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_INT(teststate.trapcount, 25);
+	if (teststate.trapcount == 25) {
+	    CHECK_INT(teststate.traps[24].from, 24 + CYGRID * 1);
+	    CHECK_MSG(teststate.traps[24].to == 24 + CYGRID * 2,
+		      "the 25th trap wiring read back as %d, not (24,2) -- the"
+		      " stride is wrong past the first few entries",
+		      teststate.traps[24].to);
+	}
     }
 
     tw_case("...and a well-formed optional field is still parsed in full");
