@@ -6,9 +6,9 @@
 # the OPERANDS around it are -- the direction ROR structurally cannot reach.
 # A row is replaced only by a run of ITS operator; each carries the commit
 # it was measured at.
-# last run: b41991fa181794007ee6d9d86cda3a4fad5b6783 (OFF)
+# last run: 9f2b8c68aa3e59e3d87955829e7c12e68c98c41d (OFF, only encoding.c)
 file	operator	killed	survived	invalid	timeout	flaky	error	commit
-encoding.c	OFF	49	7	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+encoding.c	OFF	54	2	0	0	0	0	9f2b8c68aa3e59e3d87955829e7c12e68c98c41d
 encoding.c	ROR	27	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
 fileio.c	OFF	26	48	2	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
 fileio.c	ROR	23	18	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62

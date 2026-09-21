@@ -1836,6 +1836,34 @@ exactly what's mine:
    into a build failure, which is exactly what it was put there to do.
 
 
+47. **Batch 1 of the OFF queue: `encoding.c` closed, 49 of 56 -> 54 of 56** (`test/encoding_test.c`,
+   `mutate.ps1`). Tests and tooling; it rides with the next release.
+
+   The first work item 46's operator produced. Five bounds whose OPERAND could move by one with the
+   whole suite green, each now pinned at the single input the two forms disagree about: one
+   unconsumed byte in a layer (`:212`), one missing cell in each of the two layers (`:215`, `:266` --
+   the same guard written twice, and the census reported both), tile code `0x6F` decoding in both
+   layers (`:254`; only the first INVALID code was pinned, never the last valid one), and a
+   three-byte trailing field the optional-field loop could skip (`:275`).
+
+   ⚠ **Four of the five use the warning COUNT as the oracle, so each record is otherwise perfect** --
+   both layers exactly 1,024 cells unless the case is about a layer, and an empty metadata block. A
+   record that warns for a second reason turns these into cases that pass either way, which is the
+   commonest way a boundary test proves nothing here.
+
+   Measured with the queue's own loop (`-Recheck -Module encoding.c`, about a minute): **5 of 7
+   recorded survivors now die**, and the two that remain are exactly the two written up in the test
+   file as equivalent -- `id < -1` is caught by the unsigned clause beside it, and the clamp's `- 1`
+   twin assigns a value `size` already holds. ⭐ The census agreed with the write-up without being
+   told: an independent review derived both equivalence arguments before reading them.
+
+   🔧 **`-UpdateBaseline` now accepts a `-Module` run** and rewrites only the rows it measured. That
+   refusal predated the row-per-(file, operator) schema; with a queue worked one file at a time it
+   meant the baseline could only be refreshed by a run of hours, so it went stale instead -- and
+   `CLAUDE.md` points at it in bold as the place the numbers live. A full run of an operator still
+   replaces every row it has, so a source that stops being censused stops appearing.
+
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point.** It runs **six** layers: unit,
