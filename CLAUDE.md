@@ -730,8 +730,11 @@ powershell -ExecutionPolicy Bypass -File mutate.ps1             # ~30 min
 
 Coverage says a line was executed. **Mutation says whether anything would have noticed if the line
 were wrong**, which is the question the check count and the coverage percentages both dodge.
-`mutate.ps1` breaks each source on purpose — 1,267 single-token edits over the sixteen sources the
-tests compile — and counts how often the suite fails. See
+`mutate.ps1` breaks each source on purpose — about 1,270 ROR edits over the sixteen sources the
+tests compile, and roughly twice that under OFF — and counts how often the suite fails. ⚠ That
+figure is deliberately approximate: it moves whenever a comparison is added anywhere in a censused
+source (adding one `_Static_assert` moved it by one), nothing checks it, and every run prints the
+exact count before it starts. See
 [`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md) for why this is
 a committed harness rather than an audit.
 
@@ -743,18 +746,43 @@ hand, aimed at guards. This is a mechanical census, and its blended rate is a fu
 operator mix — turning on a second operator moves the headline without one thing about the suite
 changing. The two numbers measure different quantities. Read the per-file column.
 
-🔴 **AND KNOW THE ONE CLASS ROR CANNOT EXPRESS, BECAUSE IT IS THIS FORK'S OWN CLASS.** For the idiom
-that dominates these parsers — `ptr + k > end` — a boundary shift can only make the bound
-**stricter**. Loosening it means mutating an OPERAND (`end` → `end + 1`, `k` → `k - 1`, or a buffer's
-declared size), and no operator here does that. Measured by a blind audit and reproduced: three real
-gaps sat outside the census's reach — `encoding.c`'s optional-field clamp (a demonstrated read past
-a downloaded record), `openfileindir()`'s `PATH_MAX + 1` buffer, and `solution.c`'s set-name clamp
-against `name[256]`. Each is now covered by a case, and the `fileio.c` one by a `_Static_assert`
-that makes the shrink a compile error. **So do not read the census percentage as coverage of the
-off-by-one class.** It measures relational boundaries; operand off-by-ones are measured by hand
-until a constant/offset operator exists. ⚠ The ROR mutation at that clamp (`>` → `>=`) IS an
-equivalent mutant — it assigns a value that is already equal — which is why the census files it as a
-permanent survivor and why "survivor" there never pointed at the real hole.
+🔴 **TWO OPERATORS, AND THE SECOND ONE EXISTS BECAUSE THE FIRST IS BLIND IN THE DANGEROUS
+DIRECTION.** For the idiom that dominates these parsers — `ptr + k > end` — a relational boundary
+shift can only make the bound **stricter**. Loosening it means mutating an OPERAND, which ROR cannot
+do. A blind audit demonstrated the cost: three real gaps outside the census's reach, one of them a
+demonstrated read past a downloaded level record, all found by hand (`FORK.md` item 45).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -Operator OFF -Module encoding.c   # one file
+powershell -ExecutionPolicy Bypass -File mutate.ps1 -Operator OFF -UpdateBaseline      # HOURS
+```
+
+`OFF` injects an offset on a comparison's right-hand operand: `X > end` becomes `X > (end) + 1` and
+`X > (end) - 1`. **The default is still ROR alone** — every figure against the committed baseline is
+a ROR census, and folding a second operator into the default would move the headline without one
+thing about the suite changing. OFF yields about twice as many mutants, so its census is a run of
+hours; the baseline keeps a row per file AND operator, each with its own commit, and a run replaces
+only the rows of the operators it measured. ⚠ The committed file takes that shape on the next
+`-UpdateBaseline` run — until then it is the older one, which the writer reads too. See
+[`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
+
+⚠ **Read the two rates as answers to different questions, never as one number.** ROR asks whether
+the boundary is pinned; OFF asks whether the operands around it are.
+
+⭐ **OFF's survivors are the queue it was built to produce, and they are not yet worked.** First run,
+`encoding.c`: 56 mutants, 0 invalid, 49 killed. Of the 7 survivors, 2 are equivalent (the clamp's
+`- 1` twin assigns a value already equal; `id < 0` → `< -1` is caught by the unsigned test beside
+it). The other **five** are real and cheap-looking: nothing asserts the LAST cell of the map
+(`pos < CXGRID * CYGRID` minus one, at two sites), nothing pins the LAST valid tile id (only the
+first invalid one), the optional-field loop can stop one field early, and a decode loop can run one
+cell short. Start there.
+
+⚠ **It reads C++ carefully, and that took three exclusions, each measured.** A template argument
+list is not two comparisons, `::` is not the end of an expression, and a `std::map` iterator has no
+`operator+`. Before those, `settings.cpp` produced 88 mutants of which over 60% could not compile;
+it now produces 40, **none** invalid. 🔴 And `-MaxInvalidRate` is not the backstop it looks like: it
+is computed over the whole run, so one badly-parsed file hid under a tree-wide rate near 2%. **Read
+the per-file INVALID column.**
 
 ⚠ **`-SelfTest` is not optional before believing a census.** It plants FIVE mutants whose verdicts
 are known in advance — one that must be killed, one that must not compile, one that must survive

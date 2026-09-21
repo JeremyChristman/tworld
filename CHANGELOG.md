@@ -59,6 +59,18 @@ unit, sanitize, golden and matrix layers. Both are now guarded by named cases th
 removal and under the toggle; the same two cases also kill 12 of 237 recorded `mslogic.c` mutation
 survivors. `FORK.md` item 44.
 
+### Added — a second mutation operator, so the census can ask the question it could not
+
+`mutate.ps1 -Operator OFF` injects an offset on a comparison's right-hand operand (`X > end` becomes
+`X > (end) + 1` and `X > (end) - 1`). That is the direction a relational boundary shift structurally
+cannot reach, and the class four of this fork's shipped memory-safety fixes belong to. First run, on
+`encoding.c`: 56 mutants, 0 invalid, 49 killed — including, generated mechanically, the exact
+mutation a blind audit had to find by hand. The default stays ROR alone, since every figure quoted
+against the baseline is a ROR census and OFF is about twice the mutants; the baseline now keeps a
+row per file and operator, each with the commit it was measured at. `-SelfTest` checks the generator
+itself against a fixed probe, which caught a wrong expectation on its first run. ADR 0013 Phase 2,
+`FORK.md` item 46.
+
 ### Fixed — three guards the mutation census structurally cannot reach
 
 A sixth audit judged the repository "mostly true, oversold in exactly one dimension": for

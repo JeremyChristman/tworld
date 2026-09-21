@@ -77,20 +77,56 @@ inversion (`==`↔`!=`). Deliberately **not** `<`→`>`: a sign reversal is a gr
 any test kills, so it pads the numerator with mutants that prove nothing, while every memory-safety
 defect this fork has shipped and fixed — jc-44, jc-45, jc-50, jc-51 — was an off-by-one.
 
-🔴 **THAT LAST SENTENCE IS THE HALF-TRUTH IN THIS ADR, and a blind audit called it (2026-09-20).**
+🔴 **THAT LAST SENTENCE WAS THE HALF-TRUTH IN THIS ADR, and a blind audit called it (2026-09-20).**
 Those off-by-ones were in **operands and buffer sizes**, and a relational boundary shift models only
 some of them. For `ptr + k > end`, the dominant idiom in these parsers, ROR can only make the bound
 *stricter* — the dangerous direction is unreachable, because loosening means editing `end`, `k` or a
 declared array size. The audit found three real gaps there, all invisible to this census; each now
 has a case, and `openfileindir()`'s buffer has a `_Static_assert` instead, since no test on Windows
-can see a one-byte stack overflow. **Phase 2 is a constant/offset operator** (`+ k` → `+ k±1`, array
-dimensions, literal bounds). Until it exists, this census's percentage is not evidence about the
-operand off-by-one class, and `CLAUDE.md` §5 says so where the number is quoted.
+can see a one-byte stack overflow.
+
+**Phase 2 ships `OFF`, offset injection on a comparison's right-hand operand** (2026-09-20).
+`X > end` becomes `X > (end) + 1` and `X > (end) - 1`: both directions, because a bound can be wrong
+either way and a suite that pins a boundary has to notice both. The left operand is deliberately not
+mutated — shifting either side by one covers the same ground, and a backward extent scan is where a
+character scanner earns its bugs. It skips an operand that continues onto the next line (a `from`
+field with a newline would corrupt the per-mutant TSV), an operand a comment or string stands in or
+in front of, an operand containing a tab (same reason as the newline), `NULL` (meaningless, and
+ill-typed in the C++ build), anything over 60 characters, and three C++ shapes that are not
+comparisons at all: a template argument list, a `::` scope operator, and an iterator endpoint such
+as `settings.end()`, which has no `operator+`. Those three were measured, not anticipated —
+`settings.cpp` produced 88 mutants of which over 60% could not compile, and produces 40 with none
+invalid now. ⚠ `-MaxInvalidRate` did not catch that: it is computed over the whole run, and one
+badly-parsed translation unit hid under a tree-wide rate near 2%.
+
+- **It asks the question ROR could not, and the first run proved it.** `encoding.c`: 56 mutants, **0
+  invalid**, 49 killed (88%) — including the audit's own mutation, `dataend` → `(dataend) + 1`,
+  which the new case kills. Its `- 1` twin survives and is an equivalent mutant (it assigns a value
+  already equal).
+- **The default stays ROR alone**, and OFF is asked for by name. Every figure quoted against the
+  committed baseline is a ROR census; folding a second operator into the default would move the
+  headline without one thing about the suite changing — the exact misreading this ADR's
+  "Consequences" already warns about. OFF also produces about twice as many mutants, so a census is
+  a run of hours rather than half an hour.
+- **The baseline keeps one row per file AND operator, each with the commit it was measured at**, and
+  a run replaces only the rows of the operators it measured. ⚠ **The committed file still shows the
+  pre-Phase-2 shape** — the old `operators` column, eight fields, one header commit — until the next
+  `-UpdateBaseline` run rewrites it; the writer reads both, and carries a legacy row's commit over
+  from the header rather than leaving the row a field short. Otherwise recording one operator would
+  silently delete the other's numbers, and a single header commit would misdate whichever half was
+  older.
+- **`-SelfTest` checks the GENERATOR, not only the pipeline.** A canary proves a mutant that reached
+  disk was scored correctly; it says nothing about mutants the scanner never produced or produced
+  wrong, which is where OFF's whole risk lives. It is fed a fixed probe whose answer is written into
+  the script, including the four exclusions. That check earned itself immediately: it failed on
+  first run because the expectation was wrong, not the scanner.
 
 ## Consequences
 
-- **The number is reproducible and re-runnable.** 1,267 mutants over the sixteen sources the tests
-  compile, in roughly half an hour.
+- **The number is reproducible and re-runnable.** About 1,270 ROR mutants over the sixteen sources
+  the tests compile, in roughly half an hour; an OFF census is about twice the mutants and a run of
+  hours. ⚠ Approximate on purpose — the count moves with any comparison added to a censused source,
+  and the run prints the exact figure.
 - **🔴 The result is NOT comparable to the 2026-09-08 audit's 45%, and nothing may quote
   "45% → X%".** That figure came from 233 hand-chosen mutations aimed at guards. This is a
   mechanical census whose blended rate is a function of the operator mix and the site distribution —

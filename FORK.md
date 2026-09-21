@@ -1743,6 +1743,92 @@ exactly what's mine:
    would be the opposite of what this instrument is for. ADR 0013 calls it Phase 2.
 
 
+46. **The census can ask the operand question now: `mutate.ps1 -Operator OFF`** (`mutate.ps1`,
+   `docs/adr/0013`, `CLAUDE.md`). Tooling, not shipped code; it rides with the next release.
+
+   Item 45's finding was that the instrument, not the suite, was the weak part: for `ptr + k > end`
+   a relational boundary shift can only make the bound STRICTER, so a ROR census cannot ask whether
+   a parser accepts one byte more than a record holds -- which is the class four of this fork's
+   shipped memory-safety fixes belong to. ADR 0013 called the answer Phase 2; this is it.
+
+   **`OFF` injects an offset on a comparison's right-hand operand**: `X > end` becomes
+   `X > (end) + 1` and `X > (end) - 1`. Both directions, because a bound can be wrong either way.
+   The left operand is deliberately untouched -- shifting either side by one covers the same ground,
+   and a backward extent scan is where a character scanner earns its bugs. The extent runs to the
+   first thing that ends an expression (a bracket it did not open, a separator at depth zero, `&&`,
+   `||`, `?`, `:`, or the end of the line), and four cases are skipped: an operand continuing onto
+   the next line (a `from` field with a newline corrupts the tab-separated per-mutant TSV), an
+   operand a comment or string stands in or in front of, `NULL` (meaningless, and ill-typed in a
+   C++ test build), and anything over 60 characters, which is a scan that has gone wrong more often
+   than it is an operand.
+
+   **First run, on the file that motivated it -- `encoding.c`: 56 mutants, 0 INVALID, 49 killed
+   (88%).** Among them, generated mechanically, is the blind audit's own mutation:
+   `dataend` -> `(dataend) + 1` at the optional-field clamp, now KILLED by the case item 45 added.
+   Zero invalid is the number that says the extent scan is right; `-MaxInvalidRate` would have
+   refused the census otherwise.
+
+   ⚠ **Its `- 1` twin survives, and is an equivalent mutant** -- clamping one byte earlier assigns
+   `size = dataend - data` when size already equals it. Both directions are generated anyway,
+   because which one is equivalent is a property of the site, not something the generator can know.
+
+   **Reading C++ correctly took three more exclusions, and review found all three.** A template
+   argument list is not two comparisons (`map<string, string>` produced `map<(string) + 1, string>`),
+   `::` is not the end of an expression (`first == string::npos` produced the operand `string`), and
+   a `std::map` iterator has no `operator+` (`i == settings.end()` produced `(settings.end()) + 1`).
+   `settings.cpp` went from 88 mutants with **over 60% INVALID** -- enough that a per-file census
+   aborted outright -- to **40 with none invalid**. 🔴 And the comment claiming `-MaxInvalidRate`
+   would catch a bad extent scan was wrong: that rate is computed over the WHOLE run, so one
+   badly-parsed translation unit sat under a tree-wide 2% and nothing refused it. The per-file
+   INVALID column is the signal; the cap catches a generator broken everywhere, not one broken in
+   one file.
+
+   🔴 **AND A RE-RUN NOW TAKES ITS OPERATORS FROM THE TSV IT WAS HANDED.** `-Escalate`, `-Recheck`
+   and `-Split` match recorded rows against a fresh enumeration, which still used the default -- so
+   feeding back an OFF census without repeating `-Operator OFF` matched nothing and failed with "the
+   tree has moved under that TSV; re-run the census instead", sending the reader to repeat a run of
+   hours over a flag they had not typed. That is the exact loop this operator exists to enable.
+   Caught in review, before anyone hit it.
+
+   **Three supporting decisions, each with a reason:**
+   - **The default stays ROR alone.** Every figure quoted against the committed baseline is a ROR
+     census; folding a second operator into the default would move the headline without one thing
+     about the suite changing, which is the misreading this script's header exists to prevent. OFF
+     also yields about twice the mutants, so its census is a run of hours.
+   - **The baseline keeps one row per file AND operator, each carrying the commit it was measured
+     at**, and a run replaces only the rows of the operators it measured. A whole-file rewrite would
+     delete the other operator's numbers every time, and one header commit would misdate whichever
+     half was older.
+   - **`-SelfTest` now checks the GENERATOR before the pipeline.** A canary proves a mutant that
+     reached disk was scored correctly; it says nothing about mutants the scanner never produced, or
+     produced wrong, and that is where OFF's risk lives. It is fed a fixed probe whose expected
+     mutants and four exclusions are written into the script. ⭐ It paid for itself on its first
+     run: it failed, and the EXPECTATION was wrong rather than the scanner -- an operand with a
+     comment in front of it yields nothing, which is the intended conservative answer.
+
+   🔴 **FIVE REVIEW PASSES, AND EVERY ONE FOUND SOMETHING IN THE SCANNER.** Recorded because the
+   pattern is the lesson: a hand-rolled extent scan is a parser, and a parser gets C wrong in ways
+   its author cannot see by reading. What they caught, in order -- the operators recovered from a
+   handed-back TSV (an OFF census fed to `-Recheck` matched nothing and blamed the tree); C++ read
+   as comparisons (templates, `::`, iterator endpoints -- `settings.cpp` was over 60% INVALID);
+   `->` inside an unspaced comparison, truncating the operand to `v-`; **a shift read as binding
+   LOOSER than a comparison**, which produced a mutant recorded as a one-off that actually moved the
+   bound by four; two unspaced comparisons on one line eaten as a template argument list, in three
+   separate shapes; and the splice trusting its own coordinates. ⚠ **Three of those were introduced
+   by fixing the previous one.** Every fix was verified by running the generator over a probe rather
+   than by reading it, and the shapes are pinned in `Test-MutantGenerators`, which now checks BOTH
+   generators and runs on every invocation -- `-Split` and `-Recheck` used to reach neither it nor
+   the canaries. `-MaxInvalidRate` is now checked per file and operator as well as tree-wide, since
+   the whole-run rate demonstrably hides a single badly-parsed translation unit.
+
+   🔴 **THE SURVIVORS ARE THE POINT, AND THEY ARE NOT WORKED YET.** Five of `encoding.c`'s seven are
+   real and cheap-looking: nothing asserts the LAST cell of the map (`pos < CXGRID * CYGRID` minus
+   one, at two sites), nothing pins the LAST valid tile id (only the first invalid one), the
+   optional-field loop can stop one field early, and a decode loop can run one cell short. Working
+   that queue is the next campaign, not this change -- and the full-tree OFF census is what says how
+   long the queue is.
+
+
 ## Testing
 
 **`run-tests.ps1` at the repository root is the entry point.** It runs **six** layers: unit,

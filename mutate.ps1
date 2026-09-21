@@ -111,10 +111,28 @@ recovers, and the sanitize oracle actually fires. That last one is what makes
 -Escalate mean anything: without it, a yield of zero would be indistinguishable
 from a sanitize pass that never ran.
 
+TWO OPERATORS, AND THEY ASK DIFFERENT QUESTIONS.
+
+  ROR  the relational boundary itself: `<` <-> `<=`, `>` <-> `>=`, `==` <-> `!=`.
+  OFF  the OPERANDS around it: `X > end` becomes `X > (end) + 1` and `(end) - 1`.
+
+🔴 OFF EXISTS BECAUSE ROR IS BLIND IN THE DANGEROUS DIRECTION. For `ptr + k > end`
+-- the idiom these parsers are built from -- a boundary shift can only make the
+bound STRICTER; accepting one byte more than the record holds means changing an
+operand, which ROR cannot do. A blind audit demonstrated the cost: three real
+gaps, one a read past a downloaded level record, all invisible to a ROR census
+and all found by hand. At encoding.c's optional-field clamp the only ROR edit
+available is even a provable no-op, so the census filed the site as a survivor
+forever while never asking the question. First OFF run on that file: 56 mutants,
+0 invalid, 49 killed, and the audit's own mutation among them.
+
 COST. Roughly 1,270 ROR mutants across the sixteen sources the tests compile, at
 about one to eight seconds each depending on how many tests cover the file and
 whether an early one kills it. The 2026-09-11 census took about half an hour on
-the desktop (this said "an hour and a half" before that was measured). That is
+the desktop (this said "an hour and a half" before that was measured). ⚠ OFF
+produces about TWICE as many mutants as ROR, since every comparison yields two,
+so an OFF census is a run of hours rather than half an hour. That is why the
+default stays ROR alone and OFF is asked for by name. That is
 why this is a deliberate instrument like coverage.ps1 and test\run-nofix.ps1
 -Search, and NOT a seventh layer of run-tests.ps1 -- whose whole default run is
 about a minute and gates package.ps1. (This sentence used to say "8.2 seconds",
@@ -122,7 +140,10 @@ which was the UNIT layer alone, and named the entry point; an audit timed the
 entry point at 71.6. Its summary prints each layer's time now -- read that.)
 
   -Module        one or more source file names to census (default: all sixteen).
-  -Operator      mutation operators to apply (phase 1 ships ROR only).
+  -Operator      ROR (default), OFF, or both. See the note above: they measure
+                 different things, and the committed baseline keeps them in
+                 separate rows for that reason. A run records only the operators
+                 it measured; rows for the other are kept as they were.
   -Sample        census a deterministic random subset of N mutants. -Seed picks it.
   -ResultsPath   directory for the per-mutant TSV (default: under the run's temp dir).
   -UpdateBaseline  rewrite docs\mutation-baseline.tsv. REFUSED on a sampled,
@@ -143,7 +164,12 @@ entry point at 71.6. Its summary prints each layer's time now -- read that.)
 #>
 param(
     [string[]]$Module,
-    [ValidateSet("ROR")]
+    # 🔴 THE DEFAULT STAYS ROR ALONE, deliberately. The committed baseline and
+    # every figure quoted against it are ROR censuses; adding an operator to the
+    # default would move the headline without one thing about the suite changing,
+    # which is the misreading this script's header exists to prevent. OFF is a
+    # separate, longer run recorded in its own baseline rows. See docs/adr/0013.
+    [ValidateSet("ROR", "OFF")]
     [string[]]$Operator = @("ROR"),
     [int]$Sample = 0,
     [int]$Seed = 20260911,
@@ -621,7 +647,380 @@ function Get-RorMutants([string]$text, $mask, $compiledLines, [string]$file) {
     return $out
 }
 
+# OFF -- offset injection on a comparison's RIGHT-HAND OPERAND.
+#
+# 🔴 WHY THIS EXISTS, AND WHY ROR COULD NEVER HAVE COVERED IT. A blind audit
+# (2026-09-20) put it plainly: for `ptr + k > end`, the idiom these parsers are
+# built from, a relational boundary shift can only make the bound STRICTER. The
+# dangerous direction -- accepting one more byte than the record holds -- lives
+# in the OPERANDS, and ROR cannot reach it. Three real gaps sat in that blind
+# spot, one of them a demonstrated read past a downloaded level record, and all
+# three had to be found by hand. Worse, at encoding.c's optional-field clamp the
+# only ROR edit available (`>` -> `>=`) is a provable no-op, so the census filed
+# that site as a survivor forever while never asking the question that mattered.
+#
+# So: at every comparison, wrap the right-hand operand and shift it by one, in
+# both directions. `data + size > dataend` becomes `... > (dataend) + 1`, which
+# is the audit's own mutation. Both directions, because a bound can be wrong
+# either way: one loosens, the other tightens, and a test suite that pins a
+# boundary has to notice both. The LEFT operand is deliberately not mutated --
+# shifting either side by one covers the same ground, and a backward extent scan
+# is where a character scanner earns its bugs.
+#
+# ⚠ WHAT IT DELIBERATELY SKIPS, each for a measured reason:
+#   * an operand that does not end on its own line -- the per-mutant TSV is
+#     tab-separated and a `from` field with a newline in it corrupts the record;
+#   * an operand with a comment or string literal in or in FRONT of it: the scan
+#     stops at the first character the mask does not call code, so `n > /* c */ 8`
+#     yields nothing rather than something mangled;
+#   * an operand containing a TAB, for the same tab-separated-record reason;
+#   * an angle bracket belonging to a C++ template argument list rather than a
+#     comparison -- see the template scan at the top of this function;
+#   * `NULL` -- `(NULL) + 1` is meaningless and, in the C++ build of a test,
+#     ill-typed, so it would be pure INVALID noise rather than a question;
+#   * anything longer than 60 characters, which is a scan that has gone wrong
+#     more often than it is a real operand.
+# ⚠ -MaxInvalidRate IS NOT THE BACKSTOP IT LOOKS LIKE, and this comment said it
+# was. It is computed over the WHOLE run: settings.cpp alone was 60% INVALID
+# from the template misparse while the tree-wide rate sat near 2%, under the cap,
+# so nothing refused it. It catches a generator that is broken everywhere, not
+# one that is broken in one translation unit. Read the per-file INVALID column.
+function Get-OffMutants([string]$text, $mask, $compiledLines, [string]$file) {
+    $out = New-Object Collections.ArrayList
+    $n = $text.Length
+
+    # 🔴 TEMPLATE ANGLE BRACKETS ARE NOT COMPARISONS, and in a C++ source that
+    # distinction is most of the INVALID rate. Measured before this existed:
+    # `map<string, string> settings;` produced `map<(string) + 1, string>`, and
+    # `static_cast<char>(...)` a 48-character "operand" -- 54 of settings.cpp's 88
+    # OFF mutants could not compile, over 60%, so -MaxInvalidRate aborted a
+    # per-file census outright while the whole-tree rate stayed near 2% and
+    # nothing refused it. (ROR has a smaller version of this, documented in
+    # CLAUDE.md as settings.cpp's 22 INVALID. ROR is deliberately left alone:
+    # changing which mutants it generates would move the committed baseline it
+    # is compared against.)
+    #
+    # The rule is syntactic and conservative: an identifier immediately followed
+    # by `<`, with a matching `>` on the SAME line, is a template argument list,
+    # and every angle bracket inside it is skipped. It can only DROP mutants,
+    # never invent one -- and this codebase spaces its real comparisons.
+    $tmpl = New-Object 'bool[]' $n
+    for ($p = 0; $p -lt $n; $p++) {
+        if ($text[$p] -ne '<' -or $mask[$p] -ne 'c') { continue }
+        if ($p -eq 0) { continue }
+        $pc = $text[$p - 1]
+        if (-not ($pc -match '[A-Za-z0-9_]')) { continue }
+        $depth = 0
+        for ($q = $p; $q -lt $n; $q++) {
+            $qc = $text[$q]
+            if ($qc -eq "`n") { break }
+            # ⚠ TWO UNSPACED COMPARISONS ON ONE LINE ARE NOT A TEMPLATE, and this
+            # heuristic ate both of them: `if (a<b && c>d)` produced ZERO mutants,
+            # silently, with no INVALID to notice -- the failure mode the note
+            # above calls the worst available here. A template argument list does
+            # not contain a logical operator, a statement separator, a brace or an
+            # assignment, so finding one means the span is an expression and the
+            # angle brackets are comparisons.
+            # ⚠ THE FIRST VERSION OF THIS BROKE ONLY ON `& | ; ?`, which still ate
+            # `if (a<b) { c = d>e; }` and `if (i<n) arr[i] = g(a>b);` -- found by a
+            # later review, after the `&&` shape had been fixed and pinned. Both
+            # shapes are in the probe now.
+            if ($qc -eq '&' -or $qc -eq '|' -or $qc -eq ';' -or $qc -eq '?' -or
+                $qc -eq '{' -or $qc -eq '}' -or $qc -eq '=') { break }
+            # ⚠ THE SCAN MUST OBEY THE MASK AND THE ARROW, and it did neither at
+            # first. A `>` inside a string or comment, or the one in `->`, closed
+            # a range that was never a template -- so `if (i<v->count)` produced
+            # NO mutants at all and `if (a<b) printf("a>b\n");` likewise. That is
+            # the worst shape of generator bug available here: it deletes a real
+            # comparison from the census silently, with no INVALID to notice,
+            # just a slightly smaller denominator. Zero instances in this tree
+            # today (both forms are spaced), and excluded before there is one.
+            if ($mask[$q] -ne 'c') { break }
+            if ($qc -eq '<') { $depth++ }
+            elseif ($qc -eq '>') {
+                if ($q -gt 0 -and $text[$q - 1] -eq '-') { continue }
+                $depth--
+                if ($depth -eq 0) {
+                    for ($r = $p; $r -le $q; $r++) {
+                        if ($text[$r] -eq '<' -or $text[$r] -eq '>') { $tmpl[$r] = $true }
+                    }
+                    break
+                }
+            }
+        }
+    }
+
+    $line = 1
+    $col = 1
+    $i = 0
+    while ($i -lt $n) {
+        $ch = $text[$i]
+        if ($ch -eq "`n") { $line++; $col = 1; $i++; continue }
+        if ($mask[$i] -ne 'c' -or -not $compiledLines.ContainsKey($line)) { $i++; $col++; continue }
+
+        $next = if ($i + 1 -lt $n) { $text[$i + 1] } else { [char]0 }
+        $prev = if ($i -gt 0) { $text[$i - 1] } else { [char]0 }
+
+        # Locating the comparison is the same problem ROR solves, and the same
+        # exclusions apply: a shift operator, a `->` arrow, a compound assignment.
+        $oplen = 0
+        if (($ch -eq '<' -or $ch -eq '>') -and $tmpl[$i]) { $i++; $col++; continue }
+        if ($ch -eq '<') {
+            if ($next -eq '<') { $i += 2; $col += 2; continue }
+            elseif ($next -eq '=') { $oplen = 2 } else { $oplen = 1 }
+        } elseif ($ch -eq '>') {
+            if ($prev -eq '-') { $i++; $col++; continue }
+            elseif ($next -eq '>') { $i += 2; $col += 2; continue }
+            elseif ($next -eq '=') { $oplen = 2 } else { $oplen = 1 }
+        } elseif ($ch -eq '=' -and $next -eq '=') {
+            if ('<>!=+-*/%&|^' -notmatch [regex]::Escape($prev) -or $prev -eq [char]0) { $oplen = 2 }
+            else { $i += 2; $col += 2; continue }
+        } elseif ($ch -eq '!' -and $next -eq '=') {
+            $oplen = 2
+        }
+        if ($oplen -eq 0) { $i++; $col++; continue }
+
+        # The operand runs to whatever ends the expression: a closing bracket we
+        # did not open, a separator at depth zero, or the end of the line.
+        $s = $i + $oplen
+        while ($s -lt $n -and ($text[$s] -eq ' ' -or $text[$s] -eq "`t")) { $s++ }
+        $e = $s
+        $depth = 0
+        $clean = $true
+        while ($e -lt $n) {
+            $c2 = $text[$e]
+            if ($c2 -eq "`n" -or $c2 -eq "`r") { break }
+            if ($mask[$e] -ne 'c') { $clean = $false; break }
+            if ($c2 -eq '(' -or $c2 -eq '[') { $depth++ }
+            elseif ($c2 -eq ')' -or $c2 -eq ']') { if ($depth -eq 0) { break }; $depth-- }
+            elseif ($depth -eq 0) {
+                # `::` is a scope operator, not the end of the expression: without
+                # this, `first == string::npos` yielded the operand `string` and
+                # `first == (string) + 1`, which is not a question about anything.
+                if ($c2 -eq ':' -and $e + 1 -lt $n -and $text[$e + 1] -eq ':') { $e += 2; continue }
+                if ($c2 -eq ';' -or $c2 -eq ',' -or $c2 -eq '?' -or $c2 -eq ':' -or $c2 -eq '{') { break }
+                # 🔴 STOP AT ANYTHING THAT BINDS LOOSER THAN THE COMPARISON, or the
+                # parentheses this operator adds change the PARSE rather than the
+                # bound. `n > flags & 0xff` is `(n > flags) & 0xff` in C, so the
+                # operand is `flags`; wrapping to `n > (flags & 0xff) + 1` asks a
+                # different question than the one the mutant's own from/to fields
+                # record -- and it compiles, so it would be scored as if it were
+                # the recorded one. Bitwise and/or/xor, a second relational and
+                # the two logical operators all bind looser. ⚠ SHIFTS DO NOT --
+                # they bind tighter and are consumed above; this comment claimed
+                # they were looser, and the code followed the comment.
+                # Latent: zero instances across the sixteen sources, like the TAB
+                # case, and unlike it this one used to be unexcluded.
+                # ⚠ `->` IS NOT A RELATIONAL OPERATOR, and the rule above had to
+                # learn that a second time: with `>` in the break set,
+                # `if (i<v->count)` stopped the operand at the arrow and produced
+                # `v-`, which is not even an expression. Caught by the same probe
+                # harness that found the shapes above.
+                if ($c2 -eq '>' -and $e -gt 0 -and $text[$e - 1] -eq '-') { $e++; continue }
+                # 🔴 AND A SHIFT BINDS TIGHTER THAN A RELATIONAL, so it is part of
+                # the operand rather than the end of it: `n > x << 2` is
+                # `n > (x << 2)`. Breaking here instead produced `from = x` and
+                # `to = (x) + 1`, which compiles as `n > ((x) + 1) << 2` -- a
+                # mutant RECORDED as a one-off that actually moves the bound by
+                # four, i.e. exactly the mislabeled question this break set exists
+                # to prevent. Consume it, the way `::` and `->` are consumed.
+                if (($c2 -eq '<' -and $e + 1 -lt $n -and $text[$e + 1] -eq '<') -or
+                    ($c2 -eq '>' -and $e + 1 -lt $n -and $text[$e + 1] -eq '>')) { $e += 2; continue }
+                if ($c2 -eq '&' -or $c2 -eq '|' -or $c2 -eq '^' -or
+                    $c2 -eq '<' -or $c2 -eq '>' -or
+                    ($c2 -eq '=' -and $e + 1 -lt $n -and $text[$e + 1] -eq '=') -or
+                    ($c2 -eq '!' -and $e + 1 -lt $n -and $text[$e + 1] -eq '=')) { break }
+            }
+            $e++
+        }
+        $operand = if ($clean -and $e -gt $s) { $text.Substring($s, $e - $s).TrimEnd(' ', "`t") } else { "" }
+
+        # ⚠ A TAB CORRUPTS THE RECORD EXACTLY AS A NEWLINE DOES, and only the
+        # newline was excluded. The per-mutant TSV is tab-separated, so a `from`
+        # field containing one silently adds a column, and -Escalate/-Recheck then
+        # mis-key or drop that row instead of failing loudly. Measured zero
+        # instances across the sixteen sources today: latent, not live, and
+        # excluded before it is not.
+        # ⚠ AND A C++ ITERATOR ENDPOINT IS NOT ADDITIVE. `i == settings.end()` on a
+        # std::map yields `(settings.end()) + 1`, and a bidirectional iterator has
+        # no `operator+` -- 12 of settings.cpp's remaining INVALID mutants were
+        # exactly this, measured. `++` would compile, but "one past end()" is not
+        # the question this operator asks, and a mutant nobody can read the point
+        # of is worse than one that never existed.
+        if (-not $clean -or $depth -ne 0 -or $operand.Length -eq 0 -or
+            $operand.Contains("`t") -or
+            $operand -match '(\.|->)c?r?(begin|end)\(\)$' -or
+            $operand.Length -gt 60 -or $operand -eq "NULL") {
+            $i += $oplen; $col += $oplen; continue
+        }
+
+        foreach ($delta in @("+ 1", "- 1")) {
+            [void]$out.Add([ordered]@{
+                file = $file; line = $line; col = $col + ($s - $i)
+                offset = $s
+                operator = "OFF"; from = $operand; to = "($operand) $delta"
+            })
+        }
+        $i += $oplen; $col += $oplen
+    }
+    return $out
+}
+
+# Checks the mutant GENERATORS against a fixed probe, before any tree is built.
+#
+# 🔴 IT RUNS ON EVERY INVOCATION, not only under -SelfTest, because -Split and
+# -Recheck match recorded rows against a FRESH enumeration: they depend on the
+# generator producing byte-identical operands to the run that wrote the TSV, and
+# they used to return before the self-test block ever ran. A mismatch there
+# surfaced as "the tree has moved under that TSV", which blames the tree for a
+# scanner change. Costs milliseconds.
+function Test-MutantGenerators {
+    
+    # 🔴 THE GENERATORS ARE CHECKED BEFORE ANYTHING ELSE RUNS. A canary proves a
+    # mutant that reached disk was scored correctly; it says nothing about the
+    # mutants the scanner never produced, or produced wrong. OFF's whole risk
+    # lives in its extent scan -- an operand read one character short compiles
+    # into a different question, and one read long does not compile at all -- so
+    # it is fed a snippet whose answer is written down here, in the file, and the
+    # census does not run if the answer changes. Costs milliseconds.
+    $probe = @'
+    int f(int n, char *p, char *end, int size)
+    {
+    if (p + size > end)
+    	return 1;
+    if (n < 16 && p)
+    	return 2;
+    if (p != NULL)
+    	return 3;
+    if (n > /* a comment */ 8)
+    	return 4;
+    if (n ==
+    	    12)
+    	return 5;
+    if (first == string::npos)
+    	return 6;
+    if (i == settings.end())
+    	return 7;
+    if (i<v->count)
+    	return 8;
+    if (n > flags & 0xff)
+    	return 9;
+    if (n > x << 2)
+	return 10;
+    map<string, string> m;
+    return n >> 2;
+    }
+'@ -replace "`r`n", "`n"
+    $probeLines = @{}
+    for ($k = 1; $k -le ($probe -split "`n").Count; $k++) { $probeLines[$k] = $true }
+    $got = Get-OffMutants $probe (Get-CodeMask $probe) $probeLines "probe.c"
+    $gotKeys = @($got | ForEach-Object { "$($_.line):$($_.from)->$($_.to)" })
+    foreach ($want in @("3:end->(end) + 1", "3:end->(end) - 1",
+                        "5:16->(16) + 1", "5:16->(16) - 1")) {
+        if ($gotKeys -notcontains $want) {
+            throw "self-test: the OFF generator did not produce '$want' on its probe. Got: $($gotKeys -join '; ')"
+        }
+    }
+    # And the four exclusions, each of which is a real defect if it regresses:
+    # NULL (meaningless and ill-typed in C++), an operand a comment stands in
+    # front of, an operand continued on the next line, and a right SHIFT read as
+    # a comparison.
+    if ($gotKeys -match 'NULL') { throw "self-test: the OFF generator mutated a NULL comparison" }
+    if ($gotKeys -match 'comment') { throw "self-test: the OFF generator swallowed a comment into an operand" }
+    # ⚠ `n > /* a comment */ 8` yields NOTHING, and that is the intended answer
+    # rather than a near miss: the scan stops at the first character the mask
+    # does not call code, so a comment between the operator and its operand
+    # suppresses the mutant instead of producing a mangled one. Measured when
+    # this probe first ran -- the expectation written here was wrong, not the
+    # scanner. Cheap to lose; a comment in that position is rare.
+    if ($gotKeys -match ':8->') { throw "self-test: the OFF generator mutated across a comment" }
+    # The three C++ shapes, each of which was measured producing INVALID mutants
+    # before it was excluded: a scope operator read as the end of an expression,
+    # a bidirectional iterator asked for `+ 1`, and a template argument list read
+    # as two comparisons.
+    # ⚠ `-not ($array -match ...)`, NEVER `$array -notmatch ...`. Against an
+    # array those operators FILTER rather than answer: `-notmatch` returns every
+    # element that does not match, so the condition is true whenever any element
+    # does not -- which is always, here. Cost one self-test run to spot.
+    if (-not ($gotKeys -match ':string::npos->\(string::npos\) \+ 1')) {
+        throw "self-test: the OFF generator no longer reads through the :: scope operator -- first == string::npos must mutate the whole operand. Got: $($gotKeys -join '; ')"
+    }
+    if ($gotKeys -match 'settings\.end') { throw "self-test: the OFF generator mutated an iterator endpoint, which has no operator+" }
+    if ($gotKeys -match ':string->') { throw "self-test: the OFF generator read a template argument list as a comparison" }
+    # The two shapes a review found the scanner losing or mangling: an arrow
+    # inside an unspaced comparison, and an operand followed by an operator that
+    # binds looser than the comparison itself.
+    if (-not ($gotKeys -match ':v->count->\(v->count\) \+ 1')) {
+        throw "self-test: the OFF generator lost or truncated if (i<v->count) -- the arrow is not a relational operator. Got: $($gotKeys -join '; ')"
+    }
+    if (-not ($gotKeys -match ':flags->\(flags\) \+ 1')) {
+        throw "self-test: n > flags & 0xff must mutate flags alone -- & binds looser than >, so wrapping further changes the parse. Got: $($gotKeys -join '; ')"
+    }
+    # The other direction, and the one this file got backwards once: a SHIFT binds
+    # TIGHTER than the comparison, so the whole shift expression is the operand.
+    # Truncating it to `x` produced a mutant recorded as a one-off that actually
+    # moved the bound by four.
+    if (-not ($gotKeys -match ':x << 2->\(x << 2\) \+ 1')) {
+        throw "self-test: n > x << 2 must mutate the whole shift expression -- a shift binds tighter than >. Got: $($gotKeys -join '; ')"
+    }
+    # Two unspaced comparisons on one line: not a template, and both must survive
+    # the template pre-scan. This shape used to yield nothing at all.
+    foreach ($pair in @("int f(void){ if (a<b && c>d) return 1; return 0; }",
+                        "int f(void){ if (a<b) { c = d>e; } return 0; }",
+                        "int f(void){ if (i<n) arr[i] = g(a>b); return 0; }")) {
+        $pairLines = @{ 1 = $true }
+        $pairGot = @(Get-OffMutants $pair (Get-CodeMask $pair) $pairLines "pair.c")
+        if ($pairGot.Count -ne 4) {
+            throw ("self-test: two unspaced comparisons on one line must yield four OFF mutants, got {0} -- the template pre-scan is eating real comparisons. Line: {1}  Mutants: {2}" -f
+                   $pairGot.Count, $pair, (@($pairGot | ForEach-Object { "$($_.from)->$($_.to)" }) -join '; '))
+        }
+    }
+
+    # 🔴 ROR IS PROBED TOO, because this function's name and its own argument
+    # apply to it at least as strongly: the committed baseline and the standing
+    # survivor queue are ROR, and -Recheck matches them against a fresh
+    # enumeration. A change to ROR's prev-character exclusions or its arrow and
+    # shift skips would surface as "the tree has moved under that TSV", which is
+    # the false accusation this whole check exists to prevent.
+    $rorGot = Get-RorMutants $probe (Get-CodeMask $probe) $probeLines "probe.c"
+    $rorKeys = @($rorGot | ForEach-Object { "$($_.from)->$($_.to)" })
+    foreach ($want in @(">->>=", "<-><=", "!=->==", "==->!=")) {
+        if ($rorKeys -notcontains $want) {
+            throw "self-test: the ROR generator no longer produces '$want' on the probe. Got: $($rorKeys -join '; ')"
+        }
+    }
+    if ($rorKeys -contains ">>->>>=") { throw "self-test: the ROR generator read a right shift as a comparison" }
+    # On `if (i<v->count)` ROR must mutate the comparison and NOT the arrow: one
+    # mutant on that line, and it has to be the `<`.
+    $arrowRor = @($rorGot | Where-Object { $_.line -eq 18 })
+    if ($arrowRor.Count -ne 1 -or $arrowRor[0].from -ne '<') {
+        throw ("self-test: on `if (i<v->count)` ROR must produce exactly the < mutant and leave the arrow alone; got {0}: {1}" -f
+               $arrowRor.Count, (@($arrowRor | ForEach-Object { "$($_.from)->$($_.to)" }) -join '; '))
+    }
+    Write-Host ("  {0,-16} {1} mutant(s) on the probe" -f "ROR generator", $rorGot.Count)
+    if ($gotKeys -match ':12->') { throw "self-test: the OFF generator mutated an operand that continues on the next line" }
+    if ($gotKeys -match ':2->') { throw "self-test: the OFF generator read a right shift as a comparison" }
+    # The `&&` case has to stop at the operator, not run to the end of the line.
+    if ($gotKeys -contains "5:16 && p->(16 && p) + 1") { throw "self-test: the OFF generator ran an operand past an && " }
+    Write-Host ("  {0,-16} {1} mutant(s) on the probe, exclusions all held" -f "OFF generator", $got.Count)
+    
+}
+
+# 🔴 THE SPLICE ASSERTS ITS OWN COORDINATES. With ROR, `from` was one or two
+# operator characters and a coordinate bug was self-evident; OFF's `from` is a
+# multi-character operand produced by a hand-rolled extent scan with a whitespace
+# skip and a TrimEnd, so an off-by-one there would splice mid-identifier and
+# record a mutant as one question while asking another. The only feedback would
+# be a raised per-file INVALID rate, which this file documents as an unreliable
+# backstop. One comparison, every mutant, the same shape Get-CodeMask ends with.
 function New-MutatedText([string]$text, $m) {
+    if ($m.offset + $m.from.Length -gt $text.Length -or
+        $text.Substring($m.offset, $m.from.Length) -ne $m.from) {
+        throw ("mutant coordinates do not match the source: {0}:{1}:{2} expected '{3}' at offset {4}, found '{5}'" -f
+            $m.file, $m.line, $m.col, $m.from, $m.offset,
+            $text.Substring([Math]::Min($m.offset, $text.Length),
+                            [Math]::Min($m.from.Length, [Math]::Max(0, $text.Length - $m.offset))))
+    }
     return $text.Substring(0, $m.offset) + $m.to + $text.Substring($m.offset + $m.from.Length)
 }
 
@@ -768,6 +1167,10 @@ if (-not $ResultsPath) { $ResultsPath = Join-Path $runDir "results" }
 New-Item -ItemType Directory -Force -Path $ResultsPath | Out-Null
 
 try {
+    # The generators answer for themselves before any tree is built: every mode
+    # depends on them, and -Split and -Recheck used to reach neither this check
+    # nor the canaries.
+    Test-MutantGenerators
     # --- what is compiled, and by whom -------------------------------------
     Write-Host ""
     Write-Host "--- preprocessing every test to find the compiled line set ---"
@@ -839,6 +1242,60 @@ try {
     }
 
     # --- enumerate ----------------------------------------------------------
+    #
+    # 🔴 A RE-RUN TAKES ITS OPERATORS FROM THE TSV IT WAS HANDED, not from the
+    # default. -Escalate, -Recheck and -Split all match a recorded row against a
+    # FRESH enumeration, so an OFF census fed back in while $Operator still said
+    # ROR matched nothing -- and the failure blamed the tree ("the tree has moved
+    # under that TSV; re-run the census instead"), sending the reader off to
+    # repeat a run of hours over a flag they simply had not repeated. Caught in
+    # review, on the exact loop this operator was built to enable: censusing with
+    # OFF and then working the survivor queue with -Recheck.
+    # ⚠ -Split FIRST, because -Split RUNS first. The order here used to prefer
+    # -Escalate, so `-Split off.tsv -Recheck ror.tsv` recovered the operators of
+    # the file it was NOT about to use, and the -Split that did run then blamed
+    # the tree. Two mode flags at once has never meant anything; say so instead.
+    $modeFlags = @($Split, $Escalate, $Recheck | Where-Object { $_ })
+    if ($modeFlags.Count -gt 1) {
+        throw "-Split, -Escalate and -Recheck are three different runs over one recorded census; pass exactly one."
+    }
+    $priorTsv = $modeFlags | Select-Object -First 1
+    if ($priorTsv) {
+        if (-not (Test-Path -LiteralPath $priorTsv)) { throw "no such mutants.tsv: $priorTsv" }
+        $priorOps = @(Import-Csv -LiteralPath $priorTsv -Delimiter "`t" |
+                      ForEach-Object { $_.operator } |
+                      Where-Object { $_ } | Sort-Object -Unique)
+        $added = @($priorOps | Where-Object { $Operator -notcontains $_ })
+        # ⚠ VALIDATE BEFORE ASSIGNING. $Operator carries the param block's
+        # ValidateSet, and PowerShell re-validates on every assignment -- so an
+        # unknown operator in the handed-back file (hand-edited, from a newer
+        # build, or a column shifted by a malformed row) threw "the value
+        # System.String[] is not a valid value for the Operator variable", naming
+        # neither the file nor the value. Say what is wrong instead.
+        # 🔴 DERIVED FROM THE PARAMETER'S OWN ValidateSet, never typed twice. A
+        # hand-maintained copy here would become the authority on what this build
+        # knows, and the day an operator is added to the param block and not to
+        # the copy, a TSV THIS BUILD JUST WROTE gets rejected as unknown -- the
+        # false accusation the surrounding message exists to avoid.
+        # ⚠ FROM $MyInvocation, NOT Get-Command -Name $PSCommandPath. -Name takes a
+        # WILDCARD pattern and there is no -LiteralPath, so a checkout under a path
+        # containing [ or ] resolves nothing, $known comes back empty, and the run
+        # dies claiming it cannot read its own ValidateSet -- a message describing
+        # the wrong problem entirely. This reads the same attribute from inside the
+        # script, with no path lookup at all.
+        $known = @($MyInvocation.MyCommand.Parameters['Operator'].Attributes |
+                   Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
+                   ForEach-Object { $_.ValidValues })
+        if ($known.Count -eq 0) { throw "cannot read the Operator parameter's ValidateSet; refusing to guess what operators this build knows" }
+        $unknown = @($added | Where-Object { $known -notcontains $_ })
+        if ($unknown.Count -gt 0) {
+            throw "$priorTsv records operator(s) this build does not know: $($unknown -join ', '). Known operators: $($known -join ', ')."
+        }
+        if ($added.Count -gt 0) {
+            $Operator = @($Operator + $added | Sort-Object -Unique)
+            Write-Host ("  operator(s) taken from the recorded run: {0}" -f ($added -join ", "))
+        }
+    }
     Write-Host ""
     Write-Host "--- enumerating mutants ---"
     $pristineText = @{}
@@ -852,6 +1309,11 @@ try {
             $found = Get-RorMutants $text $mask $compiled.lines[$s] $s
             foreach ($m in $found) { [void]$mutants.Add($m) }
             Write-Host ("    {0,-22} {1,5} ROR" -f $s, $found.Count)
+        }
+        if ($Operator -contains "OFF") {
+            $found = Get-OffMutants $text $mask $compiled.lines[$s] $s
+            foreach ($m in $found) { [void]$mutants.Add($m) }
+            Write-Host ("    {0,-22} {1,5} OFF" -f $s, $found.Count)
         }
     }
     Write-Host ("  {0} mutants total" -f $mutants.Count)
@@ -932,9 +1394,13 @@ try {
             $key = "$($m.file):$($m.line)"
             $reach = if (-not $hit.ContainsKey($key)) { "NO-RECORD" }
                      elseif ($hit[$key]) { "REACHED" } else { "UNREACHED" }
-            if (-not $tallyS.ContainsKey($m.file)) { $tallyS[$m.file] = @{} }
-            if (-not $tallyS[$m.file].ContainsKey($reach)) { $tallyS[$m.file][$reach] = 0 }
-            $tallyS[$m.file][$reach]++
+            # Keyed by file AND operator, like the census summary above: a
+            # per-file rate that blends a ROR boundary shift with an OFF operand
+            # shift is one number answering two questions.
+            $sk = "$($m.file)`t$($m.operator)"
+            if (-not $tallyS.ContainsKey($sk)) { $tallyS[$sk] = @{} }
+            if (-not $tallyS[$sk].ContainsKey($reach)) { $tallyS[$sk][$reach] = 0 }
+            $tallyS[$sk][$reach]++
             [IO.File]::AppendAllText($splitTsv, ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`r`n" -f
                 $m.file, $m.line, $m.col, $m.operator, $m.from, $m.to, $reach), $utf8NoBom)
         }
@@ -945,14 +1411,15 @@ try {
         Write-Host "  UNREACHED no test runs it -- needs a new case that gets there first"
         Write-Host "  NO-RECORD gcov has no line record (file-scope data). NOT a synonym for unreached."
         Write-Host ""
-        Write-Host ("  {0,-22} {1,10} {2,10} {3,10} {4,9}" -f "file", "survivors", "REACHED", "UNREACHED", "NO-REC")
+        Write-Host ("  {0,-22} {1,4} {2,10} {3,10} {4,10} {5,9}" -f "file", "op", "survivors", "REACHED", "UNREACHED", "NO-REC")
         $tR = 0; $tU = 0; $tN = 0
-        foreach ($f in ($tallyS.Keys | Sort-Object)) {
-            $t = $tallyS[$f]
+        foreach ($sk in ($tallyS.Keys | Sort-Object)) {
+            $t = $tallyS[$sk]
+            $f, $op = $sk -split "`t", 2
             $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
             $r = & $g "REACHED"; $u = & $g "UNREACHED"; $nr = & $g "NO-RECORD"
             $tR += $r; $tU += $u; $tN += $nr
-            Write-Host ("  {0,-22} {1,10} {2,10} {3,10} {4,9}" -f $f, ($r + $u + $nr), $r, $u, $nr)
+            Write-Host ("  {0,-22} {1,4} {2,10} {3,10} {4,10} {5,9}" -f $f, $op, ($r + $u + $nr), $r, $u, $nr)
         }
         $tot = $tR + $tU + $tN
         Write-Host ""
@@ -1211,9 +1678,11 @@ try {
                 if ($still.Count -gt 0) { throw "could not restore the scratch tree after $($m.file):$($m.line)." }
             }
 
-            if (-not $escTally.ContainsKey($m.file)) { $escTally[$m.file] = @{} }
-            if (-not $escTally[$m.file].ContainsKey($verdict)) { $escTally[$m.file][$verdict] = 0 }
-            $escTally[$m.file][$verdict]++
+            # File AND operator, for the reason the census summary gives.
+            $ek = "$($m.file)`t$($m.operator)"
+            if (-not $escTally.ContainsKey($ek)) { $escTally[$ek] = @{} }
+            if (-not $escTally[$ek].ContainsKey($verdict)) { $escTally[$ek][$verdict] = 0 }
+            $escTally[$ek][$verdict]++
             [IO.File]::AppendAllText($esc, ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}`t{8}`r`n" -f
                 $m.file, $m.line, $m.col, $m.operator, $m.from, $m.to, $verdict, $killer, $note), $utf8NoBom)
 
@@ -1227,16 +1696,17 @@ try {
 
         Write-Host ""
         Write-Host $(if ($underSanitize) { "########## sanitizer yield over plain-pass survivors ##########" } else { "########## recheck: which recorded survivors die now ##########" }) -ForegroundColor Cyan
-        Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f "file", "rerun", "died", "still", "rate")
+        Write-Host ("  {0,-22} {1,4} {2,10} {3,8} {4,8} {5,7}" -f "file", "op", "rerun", "died", "still", "rate")
         $tc = 0; $ts = 0
-        foreach ($f in ($escTally.Keys | Sort-Object)) {
-            $t = $escTally[$f]
+        foreach ($ek in ($escTally.Keys | Sort-Object)) {
+            $t = $escTally[$ek]
+            $f, $op = $ek -split "`t", 2
             $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
             $k = & $g "KILLED"; $s = & $g "SURVIVED"
             $tc += $k; $ts += $s
             $n = $k + $s
             $y = if ($n -gt 0) { "{0:P0}" -f ($k / $n) } else { "n/a" }
-            Write-Host ("  {0,-22} {1,10} {2,8} {3,8} {4,7}" -f $f, $n, $k, $s, $y)
+            Write-Host ("  {0,-22} {1,4} {2,10} {3,8} {4,8} {5,7}" -f $f, $op, $n, $k, $s, $y)
         }
         Write-Host ""
         Write-Host ("  {0} of {1} recorded survivors now die ({2:P1})." -f
@@ -1332,9 +1802,12 @@ try {
             $debris = $true
         }
 
-        if (-not $tally.ContainsKey($m.file)) { $tally[$m.file] = @{} }
-        if (-not $tally[$m.file].ContainsKey($verdict)) { $tally[$m.file][$verdict] = 0 }
-        $tally[$m.file][$verdict]++
+        # Keyed by file AND operator: a blended per-file number would hide exactly
+        # what the operators are for, which is that they ask different questions.
+        $tkey = "$($m.file)`t$($m.operator)"
+        if (-not $tally.ContainsKey($tkey)) { $tally[$tkey] = @{} }
+        if (-not $tally[$tkey].ContainsKey($verdict)) { $tally[$tkey][$verdict] = 0 }
+        $tally[$tkey][$verdict]++
 
         [void]$results.Add([ordered]@{
             file = $m.file; line = $m.line; col = $m.col; operator = $m.operator
@@ -1371,6 +1844,24 @@ try {
         }
     }
 
+    # 🔴 PER FILE AND OPERATOR AS WELL AS OVERALL, because the whole-run rate is
+    # not the backstop it looks like. Measured on this operator's first C++ run:
+    # settings.cpp sat at more than 60% INVALID from a template misparse while
+    # the tree-wide rate stayed near 2%, under the cap, and nothing refused it.
+    # The documented answer -- "read the per-file INVALID column" -- makes the
+    # gate depend on somebody reading a table after a run of hours. This reads it
+    # for them. The 10-mutant floor keeps a two-mutant file from tripping it.
+    foreach ($tk in ($tally.Keys | Sort-Object)) {
+        $t = $tally[$tk]
+        $f, $op = $tk -split "`t", 2
+        $ti = if ($t.ContainsKey("INVALID")) { $t["INVALID"] } else { 0 }
+        $tn = 0
+        foreach ($v in $t.Values) { $tn += $v }
+        if ($tn -ge 10 -and ($ti / $tn) -gt $MaxInvalidRate) {
+            throw "$ti of $tn $op mutants in $f did not compile ($('{0:P1}' -f ($ti / $tn))), over the -MaxInvalidRate of $('{0:P1}' -f $MaxInvalidRate). That is a generator bug in one translation unit, which the whole-run rate below can hide. Rows written to $tsv."
+        }
+    }
+
     $inv = @($results | Where-Object { $_.verdict -eq "INVALID" }).Count
     if ($results.Count -gt 0 -and ($inv / $results.Count) -gt $MaxInvalidRate) {
         throw "$inv of $($results.Count) mutants did not compile ($('{0:P1}' -f ($inv / $results.Count))), over the -MaxInvalidRate of $('{0:P1}' -f $MaxInvalidRate). That is a generator bug, not a result. Rows written to $tsv."
@@ -1384,23 +1875,43 @@ try {
     Write-Host "  mutations chosen by hand; this is a mechanical census whose headline"
     Write-Host "  moves with the operator mix alone."
     Write-Host ""
-    Write-Host ("  {0,-22} {1,7} {2,7} {3,8} {4,8} {5,6} {6,6} {7,7}" -f
-        "file", "killed", "lived", "invalid", "timeout", "flaky", "error", "rate")
+    Write-Host ("  {0,-22} {1,4} {2,7} {3,7} {4,8} {5,8} {6,6} {7,6} {8,7}" -f
+        "file", "op", "killed", "lived", "invalid", "timeout", "flaky", "error", "rate")
     $tot = @{ KILLED = 0; SURVIVED = 0; INVALID = 0; TIMEOUT = 0; FLAKY = 0; ERROR = 0 }
-    foreach ($f in ($tally.Keys | Sort-Object)) {
-        $t = $tally[$f]
+    # Per operator as well as overall: the blended line below is printed once for
+    # each, because one number spanning both is the misreading this whole file
+    # argues against -- ROR and OFF ask different questions of the same suite.
+    $perOp = @{}
+    foreach ($tk in ($tally.Keys | Sort-Object)) {
+        $t = $tally[$tk]
+        $f, $op = $tk -split "`t", 2
+        if (-not $perOp.ContainsKey($op)) {
+            $perOp[$op] = @{ KILLED = 0; SURVIVED = 0; INVALID = 0; TIMEOUT = 0; FLAKY = 0; ERROR = 0 }
+        }
         $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
         $k = & $g "KILLED"; $s = & $g "SURVIVED"; $i = & $g "INVALID"
         $o = & $g "TIMEOUT"; $fl = & $g "FLAKY"; $e = & $g "ERROR"
-        foreach ($key in @("KILLED","SURVIVED","INVALID","TIMEOUT","FLAKY","ERROR")) { $tot[$key] += (& $g $key) }
+        foreach ($key in @("KILLED","SURVIVED","INVALID","TIMEOUT","FLAKY","ERROR")) {
+            $tot[$key] += (& $g $key)
+            $perOp[$op][$key] += (& $g $key)
+        }
         $den = $k + $s
         $rate = if ($den -gt 0) { "{0:P0}" -f ($k / $den) } else { "n/a" }
-        Write-Host ("  {0,-22} {1,7} {2,7} {3,8} {4,8} {5,6} {6,6} {7,7}" -f $f, $k, $s, $i, $o, $fl, $e, $rate)
+        Write-Host ("  {0,-22} {1,4} {2,7} {3,7} {4,8} {5,8} {6,6} {7,6} {8,7}" -f $f, $op, $k, $s, $i, $o, $fl, $e, $rate)
     }
-    $den = $tot.KILLED + $tot.SURVIVED
     Write-Host ""
-    Write-Host ("  blended: {0} killed of {1} scored ({2:P1}). Excluded from the denominator: {3} invalid, {4} timed out, {5} flaky, {6} errored." -f
-        $tot.KILLED, $den, $(if ($den) { $tot.KILLED / $den } else { 0 }), $tot.INVALID, $tot.TIMEOUT, $tot.FLAKY, $tot.ERROR)
+    # 🔴 ONE BLENDED LINE PER OPERATOR, NEVER ONE ACROSS BOTH. The blended figure
+    # is the number people quote, and a run of `-Operator ROR,OFF` printing a
+    # single percentage would hand them exactly the reading this script spends a
+    # header arguing against: the two operators ask different questions, and an
+    # average of the answers means nothing. Caught in review, on the run the
+    # per-operator tally had just been introduced for.
+    foreach ($op in ($perOp.Keys | Sort-Object)) {
+        $p = $perOp[$op]
+        $pden = $p.KILLED + $p.SURVIVED
+        Write-Host ("  blended [{0}]: {1} killed of {2} scored ({3:P1}). Excluded from the denominator: {4} invalid, {5} timed out, {6} flaky, {7} errored." -f
+            $op, $p.KILLED, $pden, $(if ($pden) { $p.KILLED / $pden } else { 0 }), $p.INVALID, $p.TIMEOUT, $p.FLAKY, $p.ERROR)
+    }
     $debrisCount = @($results | Where-Object { $_.debris }).Count
     if ($debrisCount -gt 0) {
         Write-Host ("  {0} mutants left files or directories behind in the tree (cleaned up and recorded). These broke a test's own cleanup path." -f $debrisCount) -ForegroundColor Yellow
@@ -1417,20 +1928,61 @@ try {
         if ($Module) { throw "-UpdateBaseline refused: this was a -Module run." }
         if ($dirty.Count -gt 0) { throw "-UpdateBaseline refused: the working tree is dirty, so this number could never be reproduced." }
         $bl = Join-Path $repoRoot "docs\mutation-baseline.tsv"
+
+        # 🔴 ONE ROW PER FILE AND OPERATOR, EACH CARRYING ITS OWN COMMIT, and rows
+        # for operators this run did not measure are KEPT. A full OFF census takes
+        # hours where a ROR one takes half an hour, so the two are recorded by
+        # separate runs -- and a writer that rewrote the whole file would silently
+        # delete the other operator's numbers every time. The per-row commit is
+        # what stops the merge from lying: rows measured at different commits say
+        # so individually, rather than hiding under one header line.
+        # ⚠ ROWS WRITTEN BEFORE THE COMMIT COLUMN EXISTED CARRY THE OLD HEADER'S
+        # COMMIT FORWARD, rather than being left one field short. A merged file
+        # with two row widths is a file the next reader has to guess at, and the
+        # commit those rows were measured at is normally sitting in the header
+        # they came with. ⚠ NORMALLY: a hand-edited or truncated header has no
+        # commit line to read, and then the column says "unknown" -- which is the
+        # honest answer there, and is WARNED about rather than written quietly.
+        $kept = @()
+        $oldCommit = "unknown"
+        if (Test-Path -LiteralPath $bl) {
+            $blLines = [IO.File]::ReadAllLines($bl)
+            foreach ($ln in $blLines) {
+                if ($ln -match '^#\s*(?:commit|last run):\s*([0-9a-f]{7,40})') { $oldCommit = $Matches[1]; break }
+            }
+            foreach ($ln in $blLines) {
+                if ($ln.StartsWith("#") -or $ln.StartsWith("file`t") -or -not $ln.Trim()) { continue }
+                $cells = $ln -split "`t"
+                if ($cells.Count -lt 2 -or ($Operator -contains $cells[1])) { continue }
+                if ($cells.Count -lt 9) {
+                    if ($oldCommit -eq "unknown") {
+                        Write-Host ("  WARNING: {0} {1} rows carried forward with commit 'unknown' -- the old header had no readable commit line." -f $cells[0], $cells[1]) -ForegroundColor Yellow
+                    }
+                    $kept += ($ln + "`t" + $oldCommit)
+                } else { $kept += $ln }
+            }
+        }
+        $rows = @()
+        foreach ($tk in ($tally.Keys | Sort-Object)) {
+            $t = $tally[$tk]
+            $f, $op = $tk -split "`t", 2
+            $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
+            $rows += ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}`t{8}" -f $f, $op,
+                (& $g "KILLED"), (& $g "SURVIVED"), (& $g "INVALID"), (& $g "TIMEOUT"),
+                (& $g "FLAKY"), (& $g "ERROR"), $head)
+        }
         $out = @(
             "# Mutation census, unit layer only. Regenerate with mutate.ps1 -UpdateBaseline.",
             "# NOT comparable to the 2026-09-08 hand-run audit: that was 233 hand-chosen",
             "# mutations, this is a mechanical census whose blended rate moves with the",
-            "# operator mix. Read the per-file rows.",
-            "# commit: $head",
-            "file`toperators`tkilled`tsurvived`tinvalid`ttimeout`tflaky`terror"
-        )
-        foreach ($f in ($tally.Keys | Sort-Object)) {
-            $t = $tally[$f]
-            $g = { param($k) if ($t.ContainsKey($k)) { $t[$k] } else { 0 } }
-            $out += ("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}" -f $f, ($Operator -join ","),
-                (& $g "KILLED"), (& $g "SURVIVED"), (& $g "INVALID"), (& $g "TIMEOUT"), (& $g "FLAKY"), (& $g "ERROR"))
-        }
+            "# operator mix. Read the per-file rows, and read the OPERATOR column with",
+            "# them: ROR asks whether a relational boundary is pinned, OFF asks whether",
+            "# the OPERANDS around it are -- the direction ROR structurally cannot reach.",
+            "# A row is replaced only by a run of ITS operator; each carries the commit",
+            "# it was measured at.",
+            "# last run: $head ($($Operator -join ','))",
+            "file`toperator`tkilled`tsurvived`tinvalid`ttimeout`tflaky`terror`tcommit"
+        ) + (@($kept + $rows) | Sort-Object)
         # LF explicitly; see the note in test\run-tests.ps1 about WriteAllLines.
         [IO.File]::WriteAllText($bl, (($out -join "`n") + "`n"), $utf8NoBom)
         Write-Host "  baseline written: $bl"
