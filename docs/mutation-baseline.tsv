@@ -1,22 +1,42 @@
 # Mutation census, unit layer only. Regenerate with mutate.ps1 -UpdateBaseline.
 # NOT comparable to the 2026-09-08 hand-run audit: that was 233 hand-chosen
 # mutations, this is a mechanical census whose blended rate moves with the
-# operator mix. Read the per-file rows.
-# commit: 28353931c9c1a4bb93735d41e2365b35049c1a62
-file	operators	killed	survived	invalid	timeout	flaky	error
-encoding.c	ROR	27	1	0	0	0	0
-fileio.c	ROR	23	18	0	0	0	0
-generic/dirinput.c	ROR	4	1	0	0	0	0
-generic/in.c	ROR	18	28	0	0	0	0
-generic/tile.c	ROR	23	66	0	0	0	0
-lxlogic.c	ROR	80	138	0	0	0	0
-mslogic.c	ROR	152	225	0	3	0	0
-play.c	ROR	8	20	0	0	0	0
-random.c	ROR	2	1	0	0	0	0
-res.c	ROR	13	20	0	0	0	0
-score.cpp	ROR	5	12	0	0	0	0
-series.c	ROR	18	50	0	0	0	0
-settings.cpp	ROR	25	6	22	3	0	0
-solution.c	ROR	22	27	0	0	0	0
-tworld.c	ROR	12	167	0	0	0	0
-unslist.c	ROR	21	6	0	0	0	0
+# operator mix. Read the per-file rows, and read the OPERATOR column with
+# them: ROR asks whether a relational boundary is pinned, OFF asks whether
+# the OPERANDS around it are -- the direction ROR structurally cannot reach.
+# A row is replaced only by a run of ITS operator; each carries the commit
+# it was measured at.
+# last run: b41991fa181794007ee6d9d86cda3a4fad5b6783 (OFF)
+file	operator	killed	survived	invalid	timeout	flaky	error	commit
+encoding.c	OFF	49	7	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+encoding.c	ROR	27	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+fileio.c	OFF	26	48	2	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+fileio.c	ROR	23	18	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+generic/dirinput.c	OFF	9	1	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+generic/dirinput.c	ROR	4	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+generic/in.c	OFF	28	58	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+generic/in.c	ROR	18	28	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+generic/tile.c	OFF	38	139	0	1	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+generic/tile.c	ROR	23	66	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+lxlogic.c	OFF	100	336	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+lxlogic.c	ROR	80	138	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+mslogic.c	OFF	192	558	0	6	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+mslogic.c	ROR	152	225	0	3	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+play.c	OFF	17	39	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+play.c	ROR	8	20	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+random.c	OFF	5	1	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+random.c	ROR	2	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+res.c	OFF	13	39	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+res.c	ROR	13	20	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+score.cpp	OFF	12	22	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+score.cpp	ROR	5	12	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+series.c	OFF	27	91	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+series.c	ROR	18	50	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+settings.cpp	OFF	23	16	0	1	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+settings.cpp	ROR	25	6	22	3	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+solution.c	OFF	33	49	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+solution.c	ROR	22	27	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+tworld.c	OFF	21	313	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+tworld.c	ROR	12	167	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
+unslist.c	OFF	41	11	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+unslist.c	ROR	21	6	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62

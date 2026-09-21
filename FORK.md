@@ -1825,8 +1825,15 @@ exactly what's mine:
    real and cheap-looking: nothing asserts the LAST cell of the map (`pos < CXGRID * CYGRID` minus
    one, at two sites), nothing pins the LAST valid tile id (only the first invalid one), the
    optional-field loop can stop one field early, and a decode loop can run one cell short. Working
-   that queue is the next campaign, not this change -- and the full-tree OFF census is what says how
-   long the queue is.
+   that queue is the next campaign, not this change.
+
+   📊 **The full-tree OFF census says how long the queue is: 2,372 mutants, 634 killed of 2,362
+   scored (26.8%), against ROR's 36.6%** -- rows in `docs/mutation-baseline.tsv`, which now carries
+   both operators. The operand question is answered less often than the boundary one, which is the
+   whole reason this operator exists. **2 INVALID in 2,372** says the extent scan is sound across
+   sixteen sources, and those two are a pleasure: they are `openfileindir()`'s `_Static_assert`
+   (item 45) refusing to compile when its operand is mutated. A compile-time guard turns a mutant
+   into a build failure, which is exactly what it was put there to do.
 
 
 ## Testing
