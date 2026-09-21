@@ -250,13 +250,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,479 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
+Current state: **19 unit runs, 23,492 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,479 AS A MEASURE OF REACH. Three files are 94% of it.**
+🔴 **DO NOT READ 23,492 AS A MEASURE OF REACH. Three files are 94% of it.**
 `random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,279. That leaves about
-**1,455 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+**1,468 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -762,20 +762,28 @@ powershell -ExecutionPolicy Bypass -File mutate.ps1 -Operator OFF -UpdateBaselin
 a ROR census, and folding a second operator into the default would move the headline without one
 thing about the suite changing. OFF yields about twice as many mutants, so its census is a run of
 hours; the baseline keeps a row per file AND operator, each with its own commit, and a run replaces
-only the rows of the operators it measured. ⚠ The committed file takes that shape on the next
-`-UpdateBaseline` run — until then it is the older one, which the writer reads too. See
+only the rows of the operators it measured — and, on a `-Module` run, only the files it measured,
+so a single file's row can be refreshed in about a minute while the queue is worked. See
 [`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
 
 ⚠ **Read the two rates as answers to different questions, never as one number.** ROR asks whether
 the boundary is pinned; OFF asks whether the operands around it are.
 
-⭐ **OFF's survivors are the queue it was built to produce, and they are not yet worked.** First run,
-`encoding.c`: 56 mutants, 0 invalid, 49 killed. Of the 7 survivors, 2 are equivalent (the clamp's
-`- 1` twin assigns a value already equal; `id < 0` → `< -1` is caught by the unsigned test beside
-it). The other **five** are real and cheap-looking: nothing asserts the LAST cell of the map
-(`pos < CXGRID * CYGRID` minus one, at two sites), nothing pins the LAST valid tile id (only the
-first invalid one), the optional-field loop can stop one field early, and a decode loop can run one
-cell short. Start there.
+⭐ **OFF's survivors are the queue it was built to produce, and `encoding.c`'s is WORKED.** All five
+real survivors now have a case at the exact input the shipped form and the shifted form disagree
+about — one unconsumed byte in a layer, one missing cell in each of the two layers, tile code `0x6F`
+(the last valid one, where only the first invalid one was pinned), and a three-byte trailing field
+the loop could skip. The two that remain are equivalent mutants, written up in
+`test/encoding_test.c` so nobody re-derives them (`id < 0` → `< -1` is caught by the unsigned clause
+beside it; the clamp's `- 1` twin assigns a value already equal). **The rate is in the baseline, as
+every rate here is — no copy of it in this sentence.**
+
+🔴 **The rest of the queue is the other fifteen files, and about half of it is cheap.**
+`mutate.ps1 -Split <mutants.tsv>` divides survivors into REACHED (a test runs the line and does not
+assert — a few lines in a test that already exists) and UNREACHED (needs a new case that gets there
+first); on the first OFF census that split was 822 / 894. Work REACHED first, the untrusted-input
+path before the engines, and the engines **by MECHANIC rather than by line** — one scenario walks a
+whole call chain. `-Recheck -Module <file>` is the loop, about a minute per file.
 
 ⚠ **It reads C++ carefully, and that took three exclusions, each measured.** A template argument
 list is not two comparisons, `::` is not the end of an expression, and a `std::map` iterator has no

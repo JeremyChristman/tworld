@@ -8,7 +8,9 @@
  * FILE -- players download level sets from community sites and drop them in.
  * That is the shape of parser that goes wrong, and in jc-44 two of them did.
  *
- * The cases below are in three groups:
+ * The cases below are in five groups. (This said THREE while the file had four
+ * banners -- the map drifted twice without anything noticing, which is the
+ * ordinary fate of a hand-maintained list of what is below it.)
  *
  *   1. The jc-44 bounds fix, from both sides: a malformed layer is refused, and
  *      a well-formed one still loads. A hardening change that also rejects valid
@@ -18,6 +20,12 @@
  *      the stricter check with ZERO bytes to spare.
  *   3. The ordinary decoding rules, so the fix cannot be "verified" by a parser
  *      that has stopped parsing.
+ *   4. The layer bookkeeping -- the extra-byte and missing-cell reports, and the
+ *      highest tile code the format allows -- each pinned at the one input where
+ *      moving the bound by one changes the answer.
+ *   5. The optional-fields block, and the one clamp holding it in.
+ *   6. The decoding helpers and the record-shape edges: the accessors mslogic.c
+ *      reaches for, the list strides, and the smallest records the format allows.
  *
  * TESTLANG: c
  *
@@ -129,7 +137,7 @@ int main(void)
     int size, n, i;
 
     tw_begin("encoding");
-    tw_expect_atleast(114);
+    tw_expect_atleast(127);
 
     tw_case("every committed fuzz corpus input still expands safely");
     {
@@ -732,8 +740,183 @@ int main(void)
     }
 
     /* ================================================================== *
-     * 4. The optional-fields block, and the one clamp holding it in.
+     * 4. The layer bookkeeping, pinned at ONE byte and ONE cell.
+     *
+     * 🔴 THESE FIVE CAME OUT OF THE CENSUS'S SECOND OPERATOR (docs/adr/0013,
+     * Phase 2). `mutate.ps1 -Operator OFF` shifts a comparison's right-hand
+     * OPERAND rather than the operator, which is the direction a relational
+     * boundary shift cannot reach -- and every one of these sites survived the
+     * whole suite when its operand moved by one. Each case below is the single
+     * input the shipped form and the shifted form disagree about.
+     *
+     * ⚠ THE WARNING COUNT IS THE ORACLE IN FOUR OF THEM, so each record is built
+     * to be otherwise perfect: both layers exactly 1,024 cells unless the case
+     * is about a layer, and an EMPTY metadata block, so the only thing that can
+     * warn is the thing under test. A record that warns for a second reason
+     * turns these into pass-either-way cases.
      * ================================================================== */
+
+    tw_case("🔴 exactly ONE unconsumed byte in the upper layer is reported");
+    {
+	/* `if (n < size) warn("extra bytes")`. One spare byte is the only input
+	 * `n < size` and `n < size - 1` disagree about. 15 bytes of run-length
+	 * data fill the layer (4 x 255 + 4 == 1,024), and the size word claims
+	 * 16. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 16);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	raw[n++] = FIX_FLOOR;			/* the unconsumed byte */
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(warn_count == 1,
+		  "a record with exactly one unconsumed byte in its upper layer"
+		  " raised %d warning(s); the bound that reports it is one byte"
+		  " loose", warn_count);
+    }
+
+    tw_case("🔴 exactly ONE missing cell in the upper layer is reported");
+    {
+	/* The sibling bound: `else if (pos < CXGRID * CYGRID) warn("missing
+	 * bytes")`. 4 x 255 + 3 == 1,023 cells, every declared byte consumed,
+	 * so the layer is short by exactly one cell -- the only input
+	 * `pos < 1024` and `pos < 1023` disagree about. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 3; raw[n++] = FIX_FLOOR;	/* 1,023 */
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(warn_count == 1,
+		  "an upper layer one cell short raised %d warning(s); the bound"
+		  " that reports it is one cell loose", warn_count);
+    }
+
+    tw_case("🔴 ...and exactly ONE missing cell in the LOWER layer too");
+    {
+	/* The same bound, second copy, one hundred lines down. CLAUDE.md §8.1:
+	 * when a guard appears twice, a case for one copy is a case for
+	 * neither -- and the census agreed, reporting both as survivors. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 3; raw[n++] = FIX_FLOOR;	/* 1,023 */
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(warn_count == 1,
+		  "a lower layer one cell short raised %d warning(s); the bound"
+		  " that reports it is one cell loose", warn_count);
+    }
+
+    tw_case("🔴 tile code 0x6F -- the LAST valid one -- decodes, in both layers");
+    {
+	/* The other side of the `0x70 EXACTLY` cases above. They pin the first
+	 * code OUT of range; nothing pinned the last one IN range, so
+	 * `id >= 112` could become `id >= 111` and the highest legal tile in the
+	 * format -- Chip facing east -- would quietly become a Wall with
+	 * SF_BADTILES set, on a file that is not faulty at all.
+	 *
+	 * Both layers carry it, because this check is written out twice. */
+	CHECK_MSG((int)(sizeof fileids / sizeof *fileids) == 112,
+		  "fileids[] is %d entries, not 112 -- 0x6F is no longer the last"
+		  " valid code and this case has moved off the boundary",
+		  (int)(sizeof fileids / sizeof *fileids));
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 16);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 3; raw[n++] = FIX_FLOOR;	/* 1,023 cells */
+	raw[n++] = 0x6F;					/* cell 1,023 */
+	put16(raw + n, 16);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 3; raw[n++] = FIX_FLOOR;
+	raw[n++] = 0x6F;
+	put16(raw + n, 0);      n += 2;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(teststate.map[1023].top.id == fileidtotileid(0x6F),
+		  "the last valid tile code decoded to %d in the upper layer, not"
+		  " %d -- the table bound rejects a code that is in range",
+		  teststate.map[1023].top.id, fileidtotileid(0x6F));
+	CHECK_MSG(teststate.map[1023].bot.id == fileidtotileid(0x6F),
+		  "the last valid tile code decoded to %d in the lower layer, not %d",
+		  teststate.map[1023].bot.id, fileidtotileid(0x6F));
+	CHECK_MSG(!(teststate.statusflags & SF_BADTILES),
+		  "a level whose highest tile code is the last VALID one was"
+		  " flagged as containing undefined tiles");
+    }
+
+    /* ================================================================== *
+     * 5. The optional-fields block, and the one clamp holding it in.
+     * ================================================================== */
+
+    tw_case("🔴 a final optional field with ONE payload byte is still parsed");
+    {
+	/* `while (data + 2 < dataend)`: the loop must run while a two-byte
+	 * header and at least one payload byte remain. Shift `dataend` down by
+	 * one and a three-byte tail -- the smallest field there is -- is skipped
+	 * instead, silently, on a record that is perfectly well formed.
+	 *
+	 * Field 2 with one byte is the readable end of it: the parser refuses
+	 * the short chip count and says so, so the warning is the proof the loop
+	 * ran at all. */
+	n = 0;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 0);      n += 2;
+	put16(raw + n, 1);      n += 2;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 15);     n += 2;
+	for (i = 0 ; i < 4 ; ++i) { raw[n++] = 0xFF; raw[n++] = 255; raw[n++] = FIX_FLOOR; }
+	raw[n++] = 0xFF; raw[n++] = 4; raw[n++] = FIX_FLOOR;
+	put16(raw + n, 3);      n += 2;		/* metadata: exactly one field */
+	raw[n++] = 2; raw[n++] = 1;		/* field 2, one payload byte */
+	raw[n++] = 0x07;
+	CHECK_INT(expandraw(raw, n), TRUE);
+	CHECK_MSG(warn_count == 1,
+		  "a three-byte trailing field raised %d warning(s): the field loop"
+		  " never ran, so the last field of a well-formed record was"
+		  " dropped", warn_count);
+    }
+
+    /* ⚠ THE OTHER TWO OFF SURVIVORS IN THIS FILE ARE EQUIVALENT MUTANTS. Do not
+     * spend an afternoon on them; both were reasoned from the code and recorded
+     * here so the next reader does not re-derive them.
+     *
+     *   encoding.c  `if (id < 0 || (unsigned int)id >= ...)` -> `id < -1`
+     *     The clause beside it catches -1 anyway: as an unsigned value it is
+     *     enormous, so `>= 112` is true and the tile is refused either way.
+     *
+     *   encoding.c  `if (data + size > dataend)` -> `> dataend - 1`
+     *     Clamping one byte EARLIER assigns `size = dataend - data` at the one
+     *     input that changes -- which is the value size already has. A no-op.
+     *     (Its `+ 1` twin is the real one, and the case above it kills that.)
+     */
 
     tw_case("🔴 an optional field claiming more bytes than remain is CLAMPED");
     {
@@ -914,6 +1097,12 @@ int main(void)
 	    CHECK_INT(teststate.traps[0].to, 7 + CXGRID * 7);
 	}
     }
+
+    /* ================================================================== *
+     * 6. The decoding helpers, and the record-shape edges that belong to no
+     *    single layer: the accessors mslogic.c reaches for, the list strides,
+     *    and the smallest records the format allows.
+     * ================================================================== */
 
     tw_case("fileidtotileid maps the codes the row-32 cloner glitch relies on");
     /* This is the accessor mslogic.c uses when the MSCC row-32 glitch writes raw

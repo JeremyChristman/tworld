@@ -146,10 +146,14 @@ entry point at 71.6. Its summary prints each layer's time now -- read that.)
                  it measured; rows for the other are kept as they were.
   -Sample        census a deterministic random subset of N mutants. -Seed picks it.
   -ResultsPath   directory for the per-mutant TSV (default: under the run's temp dir).
-  -UpdateBaseline  rewrite docs\mutation-baseline.tsv. REFUSED on a sampled,
-                 filtered or dirty-tree run, for the same reason run-tests.ps1
-                 refuses to write docs\test-counts.tsv on a -Filter run: a partial
-                 count reads exactly as authoritative as a complete one.
+  -UpdateBaseline  update docs\mutation-baseline.tsv. REFUSED on a sampled or
+                 dirty-tree run: a sampled count reads exactly as authoritative
+                 as a complete one, and a number measured on a tree nobody else
+                 has could never be reproduced. A -Module run IS allowed and
+                 rewrites only the rows it measured -- the survivor queue is
+                 worked one file at a time, and a refusal there just left the
+                 baseline stale, which is worse than partial. Rows carry their
+                 own file, operator and commit, and the header names the scope.
   -Escalate <tsv>  take an earlier census's mutants.tsv, re-run only the mutants it
                  recorded as SURVIVED, this time under run-tests.ps1 -Sanitize, and
                  report how many of them that layer catches. Those are not test
@@ -1925,7 +1929,15 @@ try {
 
     if ($UpdateBaseline) {
         if ($Sample -gt 0) { throw "-UpdateBaseline refused: this was a sampled run. A partial census reads exactly as authoritative as a complete one." }
-        if ($Module) { throw "-UpdateBaseline refused: this was a -Module run." }
+        # 🔴 A -Module RUN MAY WRITE NOW, and only the rows it measured. That
+        # refusal predated the row-per-(file, operator) schema, when a partial run
+        # would have rewritten the whole file as though it were complete. It is
+        # now the opposite of useful: the survivor queue is worked ONE FILE AT A
+        # TIME (about 100 seconds each), and refusing to record that meant the
+        # baseline could only be refreshed by a run of hours -- so it simply went
+        # stale, which is what a reader is pointed at as authoritative.
+        # Every row carries its own file, operator and commit, so a partial
+        # refresh cannot pass itself off as a whole one.
         if ($dirty.Count -gt 0) { throw "-UpdateBaseline refused: the working tree is dirty, so this number could never be reproduced." }
         $bl = Join-Path $repoRoot "docs\mutation-baseline.tsv"
 
@@ -1953,7 +1965,18 @@ try {
             foreach ($ln in $blLines) {
                 if ($ln.StartsWith("#") -or $ln.StartsWith("file`t") -or -not $ln.Trim()) { continue }
                 $cells = $ln -split "`t"
-                if ($cells.Count -lt 2 -or ($Operator -contains $cells[1])) { continue }
+                # Replace a row only if THIS run measured that file and operator;
+                # everything else is carried through untouched.
+                if ($cells.Count -lt 2) { continue }
+                if ($Operator -contains $cells[1]) {
+                    # A FULL run of this operator replaces every row it has, so a
+                    # row for a source that is no longer censused disappears --
+                    # which is how a renamed or dropped file stops inflating a
+                    # total somebody sums from this table. A -Module run replaces
+                    # only what it measured and carries the rest through.
+                    if (-not $Module) { continue }
+                    if ($sources -contains $cells[0]) { continue }
+                }
                 if ($cells.Count -lt 9) {
                     if ($oldCommit -eq "unknown") {
                         Write-Host ("  WARNING: {0} {1} rows carried forward with commit 'unknown' -- the old header had no readable commit line." -f $cells[0], $cells[1]) -ForegroundColor Yellow
@@ -1962,6 +1985,11 @@ try {
                 } else { $kept += $ln }
             }
         }
+        # The header says what this run actually covered, so a partial refresh
+        # reads as one at a glance rather than only in the per-row commits.
+        $runScope = ($Operator -join ',')
+        if ($Module) { $runScope += ", only " + ($sources -join ', ') }
+
         $rows = @()
         foreach ($tk in ($tally.Keys | Sort-Object)) {
             $t = $tally[$tk]
@@ -1980,7 +2008,7 @@ try {
             "# the OPERANDS around it are -- the direction ROR structurally cannot reach.",
             "# A row is replaced only by a run of ITS operator; each carries the commit",
             "# it was measured at.",
-            "# last run: $head ($($Operator -join ','))",
+            "# last run: $head ($runScope)",
             "file`toperator`tkilled`tsurvived`tinvalid`ttimeout`tflaky`terror`tcommit"
         ) + (@($kept + $rows) | Sort-Object)
         # LF explicitly; see the note in test\run-tests.ps1 about WriteAllLines.

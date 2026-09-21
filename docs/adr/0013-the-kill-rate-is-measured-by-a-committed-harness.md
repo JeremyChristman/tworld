@@ -109,10 +109,11 @@ badly-parsed translation unit hid under a tree-wide rate near 2%.
   "Consequences" already warns about. OFF also produces about twice as many mutants, so a census is
   a run of hours rather than half an hour.
 - **The baseline keeps one row per file AND operator, each with the commit it was measured at**, and
-  a run replaces only the rows of the operators it measured. ⚠ **The committed file still shows the
-  pre-Phase-2 shape** — the old `operators` column, eight fields, one header commit — until the next
-  `-UpdateBaseline` run rewrites it; the writer reads both, and carries a legacy row's commit over
-  from the header rather than leaving the row a field short. Otherwise recording one operator would
+  a run replaces only the rows of the operators it measured — and on a `-Module` run, only the files
+  it measured, so one file's row can be refreshed in about a minute while the survivor queue is
+  worked. (A full run of an operator still replaces every row it has, so a source that stops being
+  censused stops appearing.) The writer reads the pre-Phase-2 shape too, carrying a legacy row's
+  commit over from the old header rather than leaving the row a field short. Otherwise recording one operator would
   silently delete the other's numbers, and a single header commit would misdate whichever half was
   older.
 - **`-SelfTest` checks the GENERATOR, not only the pipeline.** A canary proves a mutant that reached
