@@ -10,6 +10,13 @@
 # by name, then assert that `gcc -dumpversion` matches. A mismatch fails the job
 # rather than building quietly with something else.
 #
+# ⚠ TWO FILES, NOT ONE. gcc depends on exactly its own release of gcc-libs, so
+# both are fetched by URL in a single pacman transaction. Installing gcc alone
+# left that dependency to the refreshed database, and on 2026-09-21 the mirror's
+# database moved to 16.2.0-4 while still keeping the 16.2.0-3 FILES -- CI went
+# red ("cannot resolve mingw-w64-x86_64-gcc-libs=16.2.0-3") on a commit that
+# touched two documents. The pin had not expired; it was one URL short.
+#
 # ⚠ MSYS2 HAS NO NATIVE VERSION PINNING. There is no `pacman -S gcc=16.2.0`, and
 # no lockfile format of its own. Pinning here means fetching the exact package
 # file from the repository, which works because repo.msys2.org keeps older

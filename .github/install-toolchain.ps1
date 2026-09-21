@@ -57,7 +57,24 @@ $wantver = $lock["gcc_version"]
 $pkgfile = "mingw-w64-x86_64-gcc-$pkgver-any.pkg.tar.zst"
 $url     = "https://repo.msys2.org/mingw/mingw64/$pkgfile"
 
-Write-Host "pinned compiler: $pkgfile"
+# 🔴 gcc-libs COMES WITH IT, BY URL, IN THE SAME TRANSACTION. The gcc package
+# depends on EXACTLY its own release of gcc-libs, and pacman resolves that from
+# the refreshed database -- so the pin works only while the database still holds
+# that release. It stopped: on 2026-09-21 CI went red with "cannot resolve
+# mingw-w64-x86_64-gcc-libs=16.2.0-3, a dependency of mingw-w64-x86_64-gcc",
+# then "no gcc after installing the toolchain", on a commit that touched two
+# documents. The mirror had moved the database to -4 while still KEEPING the -3
+# files -- so the pin was one URL short rather than expired.
+#
+# Installing both files together satisfies the dependency from the files
+# themselves and takes the database out of it. If a future failure names a file
+# that is genuinely gone from repo.msys2.org, that is the real expiry this
+# arrangement was designed to announce, and docs\toolchain.lock has the
+# checklist for bumping.
+$libsfile = "mingw-w64-x86_64-gcc-libs-$pkgver-any.pkg.tar.zst"
+$libsurl  = "https://repo.msys2.org/mingw/mingw64/$libsfile"
+
+Write-Host "pinned compiler: $pkgfile (with $libsfile)"
 
 # -Sy, not -Syu: refreshing the package database is enough to install from, and
 # a full system upgrade on a throwaway runner costs minutes and can leave pacman
@@ -65,9 +82,10 @@ Write-Host "pinned compiler: $pkgfile"
 & $pacman -Sy --noconfirm
 if ($LASTEXITCODE -ne 0) { throw "pacman -Sy failed (exit $LASTEXITCODE)" }
 
-# The pinned compiler, by URL. -U takes a package file; pacman fetches it and
-# resolves its dependencies from the refreshed database.
-& $pacman -U --noconfirm $url
+# The pinned compiler and its runtime, by URL, in ONE transaction: -U takes
+# package files, and giving it both means the gcc=gcc-libs version dependency is
+# satisfied by the file rather than by whatever the database currently holds.
+& $pacman -U --noconfirm $libsurl $url
 if ($LASTEXITCODE -ne 0) {
     throw @"
 could not install the pinned compiler $pkgfile.
