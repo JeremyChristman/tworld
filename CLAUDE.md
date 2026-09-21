@@ -250,13 +250,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,492 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
+Current state: **19 unit runs, 23,698 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,492 AS A MEASURE OF REACH. Three files are 94% of it.**
+🔴 **DO NOT READ 23,698 AS A MEASURE OF REACH. Three files are 94% of it.**
 `random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
-thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,279. That leaves about
-**1,468 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,460. That leaves about
+**1,493 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -778,6 +778,13 @@ the loop could skip. The two that remain are equivalent mutants, written up in
 beside it; the clamp's `- 1` twin assigns a value already equal). **The rate is in the baseline, as
 every rate here is — no copy of it in this sentence.**
 
+⭐ **Batch 2 worked the untrusted-input path, and it found a SHIPPED defect rather than only test
+gaps** — `hashvalue()` returning a value too wide to match the field it is compared against on every
+LP64 platform, so the unsolvable-levels list silently matched nothing off Windows (`FORK.md` item
+48). Closed 23 recorded survivors: `solution.c` 16 of 49, `fileio.c` 4 of 48, `unslist.c` 3 of 11.
+The two lessons that generalize are in §8.1 — **an encoder's oracle is the size it emitted**, and
+**a cushion can hide a bound from a sanitizer too.**
+
 🔴 **The rest of the queue is the other fifteen files, and about half of it is cheap.**
 `mutate.ps1 -Split <mutants.tsv>` divides survivors into REACHED (a test runs the line and does not
 assert — a few lines in a test that already exists) and UNREACHED (needs a new case that gets there
@@ -1071,6 +1078,25 @@ no sanitizer could have helped. Meanwhile jc-50's revert was executed and simply
 sanitizer fixes instantly. **A sanitizer is an oracle, not coverage.** Measured on one revert:
 `movelaw_creature` traps, `movelaw_block` sails through, and the only difference is whether a test
 happened to call it.
+
+**🔴 THERE IS A THIRD DIAGNOSIS, AND A SANITIZER CANNOT SEE IT EITHER: REACHED, EXECUTED, AND
+ABSORBED.** `contractsolution()` sizes its output buffer in a first pass whose thresholds mirror the
+encoder's, and that pass opens at `size = 21` against a 16-byte header — a **four-byte cushion**.
+Loosen either threshold by one and the encoder writes past the `malloc`… except that over every
+input in the suite the tightest margin was exactly 4 bytes, so **nothing overflowed and ASan had
+nothing to report.** Measured 2026-09-21 by instrumenting both passes. The case that fixes it drives
+sixteen moves at the boundary instead of one, which turns the same mutations into 12-, 28- and
+1-byte overflows. **When the oracle is a sanitizer, the input still has to exhaust the slack** —
+"a sanitizer is an oracle, not coverage" is not the whole of it, because a bound with headroom is a
+bound no single-step input can reach past.
+
+**🔴 FOR AN ENCODER, THE ORACLE IS THE SIZE IT EMITTED, NOT WHAT READS BACK.** Six of
+`solution.c`'s move-encoder offsets survived every layer for one reason: loosen a format threshold
+downward and the encoder simply reaches for the **next larger form**, which holds the same value and
+round-trips perfectly. Every case in the file asked "does this read back correctly", and every one
+of them answered yes. `game->solutionsize` is right there and nothing had ever read it. The same
+shape recurs wherever code CHOOSES a representation — pick the cheapest one, then assert which one
+it picked.
 
 **⚠ ASK WHAT ONLY HAPPENS ON THE WRONG SIDE OF THE BOUND — AND THEN CHECK THAT NOTHING ELSE CAUSES
 IT.** The obvious oracle is usually contaminated. "The guard warns, so count warnings" failed twice

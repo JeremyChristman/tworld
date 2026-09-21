@@ -287,7 +287,7 @@ int main(void)
     int size, n, r;
 
     tw_begin("series");
-    tw_expect_atleast(139);
+    tw_expect_atleast(143);
 
     tw_case("every committed fuzz corpus input still reads safely");
     {
@@ -766,6 +766,91 @@ int main(void)
 	}
 	CHECK_MSG(h1 != 0, "the first level produced no hash");
 	CHECK_MSG(h1 != h2, "two different levels hashed identically (0x%lX)", h1);
+    }
+
+    tw_case("🔴 the level hash has a VALUE, a width, and covers the LAST byte");
+    {
+	/* 🔴 NOTHING IN THIS TREE PINNED WHAT hashvalue() RETURNS, and that is
+	 * the gap these two constants close. Measured, each mutation applied and
+	 * the whole file re-run: changing the final `^ 0xFFFFFFFFUL`, changing
+	 * the initial `accum`, or changing ONE ENTRY of the remainders table all
+	 * left the suite green. Both hash cases compared two COMPUTED hashes
+	 * with each other, so any change that moves both survives, and series.c
+	 * is compiled into no other unit test.
+	 *
+	 * That matters because this value is matched against res/unslist.txt,
+	 * a text file of hashes shipped in the release. Move the algorithm and
+	 * every entry in it silently stops matching -- the same quiet death of a
+	 * feature that jc-59 fixed for LP64, and it was open on every platform.
+	 *
+	 * 🔴 THE WIDTH COMES FREE, AND ON EVERY PLATFORM. hashvalue() relies on
+	 * `accum << 8` discarding what leaves the top of an `unsigned long`:
+	 * true at 32 bits, false at 64, where the result carries 32 bits of
+	 * intermediate state above the value meant. A value carrying bits above
+	 * 31 cannot equal a 32-bit constant, so these assertions fail on an LP64
+	 * build without jc-59's mask. An assertion on the WIDTH ALONE cannot do
+	 * that -- it is a tautology wherever the defect is absent, so it reads
+	 * `ok` on Windows for something nothing checked. A first draft of this
+	 * case did exactly that, and named `linux-build` as an oracle; that job
+	 * runs no unit test at all (it builds and runs `tworld2 -V`). The
+	 * constants need no runner named.
+	 *
+	 * ⚠ Nothing caught the width defect because no test computed a hash and
+	 * then matched one: unslist_test.c sets levelhash by hand through
+	 * makegame(), and the case above compares two computed hashes. It lived
+	 * in the seam between two test files. unslist_test.c now has a case that
+	 * carries a real hash all the way through "%08lX" and back.
+	 *
+	 * 🔴 THE LAST BYTE. `j < size` decides how much of the record is hashed,
+	 * and one byte short is invisible to a test comparing two levels that
+	 * differ in many bytes -- as the case above does. Two buffers differing
+	 * ONLY in their final byte are what tells those bounds apart.
+	 *
+	 * ⚠ THE THIRD CONSTANT PINS THE REMAINDERS TABLE, and it is here because
+	 * the first two do not: six bytes consult six of the table's 256 entries,
+	 * so corrupting any of the other 250 left this case green -- measured,
+	 * changing `0x04C11DB7` (index 1) to `0x04C11DB6`.
+	 *
+	 * The LENGTH is the whole point and is not arbitrary. Each step indexes
+	 * the table by `(accum >> 24) ^ data[j]`, so coverage depends on the
+	 * running state as much as on the bytes; 0..255 repeated reaches 156 of
+	 * 256 entries at 256 bytes, 219 at 512, 253 at 1,024 and **all 256 at
+	 * 2,048**. Measured, not assumed. At that length one wrong entry
+	 * anywhere in the table changes this hash, which is the only way to pin a
+	 * 256-entry constant table from the outside without re-deriving it.
+	 *
+	 * hashvalue() is reachable directly because this test compiles series.c
+	 * rather than linking it. The constants were derived from the algorithm,
+	 * independently of the shipped code, and confirmed against it. */
+	static unsigned char const a[] = { 'l', 'e', 'v', 'e', 'l', 0x01 };
+	static unsigned char const b[] = { 'l', 'e', 'v', 'e', 'l', 0x02 };
+	static unsigned char all[2048];
+	unsigned long ha = hashvalue(a, (unsigned int)sizeof a);
+	unsigned long hb = hashvalue(b, (unsigned int)sizeof b);
+	unsigned long hall;
+	int k;
+
+	for (k = 0 ; k < (int)sizeof all ; ++k)
+	    all[k] = (unsigned char)k;
+	hall = hashvalue(all, (unsigned int)sizeof all);
+
+	CHECK_MSG(ha == 0x4939747FUL,
+		  "the level hash algorithm has changed: expected 0x4939747F,"
+		  " got 0x%lX. Every entry in res/unslist.txt is matched by this"
+		  " value and has just stopped matching."
+		  " (A value wider than 32 bits means jc-59's mask is gone.)",
+		  ha);
+	CHECK_MSG(hb == 0x447A52A6UL,
+		  "the level hash algorithm has changed: expected 0x447A52A6,"
+		  " got 0x%lX", hb);
+	CHECK_MSG(hall == 0xBABED19BUL,
+		  "the level hash algorithm has changed: expected 0xBABED19B"
+		  " over the 2,048-byte buffer, got 0x%lX. That buffer consults"
+		  " every entry of the remainders table, so one corrupt entry"
+		  " lands here", hall);
+	CHECK_MSG(ha != hb,
+		  "two records differing only in their LAST byte hashed"
+		  " identically (0x%lX) -- the hash stops one byte short", ha);
     }
 
     /* ================================================================== *

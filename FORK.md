@@ -1863,6 +1863,122 @@ exactly what's mine:
    `CLAUDE.md` points at it in bold as the place the numbers live. A full run of an operator still
    replaces every row it has, so a source that stops being censused stops appearing.
 
+48. **Batch 2 of the OFF queue: the untrusted-input path, and a shipped defect it turned up**
+   (`series.c`, `test/solution_test.c`, `test/fileio_test.c`, `test/unslist_test.c`,
+   `test/series_test.c`). One line of shipped code; it rides with the next release.
+
+   🔴 **`hashvalue()` returns a value that cannot fit the field it is compared against, on every
+   platform where `long` is 64 bits — which is every platform but this one.** `series.c:106`
+   accumulates with `accum = (accum << 8) ^ remainders[i]` into an `unsigned long`. On Windows that
+   is 32 bits and the shifts fall off the top, as the algorithm intends. On Linux and macOS it is
+   64, so thirty-two bits of intermediate state survive above the result. Measured with the real
+   table: the same level record hashes to `C569E6E9` here and `C297D138C569E6E9` there.
+
+   `game->levelhash` is then compared for equality against `unslist[i].hashval`, which `unslist.c`
+   reads with `%08lX` and so can never exceed `0xFFFFFFFF`. **So on an LP64 build no level ever
+   matches the unsolvable-levels list, and the feature silently does nothing.** It is upstream's,
+   and upstream is primarily a Linux program.
+
+   ⚠ **Why six layers and two Linux CI jobs never saw it.** Nothing in the tree computes a hash and
+   then matches it. `unslist_test.c` sets `levelhash` by hand through `makegame()`, so its matching
+   cases never call `hashvalue()`; `series_test.c` computes two hashes and compares them *with each
+   other*, so both carry the same garbage and the assertion holds. The seam is exactly between the
+   two files, which is where a test suite organized by source file has no owner. It is also
+   invisible to a sanitizer — the arithmetic is perfectly defined, just wider than intended.
+
+   The fix is to mask the result, and it is **provably a no-op on Windows**: with a 32-bit
+   `unsigned long` the mask cannot change a value. The index the loop feeds back is
+   `(accum >> 24) & 0xFF`, bits 24-31, which higher bits do not reach — verified at both widths
+   before touching it — so the byte-for-byte output here is unchanged and no recorded solution,
+   golden digest or corpus verdict can move. The new case asserts the result fits in 32 bits, which
+   is vacuous on Windows and is the whole point on the `sanitizers` and `linux-build` runners.
+
+   **The rest of the batch, in the order the queue lists it.** `solution.c`: **16 of 49 recorded
+   survivors now die**, from six cases. Eleven of them came from one observation —
+
+   🔴 **for an ENCODER the oracle is the size it emitted, not what reads back.** Loosen one of
+   `contractsolution()`'s format thresholds *downward* and the encoder reaches for the next larger
+   form, which holds the same value and round-trips perfectly; every case in the file asked "does
+   this read back correctly" and every one answered yes. `game->solutionsize` was sitting there
+   unread. Pinning it at each threshold, plus format 3's last-triple packing, killed eleven.
+
+   🔴 **And a cushion can hide a bound from a sanitizer, which is a third diagnosis.** The size
+   estimate opens at `size = 21` against a 16-byte header. Over every input in the suite the
+   tightest margin was **exactly four bytes**, so loosening either threshold overflowed *nothing*
+   and ASan had nothing to report — "reached, executed, and absorbed", alongside "not detected" and
+   "not exercised". A case driving sixteen boundary moves instead of one turns the same three
+   mutations into 12-, 28- and 1-byte overflows. Two of the three then also die on the ordinary
+   Windows pass, through the allocator, which is luck and is written up as luck.
+
+   The set-name clamp took three more cases and five more mutants: the clamp fires at exactly
+   `size == buffersize` and nothing had ever declared a name that length (the existing case uses 200
+   against a 3-byte buffer, so it only ever drove enormous slack — the same shape as
+   `readleveldata()`'s bounds); a one-byte name is a name and a zero-byte one is not; and a buffer
+   of one must still be terminated while a buffer of zero must not be written to at all, which only
+   a poisoned byte can see.
+
+   `fileio.c`: **`getpathforfileindir()` had no case of any kind**, and both of its length bounds
+   sit exactly where `getpathbuffer()`'s extra byte runs out. Unusually for this file the return
+   value *is* the oracle — one direction refuses a name that fits, the other overruns the
+   allocation — which is why that case is four lines where its neighbors are forty.
+
+   `unslist.c`: the range case drove only the refused side, so `levelnum < 65535` threw away a
+   legitimate entry with the suite green; the accepted ends are pinned now, along with a truncated
+   entry being a syntax error rather than a half-read one, and the blanking loop covering the *last*
+   level rather than `count - 1` of them.
+
+   ⚠ **Roughly one survivor in six was not actionable, and each is written up where it lives rather
+   than re-derived.** Both directions of an OFF pair are always generated and at many sites one of
+   them assigns a value the variable already holds, over-allocates a buffer that is about to be
+   `realloc`ed to the true size, or reads an uninitialized local on a path that warns either way.
+
+   ### What the review changed, and it was more than corrections
+
+   🔴 **The best finding was a hole beside the new case, not in it: NOTHING IN THE TREE PINNED WHAT
+   `hashvalue()` RETURNS.** Measured, each mutation applied and the file re-run — changing the final
+   `^ 0xFFFFFFFFUL`, changing the initial `accum`, or changing **one entry of the remainders table**
+   all left the suite green. Both hash cases compared two *computed* hashes with each other, so any
+   change that moves both survives, and `series.c` is compiled into no other unit test. That value
+   is what `res/unslist.txt` is matched by, so moving the algorithm silently stops every shipped
+   entry matching — the same quiet death of a feature this item is about, open on **every**
+   platform. `series_test.c` now pins three golden constants, and they subsume the width assertion:
+   a value carrying bits above 31 cannot equal a 32-bit constant, so the case fails on an LP64 build
+   without the mask **and** is non-vacuous on Windows, which an assertion on the width alone can
+   never be.
+
+   ⚠ **The third constant's LENGTH is load-bearing and was arrived at by measurement.** Six bytes
+   consult six of the remainders table's 256 entries, so the first two constants missed a corrupted
+   entry — demonstrated, index 1 changed and the case stayed green. Coverage depends on the running
+   state as well as the bytes: 0..255 repeated reaches 156 entries at 256 bytes, 219 at 512, 253 at
+   1,024 and **all 256 at 2,048**. At that length a single wrong entry anywhere in the table fails
+   the case; verified at indices 1, 2 and 255. A first attempt used 256 bytes and would have left
+   100 entries unpinned while reading as though it had covered them.
+
+   ⚠ **A first draft of that assertion named `linux-build` as one of its two oracles. That job runs
+   no unit test at all** — it builds and runs `tworld2 -V`. Only `sanitizers` executes the suite on
+   Linux. Naming a runner that cannot run the check is precisely the class of claim §5 keeps
+   retiring, and it was caught by a reviewer reading the workflow rather than the sentence.
+
+   **The seam is now closed from both ends, deliberately as two cases in two files**, because no
+   translation unit holds both halves: `hashvalue()` is static in `series.c`, which `unslist_test.c`
+   does not compile, and `islevelunsolvable()` is `unslist.c`'s, which `series_test.c` stubs. The
+   split *is* the seam. They are linked by a shared literal — one case pins that `hashvalue()`
+   produces it, the other that it survives `"%08lX"` and still matches.
+
+   Three claims in the prose were measurably wrong and are corrected: the LP64 hash value quoted in
+   the comment came from a synthetic buffer rather than a level record (it now cites the 3,928-buffer
+   differential, in which all 903 real records carry bits above 31); `"%08lX"` bounds *digits*, not
+   value, so "can never exceed `0xFFFFFFFF`" is now "never does, for the well-formed lines the file
+   is made of"; and "upstream is mainly a Linux program" was deleted — upstream's README leads with
+   prebuilt **Windows** binaries, and the claim was load-bearing for nothing. The commit message's
+   "golden master and e2e confirm it" was also an overstatement: neither layer reads `levelhash`, so
+   what they establish is that nothing *else* moved. A note in `series.c` now says so.
+
+   ⚠ **One angle went unreviewed and that is a gap, not a clean bill**: the reviewer assigned to
+   audit every number and citation in the prose died on a session rate limit before running. The
+   counts were re-derived by hand and the suite's own `verify-docs.ps1` checks the load-bearing
+   ones, but no adversary read the documentation.
+
 
 ## Testing
 

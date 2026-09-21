@@ -145,6 +145,42 @@ static void addmove(solutioninfo *s, int dir, int when)
     addtomovelist(&s->moves, act);
 }
 
+/* Writes the smallest .tws that carries a set name: the signature, an empty
+ * extra header, a first record declaring `namelen` set-name bytes, the sixteen
+ * zero bytes loadsolutionsetname() steps over, and then `supplied` bytes of
+ * `fill`. Returns FALSE if the file could not be created.
+ *
+ * The existing set-name cases each build this by hand with a 200-byte name,
+ * which is why every one of them sits far above the clamp instead of ON it.
+ */
+static int write_setname_tws(char const *path, int namelen, int supplied,
+			     char fill)
+{
+    unsigned char	buf[28];
+    FILE	       *f;
+    int			k;
+
+    f = fopen(path, "wb");
+    if (!f)
+	return FALSE;
+    memset(buf, 0, sizeof buf);
+    buf[0] = 0x35; buf[1] = 0x33; buf[2] = 0x9B; buf[3] = 0x99;	/* CSSIG */
+					/* [4..7]  extra header: none */
+    /* [8..11] the record size. loadsolutionsetname() subtracts 16 from it to
+     * get the set-name length, so this is namelen + 16. */
+    buf[8]  = (unsigned char)((namelen + 16) & 0xFF);
+    buf[9]  = (unsigned char)(((namelen + 16) >> 8) & 0xFF);
+    buf[10] = (unsigned char)(((namelen + 16) >> 16) & 0xFF);
+    buf[11] = (unsigned char)(((namelen + 16) >> 24) & 0xFF);
+    /* [12..27] the sixteen zero bytes: a word and a dword that must both be
+     * zero for the record to be a set name, and then ten the function skips. */
+    fwrite(buf, 1, sizeof buf, f);
+    for (k = 0 ; k < supplied ; ++k)
+	fputc(fill, f);
+    fclose(f);
+    return TRUE;
+}
+
 /* --- fuzz corpus replay -------------------------------------------------- *
  *
  * Every input under test/fuzz/corpus/solution/ goes through expandsolution()
@@ -201,7 +237,7 @@ int main(void)
     int i;
 
     tw_begin("solution");
-    tw_expect_atleast(1279);
+    tw_expect_atleast(1460);
 
     /* ================================================================== *
      * Decoding hand-built streams, against the format specification.
@@ -1001,6 +1037,192 @@ int main(void)
 	game.solutiondata = NULL;
     }
 
+    tw_case("🔴 the encoder emits the SMALLEST form at each threshold");
+    {
+	/* Every case above asks whether a recording READS BACK correctly, and
+	 * that question is blind to half of these thresholds. Loosen one
+	 * DOWNWARD -- `delta < (1 << 2)` to `delta < (1 << 2) - 1` -- and the
+	 * encoder simply reaches for the NEXT LARGER form, which holds the same
+	 * value and round-trips perfectly. Measured: six of contractsolution()'s
+	 * offset mutants survived every one of the six layers that way, because
+	 * nothing in the tree ever read the SIZE the encoder chose.
+	 *
+	 * contractsolution() records it in game->solutionsize, so that is the
+	 * oracle. Each row sits at the exact delta where the shipped comparison
+	 * and a one-off twin pick different forms. Expected size is 16 (the
+	 * header) + 1 (the leading move, format 1) + the form under test.
+	 *
+	 * ⚠ delta is the gap MINUS ONE, so each move is placed at delta + 1.
+	 * ⚠ 0x2A and 0x155 are raw mouse targets, so ismousemove() is TRUE. */
+	static struct { int dir; int delta; int bytes; char const *form; } const
+			thresholds[] = {
+	    { 0x2A,		3,	2, "mouse, two bytes"		},
+	    { 0x155,		4,	3, "mouse, three bytes"		},
+	    { 0x2A,		1023,	3, "mouse, three bytes"		},
+	    { 0x155,		1024,	4, "mouse, four bytes"		},
+	    { 0x2A,	  (1 << 18) - 1, 4, "mouse, four bytes"		},
+	    { 0x155,	   1 << 18,	5, "mouse, five bytes"		},
+	    { NORTH | WEST,	2047,	2, "diagonal, ordinary form"	},
+	    { NORTH | WEST,	2048,	4, "diagonal, long form"	},
+	    { EAST,		7,	1, "orthogonal, one byte"	},
+	    { EAST,		8,	2, "orthogonal, two bytes"	},
+	    { WEST,		2047,	2, "orthogonal, two bytes"	},
+	    { WEST,		2048,	4, "orthogonal, four bytes"	}
+	};
+	for (i = 0 ; i < (int)(sizeof thresholds / sizeof *thresholds) ; ++i) {
+	    memset(&game, 0, sizeof game);
+	    initmovelist(&sol.moves);
+	    sol.rndseed = 3;
+	    sol.flags = 0;
+	    sol.rndslidedir = NORTH;
+	    sol.stepping = 0;
+	    addmove(&sol, NORTH, 0);
+	    addmove(&sol, thresholds[i].dir, thresholds[i].delta + 1);
+	    CHECK_INT(contractsolution(&sol, &game), TRUE);
+	    CHECK_MSG(game.solutionsize == 17 + thresholds[i].bytes,
+		      "delta %d (%s): the move encoded to %d bytes, expected %d"
+		      " -- the encoder chose the wrong form",
+		      thresholds[i].delta, thresholds[i].form,
+		      game.solutionsize - 17, thresholds[i].bytes);
+	    CHECK_INT(expandsolution(&back, &game), TRUE);
+	    CHECK_INT(back.moves.count, 2);
+	    if (back.moves.count == 2) {
+		CHECK_INT(back.moves.list[1].when, thresholds[i].delta + 1);
+		CHECK_INT(back.moves.list[1].dir, thresholds[i].dir);
+	    }
+	    destroymovelist(&sol.moves);
+	    destroymovelist(&back.moves);
+	    free(game.solutiondata);
+	    game.solutiondata = NULL;
+	}
+    }
+
+    tw_case("🔴 format 3 packs the LAST three moves, and costs ONE byte");
+    {
+	/* `i + 2 < solution->moves.count` is the guard that says move[2]
+	 * exists. Tighten it to `i + 3 < count` and the packing is refused for
+	 * the last triple in the list -- three bytes instead of one, with every
+	 * move still reading back exactly right. Only the size sees it, and
+	 * only when the triple is LAST: every other case in this file has moves
+	 * following the packed run.
+	 *
+	 * 16 header + 1 for the leading move + 1 for the packed triple. The
+	 * triple is moves 1-3: delta 3, then four ticks apart twice. */
+	memset(&game, 0, sizeof game);
+	initmovelist(&sol.moves);
+	sol.rndseed = 5;
+	sol.flags = 0;
+	sol.rndslidedir = NORTH;
+	sol.stepping = 0;
+	addmove(&sol, NORTH, 0);
+	addmove(&sol, EAST,  4);
+	addmove(&sol, WEST,  8);
+	addmove(&sol, EAST, 12);
+	CHECK_INT(contractsolution(&sol, &game), TRUE);
+	CHECK_MSG(game.solutionsize == 18,
+		  "the final three moves encoded to %d bytes, expected 2 --"
+		  " format 3 did not pack the last triple",
+		  game.solutionsize - 16);
+	CHECK_INT(expandsolution(&back, &game), TRUE);
+	CHECK_INT(back.moves.count, 4);
+	for (i = 0 ; i < sol.moves.count && i < back.moves.count ; ++i) {
+	    CHECK_INT(back.moves.list[i].when, sol.moves.list[i].when);
+	    CHECK_INT(back.moves.list[i].dir, sol.moves.list[i].dir);
+	}
+	destroymovelist(&sol.moves);
+	destroymovelist(&back.moves);
+	free(game.solutiondata);
+	game.solutiondata = NULL;
+    }
+
+    tw_case("⚠ the size ESTIMATE's cushion is four bytes, and this exhausts it");
+    {
+	/* contractsolution() sizes its buffer in a first pass whose thresholds
+	 * mirror the encoder's exactly -- two hand-maintained tables that must
+	 * agree, which §8 of CLAUDE.md says will eventually not. Loosen one and
+	 * the encoder writes past the malloc.
+	 *
+	 * 🔴 WHAT THIS CASE CONTRIBUTES IS THE INPUT, NOT AN ASSERTION. A heap
+	 * overflow has no behavioral consequence an assertion can name: the
+	 * closing realloc() is given the TRUE size, so a recording that fits
+	 * still reads back correctly. AddressSanitizer is the oracle that sees
+	 * all three DIRECTLY, and it is LINUX-ONLY here -- Windows gcc ships no
+	 * libasan, and the -Sanitize pass is UBSan-trap, which does not bound
+	 * heap accesses at all. The `sanitizers` job is what runs it.
+	 *
+	 * ⚠ Two of the three ALSO die on the ordinary Windows pass, and that is
+	 * luck rather than a check: measured 2026-09-21, the one-byte and the
+	 * 28-byte under-allocations both failed round-trip assertions, the
+	 * overflowed tail having been left behind when realloc moved the block.
+	 * The 12-byte one passes the plain pass -- but it does NOT survive the
+	 * run: `-Sanitize` traps it here on Windows, almost certainly indirectly,
+	 * through corrupted move data reaching an array index that
+	 * -fsanitize=bounds does instrument. Allocator behavior is not a
+	 * contract and neither is that trap; do not restate either as coverage.
+	 *
+	 * ⚠ AND THE INPUT IS THE WHOLE POINT, because the estimate opens with
+	 * `size = 21` against a 16-byte header -- a FOUR-BYTE CUSHION that
+	 * absorbs any one-off on a short solution. Measured 2026-09-21 by
+	 * instrumenting both passes: over every case in this file the tightest
+	 * margin was 4 bytes, and loosening the `1 << 3` threshold moved one
+	 * case from 4 to 3 and under-allocated nothing. So ASan could not have
+	 * caught it either. It takes FIVE boundary moves to break through, and
+	 * the run below uses sixteen:
+	 *
+	 *   gap 9    estimate 2 -> 1 under a loosened `<= (1 << 3)`,  -16 bytes
+	 *   gap 2049 estimate 4 -> 2 under a loosened `<= (1 << 11)`, -32 bytes
+	 *
+	 * and the closing mouse move costs 5 in the estimate, so dropping the
+	 * last term -- `i < count` tightened to `i < count - 1` -- under-
+	 * allocates by one. The assertions are ordinary round-trip checks;
+	 * they are here so the case cannot go vacuous unnoticed.
+	 *
+	 * Verified 2026-09-21, each mutation applied to solution.c with both
+	 * passes instrumented: 12, 28 and 1 bytes past the malloc respectively.
+	 * Against the suite as it stood before this case, all three stayed
+	 * inside the cushion and overflowed NOTHING -- so neither ASan nor any
+	 * other layer could have caught them, however long it ran.
+	 *
+	 * ⚠ THE OTHER THREE OFFSETS ON THIS PASS ARE EQUIVALENT MUTANTS -- do
+	 * not go looking for a case. Tightening either threshold (`<= (1 << 3)`
+	 * to `<= (1 << 3) - 1`, likewise `1 << 11`) and widening the loop to
+	 * `i < count + 1` all make the estimate strictly LARGER, and the
+	 * closing realloc() shrinks the block to the true size, so no input can
+	 * tell them from the shipped code. (`count + 1` additionally reads one
+	 * action past the move list; whether that leaves the allocation depends
+	 * on how much spare capacity addtomovelist() happens to hold, which is
+	 * not something a test can pin.) */
+	static int const runs[] = { 9, 2049 };
+	int r, when;
+	for (r = 0 ; r < (int)(sizeof runs / sizeof *runs) ; ++r) {
+	    when = 0;
+	    memset(&game, 0, sizeof game);
+	    initmovelist(&sol.moves);
+	    sol.rndseed = 13;
+	    sol.flags = 0;
+	    sol.rndslidedir = NORTH;
+	    sol.stepping = 0;
+	    addmove(&sol, NORTH, when);
+	    for (i = 0 ; i < 16 ; ++i)
+		addmove(&sol, (i & 1) ? EAST : WEST, when += runs[r]);
+	    addmove(&sol, 0x2A, when += (1 << 18) + 1);   /* 5 bytes, and last */
+	    CHECK_INT(contractsolution(&sol, &game), TRUE);
+	    CHECK_INT(expandsolution(&back, &game), TRUE);
+	    CHECK_INT(back.moves.count, sol.moves.count);
+	    for (i = 0 ; i < sol.moves.count && i < back.moves.count ; ++i) {
+		CHECK_MSG(back.moves.list[i].when == sol.moves.list[i].when,
+			  "gap %d, move %d: wrote when=%d, read back %d",
+			  runs[r], i, sol.moves.list[i].when,
+			  back.moves.list[i].when);
+		CHECK_INT(back.moves.list[i].dir, sol.moves.list[i].dir);
+	    }
+	    destroymovelist(&sol.moves);
+	    destroymovelist(&back.moves);
+	    free(game.solutiondata);
+	    game.solutiondata = NULL;
+	}
+    }
+
     tw_case("🔴 a .tws recorded under the OTHER ruleset is refused at its header");
     {
 	/* readsolutionheader() refuses a file whose ruleset byte differs from the
@@ -1373,6 +1595,155 @@ int main(void)
 	    CHECK_MSG(intact, "a truncated record still wrote past the buffer");
 	    remove(path);
 	}
+    }
+
+    tw_case("🔴 the set-name clamp fires at EXACTLY the byte it must");
+    {
+	/* The case below this one proves the clamp holds -- but it declares a
+	 * 200-byte set name against a 1-to-3 byte buffer, so it only ever
+	 * exercises the clamp at enormous slack. Loosen the comparison by one
+	 * (`size > buffersize - 1` to `size > buffersize`) and it stays green,
+	 * because the clamp still fires; the two forms disagree at exactly ONE
+	 * declared length, `size == buffersize`, and nothing drove it. That is
+	 * the same shape as readleveldata()'s bounds in CLAUDE.md §5: the
+	 * existing cases pinned 0 and 2 bytes of slack and never 1.
+	 *
+	 * B - 1 must be taken whole; B must be clamped to B - 1 and must not
+	 * write buffer[B]. */
+	char const *path = "tw_setname_exact.tws";
+	int const B = 8;
+	int declared;
+	for (declared = B - 1 ; declared <= B + 1 ; ++declared) {
+	    struct { char buf[8]; unsigned char canary[8]; } fenced;
+	    int got, k, intact, expect;
+
+	    memset(&fenced, 0, sizeof fenced);
+	    memset(fenced.canary, 0xA5, sizeof fenced.canary);
+	    if (!write_setname_tws(path, declared, declared, 'N')) {
+		tw_skip("could not create a temporary .tws");
+		break;
+	    }
+	    got = loadsolutionsetname(path, fenced.buf, B);
+	    expect = declared < B ? declared : B - 1;
+	    CHECK_MSG(got == expect,
+		      "a %d-byte set name in a %d-byte buffer returned %d,"
+		      " expected %d", declared, B, got, expect);
+	    CHECK_MSG(fenced.buf[expect] == '\0',
+		      "a %d-byte set name was not terminated at [%d]",
+		      declared, expect);
+	    intact = 1;
+	    for (k = 0 ; k < (int)sizeof fenced.canary ; ++k)
+		if (fenced.canary[k] != 0xA5)
+		    intact = 0;
+	    CHECK_MSG(intact, "a %d-byte set name wrote past a %d-byte buffer",
+		      declared, B);
+	    remove(path);
+	}
+	/* ⚠ The other direction, `size > buffersize - 2`, is an EQUIVALENT
+	 * MUTANT and there is no input to find. It differs only at
+	 * size == buffersize - 1, and both forms leave size at buffersize - 1
+	 * there -- one by not clamping, the other by clamping to the value it
+	 * already held. Proven, not measured; do not go looking. */
+    }
+
+    tw_case("🔴 a set name of exactly ONE byte is a set name; of ZERO is not");
+    {
+	/* `if (size <= 0) goto nosetname` is the only thing separating an empty
+	 * record from a one-character set name, and both one-off twins of that
+	 * 0 survived every layer: `<= 1` throws away a legitimate single-letter
+	 * name, `<= -1` sends an empty record down the reading path, where
+	 * fileread() of zero bytes fails and the record is reported CORRUPT
+	 * (-1) instead of simply having no name (0).
+	 *
+	 * Nothing in the tree had ever built a record at either length. */
+	char const *path = "tw_setname_tiny.tws";
+	char buf[16];
+
+	if (!write_setname_tws(path, 1, 1, 'X')) {
+	    tw_skip("could not create a temporary .tws");
+	} else {
+	    memset(buf, 0x5A, sizeof buf);
+	    CHECK_INT(loadsolutionsetname(path, buf, (int)sizeof buf), 1);
+	    CHECK_STR(buf, "X");
+	    remove(path);
+	}
+	if (!write_setname_tws(path, 0, 0, 'X')) {
+	    tw_skip("could not create a temporary .tws");
+	} else {
+	    memset(buf, 0x5A, sizeof buf);
+	    CHECK_MSG(loadsolutionsetname(path, buf, (int)sizeof buf) == 0,
+		      "an empty set-name record was not reported as 'no name'");
+	    CHECK_STR(buf, "");
+	    remove(path);
+	}
+
+	/* ⚠ THE TWO ABOVE ARE NOT ENOUGH FOR `<= -1`, MEASURED. A size of zero
+	 * takes the reading path under that twin and still ends at 0, because
+	 * fileread() of zero bytes succeeds and buffer[0] is terminated either
+	 * way -- the two differ only in how much of the FILE they consume. So
+	 * the distinguishing input is a record that declares no set name and
+	 * then STOPS: twelve bytes, nothing after. The shipped code decides
+	 * before reading, and answers "no name" (0); the twin reads on, runs
+	 * out of file, and calls the .tws CORRUPT (-1), which is the difference
+	 * between Tile World listing a solution file and refusing it. */
+	{
+	    FILE *f = fopen(path, "wb");
+	    if (!f) {
+		tw_skip("could not create a temporary .tws");
+	    } else {
+		unsigned char head[12];
+		memset(head, 0, sizeof head);
+		head[0] = 0x35; head[1] = 0x33; head[2] = 0x9B; head[3] = 0x99;
+		head[8] = 16;		/* a record of exactly the header: no name */
+		fwrite(head, 1, sizeof head, f);
+		fclose(f);
+		memset(buf, 0x5A, sizeof buf);
+		CHECK_MSG(loadsolutionsetname(path, buf, (int)sizeof buf) == 0,
+			  "a .tws with no set name and nothing after it was"
+			  " reported CORRUPT rather than simply unnamed");
+		CHECK_STR(buf, "");
+		remove(path);
+	    }
+	}
+    }
+
+    tw_case("🔴 buffersize 1 is USABLE, and buffersize 0 is not written to");
+    {
+	/* `if (buffersize < 1) return -1` guards the unconditional
+	 * `buffer[0] = '\0'` two lines below it, and neither twin is visible
+	 * through a return value:
+	 *
+	 *   `< 2`  refuses a legitimate one-byte buffer. The call still fails
+	 *          -- a one-byte buffer cannot hold any name -- but it fails
+	 *          BEFORE terminating the buffer, breaking solution.h's "the
+	 *          result is always terminated" on the one size where that
+	 *          promise is all the caller gets.
+	 *   `< 0`  lets buffersize 0 through, and `buffer[0] = '\0'` then
+	 *          writes one byte into a buffer with no bytes.
+	 *
+	 * So the oracle is the BYTE, not the return value -- the poisoned-byte
+	 * technique CLAUDE.md §8.1 calls the most reusable idea in the file. */
+	struct { char buf[1]; unsigned char canary[8]; } one;
+	struct { unsigned char canary[8]; } none;
+
+	memset(one.canary, 0x3C, sizeof one.canary);
+	one.buf[0] = 'P';
+	CHECK_MSG(loadsolutionsetname("does-not-exist.tws", one.buf, 1) < 0,
+		  "a missing file reported success");
+	CHECK_MSG(one.buf[0] == '\0',
+		  "a one-byte buffer was not terminated (got 0x%02X)",
+		  (unsigned char)one.buf[0]);
+
+	/* Nothing may be written at all when there is nowhere to write it.
+	 * The pointer is valid and the size is zero, which is the shape a
+	 * caller reaches by passing the tail of an exactly-filled buffer. */
+	memset(none.canary, 0x3C, sizeof none.canary);
+	CHECK_MSG(loadsolutionsetname("does-not-exist.tws",
+				      (char *)none.canary, 0) < 0,
+		  "a zero-length buffer was accepted");
+	CHECK_MSG(none.canary[0] == 0x3C,
+		  "a zero-length buffer was written to (got 0x%02X)",
+		  none.canary[0]);
     }
 
     tw_case("the clamp holds at buffer sizes of exactly 1, 2 and 3");

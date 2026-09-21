@@ -243,6 +243,61 @@ static void test_malformed(void)
     g = makegame(0, 0x0010, 1UL);
     CHECK_INT(islevelunsolvable(&g, NULL), FALSE);
 
+    tw_case("🔴 ...and 1 and 65535, the numbers just INSIDE, are accepted");
+    /* The case above only ever drives the refused side, so tightening the
+     * range to `levelnum < 65535` threw away a legitimate entry with the whole
+     * suite green. The two ends of an accepted range need pinning as much as
+     * the two just outside it: a level quietly missing from the unsolvable
+     * list is a level Tile World offers as playable when it is not. */
+    loadtext("[A.dat]\n"
+	     "1: 0010 00000001: the first\n"
+	     "65535: 0020 00000002: the last\n");
+    CHECK_MSG(warn_count == 0, "expected no warnings, got %d", warn_count);
+    g = makegame(1, 0x0010, 1UL);
+    CHECK_MSG(islevelunsolvable(&g, NULL) == TRUE, "level 1 was refused");
+    g = makegame(65535, 0x0020, 2UL);
+    CHECK_MSG(islevelunsolvable(&g, NULL) == TRUE, "level 65535 was refused");
+
+    tw_case("🔴 a truncated entry is a syntax error, not a half-read one");
+    /* `n >= 3` relaxed to `n >= 2` accepts a line carrying a level number and
+     * a size but NO HASH, and calls addtounslist() with `hashval` never
+     * assigned -- an entry whose matching depends on a stack value. The file
+     * had no line of that shape, so the bound was carried by nothing.
+     *
+     * The bare `5:` below is the other half: a line the first sscanf matches
+     * only a number from. The shipped answer to both is "syntax error". */
+    loadtext("[ok]\n"
+	     "5: 0050 00000005: still listed\n"
+	     "6: 0060\n"
+	     "5: \n");
+    CHECK_MSG(warn_count == 2, "expected two warnings, got %d", warn_count);
+    g = makegame(5, 0x0050, 5UL);
+    CHECK_MSG(islevelunsolvable(&g, NULL) == TRUE,
+	      "a malformed line silently retracted level 5");
+    g = makegame(6, 0x0060, 0UL);
+    CHECK_MSG(islevelunsolvable(&g, NULL) == FALSE,
+	      "an entry with no hash was accepted");
+
+    /* ⚠ BOTH `n > 0` GUARDS ARE EQUIVALENT MUTANTS UNDER `n > -1`, and this
+     * note is here because the first draft of this case claimed otherwise and
+     * was measured wrong. Do not spend the afternoon on them.
+     *
+     * The OUTER one (`n > 0 && levelnum > 0 && ...`): when the first sscanf
+     * assigns nothing, neither `n == 1` nor `n >= 3` holds either, so control
+     * reaches the same warn() by a longer route. Only `levelnum` is read
+     * uninitialized on the way, which no assertion can observe.
+     *
+     * The INNER one (`n > 0 && !strcmp(token, "ok")`): the draft reasoned that
+     * `n > -1` would reach strcmp() with a stale `token`, and built the file
+     * above -- a set literally named `ok`, so the set-name sscanf leaves "ok"
+     * in that shared buffer -- to make a bare `5:` retract level 5. It does
+     * not, and cannot: `sscanf(p, "%*d: %s", token)` can only return 1 or EOF.
+     * A suppressed conversion is not counted, so running out of input yields
+     * EOF (-1), never 0, and `%s` cannot fail on input it has. `n > -1` is
+     * false for -1 exactly as `n > 0` is. There is no distinguishing input.
+     * (The file is kept as written; it earns its place on the `n >= 3` bound
+     * above, and the `ok` set name costs nothing.) */
+
     tw_case("comments and blank lines are skipped without complaint");
     loadtext("# a comment\n"
 	     "\n"
@@ -307,6 +362,75 @@ static void test_markseries(void)
     CHECK_INT(markunsolvablelevels(&series), 0);
     CHECK_MSG(games[0].unsolvable == NULL,
 	      "a mark survived a lookup that found no such set");
+
+    tw_case("🔴 a hash written the way the FILE writes it still matches");
+    {
+	/* 🔴 THIS CASE EXISTS BECAUSE ITS ABSENCE WAS A SHIPPED DEFECT. Every
+	 * other case in this file builds its gamesetup with makegame(), which
+	 * assigns levelhash by hand -- so nothing here ever exercised the value
+	 * series.c actually produces, and series_test.c only compared two
+	 * computed hashes with each other. The round trip
+	 *
+	 *     hashvalue()  ->  "%08lX" in the file  ->  sscanf  ->  ==
+	 *
+	 * was covered at neither end, and jc-59 was a defect that lived exactly
+	 * there: on any build where `long` is 64 bits the hash came back wider
+	 * than the field, nothing matched, and the unsolvable-levels list
+	 * silently did nothing. Six layers and two Linux CI jobs missed it.
+	 *
+	 * So this case takes a hash the way the program computes one, formats it
+	 * the way the shipped res/unslist.txt carries it, and requires the
+	 * lookup to find it. It guards the CLASS -- a future change to the
+	 * format string, to levelhash's type, or to the hash's width fails here
+	 * -- and unlike an assertion on the width, it is live on every platform.
+	 *
+	 * ⚠ THE CHAIN IS DELIBERATELY TWO CASES IN TWO FILES, because no single
+	 * translation unit holds both halves: hashvalue() is static in series.c,
+	 * which this test does not compile, and islevelunsolvable() is
+	 * unslist.c's, which series_test.c stubs out. That split is the seam
+	 * itself, and it cannot be closed by moving one case. So they are linked
+	 * by a shared literal instead:
+	 *
+	 *   series_test.c  "the level hash has a VALUE"   hashvalue(...) == this
+	 *   here                                          this survives the file
+	 *
+	 * Change the algorithm and the first fails; change the format string or
+	 * the field's width and this one does. Keep the two constants equal. */
+	unsigned long const knownhash = 0x4939747FUL;	/* see series_test.c */
+	gamesetup hashed;
+	char line[128];
+
+	sprintf(line, "[H.dat]\n7: 00AB %08lX: the hash round trip\n", knownhash);
+	loadtext(line);
+	CHECK_MSG(warn_count == 0, "expected no warnings, got %d", warn_count);
+
+	hashed = makegame(7, 0x00AB, knownhash);
+	CHECK_MSG(islevelunsolvable(&hashed, NULL) == TRUE,
+		  "a hash formatted with %%08lX did not match the value it was"
+		  " formatted from (0x%lX) -- the unsolvable list is dead",
+		  knownhash);
+    }
+
+    tw_case("🔴 the clear covers the LAST level too, not count - 1 of them");
+    /* The case above proves the blanking loop runs; it reads games[0], so
+     * stopping the loop one short leaves it green. games[count - 1] is the one
+     * that tells the bounds apart, and a stale mark there is a level Tile World
+     * keeps calling unsolvable after the list stopped saying so.
+     *
+     * ⚠ The other direction writes games[count], one past the array, and is
+     * the Linux ASan job's to catch -- writing NULL into whatever follows has
+     * no consequence any assertion here can name. Same for the two reading
+     * loops below. */
+    strcpy(series.name, "MySet.dat");
+    loadtext("[MySet.dat]\n"
+	     "3: 0030 00000003: broken three\n");
+    CHECK_INT(markunsolvablelevels(&series), 1);
+    CHECK_MSG(games[2].unsolvable != NULL, "the last level was not marked");
+    loadtext("[MySet.dat]\n"
+	     "1: 0010 00000001: broken one\n");
+    CHECK_INT(markunsolvablelevels(&series), 1);
+    CHECK_MSG(games[2].unsolvable == NULL,
+	      "the last level kept a mark the list no longer carries");
 
     tw_case("🔴 an identical level listed under a DIFFERENT set is not marked");
     /* ⚠ THIS CASE EXISTS BECAUSE ITS ABSENCE WAS MEASURED. The first version of
@@ -406,7 +530,30 @@ int main(void)
 
     clearunslist();
 
+    /* ⭐ THIS FILE'S OFF QUEUE IS WORKED OUT, and the remainder is written down
+     * so the next reader does not re-derive it. Of unslist.c's eleven REACHED
+     * offset survivors, three now die -- the level-number range's accepted end
+     * (`< 65536`), the `n >= 3` field count, and the blanking loop's last
+     * element -- and the other eight are not actionable, each for a reason
+     * proven rather than assumed:
+     *
+     *   :69  -1, :100 -1   the pool and table grow ONE ALLOCATION EARLY. Both
+     *                      sites then double, so every later index is in
+     *                      bounds and no caller can tell. Equivalent.
+     *   :174 col 10, :177  the two `n > 0` sscanf guards. See the note in "a
+     *                      truncated entry is a syntax error" above -- neither
+     *                      has a distinguishing input, and the second one was
+     *                      claimed killable here before it was measured.
+     *   :69  +1            one byte past the string pool: a heap overflow with
+     *                      no behavioral consequence. ASan, on the Linux job.
+     *   :225 +1, :232 +1,  one element past the games array, the list, and the
+     *   :235 +1            games array again. Same class, same oracle.
+     *
+     * Four of those eight are the shape CLAUDE.md section 5 records for res.c:
+     * a plain-pass census will report them forever, and that is the census
+     * measuring one layer of six rather than a hole. */
+
     /* Raise this when cases are added; never lower it to make a run pass. */
-    tw_expect_atleast(45);
+    tw_expect_atleast(57);
     return tw_end();
 }

@@ -90,6 +90,55 @@ layer, which `ci.yml` already did; a maximal trap-wiring case covers the stride 
 gone stale in three separate ways. `series.c:234` and `:253` were measured to be equivalent mutants
 and are recorded as such.
 
+### Fixed — a level hash that could never match, on every platform but this one
+
+`series.c`'s `hashvalue()` accumulates into an `unsigned long` and relies on `accum << 8` discarding
+what leaves the top. That holds where `long` is 32 bits — this build — and not on Linux or macOS,
+where the result carries 32 bits of intermediate state above the value intended. The only consumers
+of `levelhash` compare it for equality against `unslist.c`'s `hashval`, read with `%08lX` and so
+never above `0xFFFFFFFF`, **so on an LP64 build no level ever matched the unsolvable-levels list and
+the feature silently did nothing.** Upstream's. The fix is a 32-bit mask, and this build's output is
+unchanged by proof rather than by measurement: a mask cannot alter a 32-bit `unsigned long`, and the
+byte the loop feeds back is bits 24–31, which the high bits never reach.
+
+Six layers and two Linux CI jobs missed it because **nothing in the tree computed a hash and then
+matched one** — `unslist_test.c` sets `levelhash` by hand, and `series_test.c` compared two computed
+hashes with each other, both carrying the same extra bits. The defect lived in the seam between two
+test files. Found by chasing an OFF survivor. `FORK.md` item 48.
+
+Reviewing that fix turned up a second hole beside it: **nothing pinned what `hashvalue()` returns
+at all.** Changing the final XOR, the initial accumulator, or one entry of the remainders table each
+left the whole suite green, because both hash cases compared two *computed* hashes. `res/unslist.txt`
+is matched by that value, so an algorithm change silently stops every shipped entry matching — on
+every platform. Three golden constants now pin it, and they subsume the width check: a value with bits
+above 31 cannot equal a 32-bit constant, so the case is live on Windows *and* fails on an LP64 build
+without the mask. The seam is closed from both ends, as two cases in two files linked by a shared
+literal — no translation unit can hold both halves, which is what made the seam a seam.
+
+### Added — Batch 2 of the OFF queue: the untrusted-input path
+
+Eleven cases over four test files, closing **23 recorded survivors**: `solution.c` 16 of 49,
+`fileio.c` 4 of 48, `unslist.c` 3 of 11 — and `unslist.c` is now *worked out*, its other eight
+proven equivalent or sanitizer-only and written up in the test file. Two findings generalize past
+the lines they came from, and both are now in `CLAUDE.md` §8.1:
+
+- **For an encoder, the oracle is the size it emitted, not what reads back.** Loosen one of
+  `contractsolution()`'s format thresholds downward and it reaches for the next larger form, which
+  round-trips perfectly — every case in the file asked "does this read back correctly" and every one
+  said yes, while `game->solutionsize` sat unread. Eleven mutants.
+- **A cushion can hide a bound from a sanitizer too.** The move encoder's size estimate opens at 21
+  against a 16-byte header, and across every input in the suite the tightest margin was exactly four
+  bytes — so loosening it overflowed nothing and ASan had nothing to report. A case driving sixteen
+  boundary moves turns the same mutations into 12-, 28- and 1-byte overflows. "Reached, executed and
+  absorbed" is a third diagnosis beside "not detected" and "not exercised".
+
+Also: `getpathforfileindir()` had no case of any kind and both its length bounds are now pinned at
+the exact byte; the set-name clamp is pinned at `size == buffersize`, the one length that tells it
+from its twin; and `unslist.c`'s level-number range is pinned on the accepted side, where tightening
+it to 65534 had been discarding a legitimate entry with the suite green. Roughly one survivor in six
+proved not actionable and is written up where it lives — including one the first draft claimed to
+have killed and had not, corrected against the measurement.
+
 ### Measured
 
 - **The published jc-58 binary replays the whole collection identically** to a local build of the

@@ -78,3 +78,9 @@ chips.dat
 # Screenshots written by the release playtest script. Looking at one is the
 # point; committing it is not -- it is a build artifact of a particular release.
 playtest-*.png
+
+# Git worktrees created by coding agents (CLAUDE.md section 11 recommends one
+# per agent). Each is a checkout of THIS repository, so `git add -A` will
+# happily stage a nested copy of the whole tree into a commit -- which is
+# exactly what happened once. They are scratch; prune with `git worktree prune`.
+/.claude/worktrees/

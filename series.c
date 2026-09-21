@@ -158,7 +158,46 @@ static unsigned long hashvalue(unsigned char const *data, unsigned int size)
 	i = ((accum >> 24) ^ data[j]) & 0x000000FF;
 	accum = (accum << 8) ^ remainders[i];
     }
-    return accum ^ 0xFFFFFFFFUL;
+    /* MOD (Jeremy, jc-59): mask to 32 bits.
+     *
+     * The loop assumes the `<< 8` above discards whatever leaves the top of
+     * `accum`. That is true where `unsigned long` is 32 bits -- this build --
+     * and false on every LP64 platform, where the returned value carries 32
+     * bits of intermediate state above the value meant. Measured over 3,928
+     * buffers including all 903 level records in the seven shipped .dat files:
+     * ALL 903 come back with bits above 31 set at 64 bits and clear at 32.
+     * (Those high bits are the four already-consumed top bytes, which is why
+     * they are pure history -- see the note below.)
+     *
+     * It matters because the only two consumers of levelhash compare it for
+     * EQUALITY against unslist.c's hashval, read with "%08lX", which for the
+     * well-formed lines res/unslist.txt is made of never exceeds 0xFFFFFFFF.
+     * Without the mask, no level on an LP64 build ever matches the
+     * unsolvable-levels list and the feature silently does nothing -- no
+     * "reported to be unsolvable" message, and no auto-reveal of the next
+     * level's password. Upstream's, and present unchanged in upstream today.
+     *
+     * ⚠ This build's output does not move, and that is a proof rather than a
+     * measurement: a mask cannot change a 32-bit unsigned long. The value fed
+     * back into the loop is `(accum >> 24) & 0xFF` -- bits 24-31, which the
+     * bits above 31 never reach -- so the two widths agree at every step and
+     * always did. Only the returned value differed. Confirmed over the same
+     * 3,928 buffers: 0 moved.
+     *
+     * ⚠ The golden master and the e2e layer do NOT witness this, and it would
+     * be easy to think they do. Neither reads levelhash: the engine digest
+     * hashes gamestate only, and no end-to-end case touches the unsolvable
+     * list. What they establish is that nothing ELSE moved.
+     *
+     * ⚠ The mask guards the exit, not the loop, so `accum` is still wide
+     * inside it. If this function ever grows a second return or an early exit,
+     * mask at the accumulation instead -- `accum = ((accum << 8) ^
+     * remainders[i]) & 0xFFFFFFFFUL`, which is what random.c:34 does for the
+     * same hazard. What stops that from being a silent trap is a test rather
+     * than this comment: series_test.c pins the returned value against a
+     * constant, which a too-wide value cannot equal.
+     */
+    return (accum ^ 0xFFFFFFFFUL) & 0xFFFFFFFFUL;
 }
 
 /*

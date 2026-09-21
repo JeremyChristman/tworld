@@ -109,7 +109,7 @@ int main(void)
 	free(buf);
     }
 
-    tw_expect_atleast(42);
+    tw_expect_atleast(51);
 
     tw_case("an absolute path ignores the directory entirely");
     {
@@ -306,6 +306,79 @@ int main(void)
 	CHECK_INT(isreservedfilename("abcdefghijklmno"), FALSE);      /* 15 */
 	CHECK_INT(isreservedfilename("abcdefghijklmn"), FALSE);       /* 14 */
 	CHECK_INT(isreservedfilename("abcdefghijklmnopqrstuvwxyz"), FALSE);
+    }
+
+    tw_case("🔴 getpathforfileindir's two length bounds, at the exact byte");
+    {
+	/* combinepath() joins into a buffer the CALLER owns; this function
+	 * allocates its own with getpathbuffer(), which is PATH_MAX + 1 bytes,
+	 * and it had no case of any kind. Both of its bounds sit exactly where
+	 * that extra byte runs out, and all four one-off twins survived every
+	 * layer -- so a guard on a name out of a .dac or a command line was
+	 * being carried by nothing.
+	 *
+	 * ⭐ Unlike most of this file, the RETURN VALUE is the oracle here: one
+	 * direction refuses a name that fits (a level set that will not open),
+	 * the other accepts one that does not and overruns the allocation by a
+	 * byte. Both are visible without a sanitizer, which is why this case is
+	 * short where the ones above are long.
+	 *
+	 *   no directory:  strcpy() writes m + 1, so m == PATH_MAX exactly fits
+	 *   a directory:   n + 1 + m + 1 bytes, so m + n + 1 == PATH_MAX fits */
+	int const lim = getpathbufferlen();
+	char *name = malloc((size_t)lim + 4);
+	char *got;
+	int i;
+
+	CHECK_MSG(name != NULL, "allocation failed");
+	for (i = 0 ; i < lim + 3 ; ++i)
+	    name[i] = 'n';
+
+	name[lim] = '\0';				/* exactly PATH_MAX */
+	got = getpathforfileindir(NULL, name);
+	CHECK_MSG(got != NULL,
+		  "a %d-character filename with no directory was refused;"
+		  " it fits a getpathbuffer() exactly", lim);
+	if (got) {
+	    CHECK_INT((int)strlen(got), lim);
+	    free(got);
+	}
+
+	name[lim] = 'n';				/* one more */
+	name[lim + 1] = '\0';
+	errno = 0;		/* or a leftover 38 would pass the check below */
+	got = getpathforfileindir(NULL, name);
+	CHECK_MSG(got == NULL,
+		  "a %d-character filename was accepted; it overruns a"
+		  " getpathbuffer() by one byte", lim + 1);
+	CHECK_INT(errno, ENAMETOOLONG);
+	free(got);
+
+	/* With a directory the separator and the terminator both count. A
+	 * four-character directory leaves lim - 5 for the name. */
+	strcpy(dir, "dirn");
+	n = (int)strlen(dir);
+	name[lim - n - 1] = '\0';
+	got = getpathforfileindir(dir, name);
+	CHECK_MSG(got != NULL,
+		  "a directory of %d and a name of %d -- exactly PATH_MAX"
+		  " joined -- was refused", n, lim - n - 1);
+	if (got) {
+	    CHECK_INT((int)strlen(got), lim);
+	    free(got);
+	}
+
+	name[lim - n - 1] = 'n';			/* one more */
+	name[lim - n] = '\0';
+	errno = 0;
+	got = getpathforfileindir(dir, name);
+	CHECK_MSG(got == NULL,
+		  "a joined path of %d characters was accepted; a"
+		  " getpathbuffer() holds %d plus a terminator", lim + 1, lim);
+	CHECK_INT(errno, ENAMETOOLONG);
+	free(got);
+
+	free(name);
     }
 
     return tw_end();
