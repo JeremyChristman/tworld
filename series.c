@@ -731,7 +731,21 @@ static int getmapfile(char const *filename, void *data)
     clearfileinfo(&file);
     if (f) {
     	mfinfovector *v = &sdata->mfinfo;
-	mapfileinfo key;
+	/* MOD (Jeremy, jc-59): zero the search key.
+	 *
+	 * Only .filename is read -- compare_mapfileinfo() is a single stricmp
+	 * on it -- so the other members were left uninitialized and passing
+	 * them to bsearch() is harmless TODAY. cppcheck reports it as an error
+	 * (uninitvar), and it is right about the shape and wrong about the
+	 * consequence, which is the same judgment .cppcheck-suppressions
+	 * already records for memleakOnRealloc.
+	 *
+	 * Initializing costs nothing here (one stack struct per .dat file
+	 * scanned) and is preferred to a suppression because the suppression
+	 * would be permanent cover: add one field to that comparator and this
+	 * becomes a real uninitialized read with nothing left to report it.
+	 */
+	mapfileinfo key = { 0 };
 	key.filename = (char*)filename;
 	mapfileinfo *existingmf =
  	    bsearch(&key, v->buf, v->datdircount, sizeof key, compare_mapfileinfo);
