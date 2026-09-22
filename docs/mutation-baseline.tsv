@@ -6,11 +6,11 @@
 # the OPERANDS around it are -- the direction ROR structurally cannot reach.
 # A row is replaced only by a run of ITS operator; each carries the commit
 # it was measured at.
-# last run: 7733cc91332514ee2e9f6a9fd023e5af52d328ab (OFF, only solution.c)
+# last run: ca642445f8433ab7b29f78c90b33d8136b1be81b (OFF, only fileio.c)
 file	operator	killed	survived	invalid	timeout	flaky	error	commit
 encoding.c	OFF	54	2	0	0	0	0	9f2b8c68aa3e59e3d87955829e7c12e68c98c41d
 encoding.c	ROR	27	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
-fileio.c	OFF	26	48	2	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+fileio.c	OFF	30	44	2	0	0	0	ca642445f8433ab7b29f78c90b33d8136b1be81b
 fileio.c	ROR	23	18	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
 generic/dirinput.c	OFF	9	1	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
 generic/dirinput.c	ROR	4	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
