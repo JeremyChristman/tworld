@@ -6,7 +6,7 @@
 # the OPERANDS around it are -- the direction ROR structurally cannot reach.
 # A row is replaced only by a run of ITS operator; each carries the commit
 # it was measured at.
-# last run: 10ca5448b1a0320070a34438ae6f8cc082bf34ef (OFF, only unslist.c)
+# last run: 5cbef65bc46675355f2a0f834f282e97765e4b99 (OFF, only series.c)
 file	operator	killed	survived	invalid	timeout	flaky	error	commit
 encoding.c	OFF	54	2	0	0	0	0	9f2b8c68aa3e59e3d87955829e7c12e68c98c41d
 encoding.c	ROR	27	1	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
@@ -30,7 +30,7 @@ res.c	OFF	13	39	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
 res.c	ROR	13	20	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
 score.cpp	OFF	12	22	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
 score.cpp	ROR	5	12	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
-series.c	OFF	27	91	0	0	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
+series.c	OFF	29	89	0	0	0	0	5cbef65bc46675355f2a0f834f282e97765e4b99
 series.c	ROR	18	50	0	0	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
 settings.cpp	OFF	23	16	0	1	0	0	b41991fa181794007ee6d9d86cda3a4fad5b6783
 settings.cpp	ROR	25	6	22	3	0	0	28353931c9c1a4bb93735d41e2365b35049c1a62
