@@ -96,6 +96,10 @@ private slots:
 	void OnTilesetMenuAboutToShow();
 	void OnTilesetChosen(QAction* pAction);
 
+	/* MOD (Jeremy, jc-59): user-selectable sound pack. */
+	void OnSoundPackMenuAboutToShow();
+	void OnSoundPackChosen(QAction* pAction);
+
 private:
 	bool HandleEvent(QObject* pObject, QEvent* pEvent);
 	void SetCurrentPage(Page ePage);
@@ -119,6 +123,13 @@ private:
 	bool ApplyTileset(const QString& sFilename);
 	QMenu* m_pTilesetMenu;
 	QActionGroup* m_pTilesetGroup;
+
+	/* MOD (Jeremy, jc-59): user-selectable sound pack -- the tileset menu's twin, listing the
+	 * FOLDERS of res\sounds rather than the files of res\tilesets. Same ownership. */
+	void BuildSoundPackMenu();
+	void ApplySoundPack(const QString& sFolder, const QString& sLabel);
+	QMenu* m_pSoundPackMenu;
+	QActionGroup* m_pSoundPackGroup;
 	
 	enum HintMode { HINT_EMPTY, HINT_TEXT, HINT_INITSTATE };
 	bool SetHintMode(HintMode newmode);

@@ -1979,6 +1979,90 @@ exactly what's mine:
    counts were re-derived by hand and the suite's own `verify-docs.ps1` checks the load-bearing
    ones, but no adversary read the documentation.
 
+49. **jc-59: sound packs -- Options > Sound Effects** (`res.c`, `res.h`, `oshw-sdl/sdlsfx.c`,
+   `settings.cpp`, `oshw-qt/TWMainWnd.cpp`/`.h`, `package.ps1`, `res/sounds/How to make a sound
+   pack.txt`, `test/res_test.c`, `test/qt/sdlsfx_test.cpp`, `test/qt/mainwnd_test.cpp`,
+   `test/settings_test.c`).
+
+   **What was asked.** A Let's Play creator wanted to switch between groups of sound effects
+   (MSCC's for CC1, Tile World's Lynx set for a Lynx run) without copying files by hand, and then
+   more generally: "just like people make custom level sets, custom sounds -- every mappable sound
+   mappable to custom sound files in folders." Maintainer's decisions: a menu like Options >
+   Tileset; a pack supplies a sound as `<RcKeyName>.wav` or through an optional `sounds.txt`
+   (`Name=file`); anything a pack leaves out plays the rc file's sound; the release ships an empty
+   `res\sounds` with a plain-English how-to.
+
+   **What it is.** A pack is a folder in `res\sounds`, chosen per ruleset (`mssoundpack` /
+   `lynxsoundpack` in `[Sound]`). The pack tier sits on top of the existing rc chain in
+   `loadsounds()`, per sound, the way the chosen tileset sits on top of `loadimages()`. The menu
+   keys off `getcurrentruleset()`, never the radio button (the jc-41 lesson), and a pick is written
+   only once `reloadsounds()` proves the PACK supplied at least one sound -- `packloaded`, not "some
+   sound loaded" (the jc-42 lesson: a fallback chain returning TRUE is not the user's choice
+   loading). All 26 slots are mappable; the how-to says which each engine plays (MS 14, Lynx 23)
+   and that `DerezzSound` is played by nothing. Matching is case-insensitive by folding A-Z by hand
+   over a directory listing, so a pack behaves the same unpacked on a case-sensitive filesystem.
+
+   **Two latent defects fixed on the way, both upstream's.**
+   - *A slot nothing loaded for kept whatever it held before.* Inaudible with the stock rc (no
+     ruleset switch leaves a slot the new engine plays unfilled); with packs, pack A's sound would
+     have outlived switching to pack B. Unresolved slots are now freed. Sound never reaches the
+     engine, so this is replay-neutral by construction; no engine file changed.
+   - *`loadsfxfromfile()` leaked on both conversion-failure paths* -- a few bytes once at startup,
+     repeatable from a menu.
+
+   🔴 **THE REVIEW FOUND THREE HOSTILE-WAV DEFECTS, ALL REPRODUCED BEFORE THEY WERE FIXED.** Packs
+   make every WAV file something a stranger hands you, like a level set, and the audio path had only
+   ever loaded files this program shipped.
+   - **A crash.** `lengthin * len_mult` was a `Uint32` product, and `len_mult` comes from the file's
+     own sample rate: a WAV claiming 1 Hz gets 352,800. The first fix bounded the product at 4 GB,
+     which is still fatal -- a 6,088-byte file asked for a 2 GB buffer and SDL's converter (whose
+     lengths are `int`) read past its end: access violation in msvcrt, measured. The bound is now
+     the CONVERTED size, 64 MB, taken in 64 bits.
+   - **A freeze.** A WAV whose audio converts to less than one sample frame stored `len == 0`; as a
+     looping sound the callback's `while (len - n >= sounds[i].len)` never ended, holding the device
+     lock, so the game's next `SDL_LockAudio()` -- every tick -- waited forever. Measured with the real
+     `sdlsfx.c`: the lock never came back. The loader now refuses a sub-frame sound, and the callback
+     skips a zero length on its own; each guard alone was shown to stop the hang.
+   - **A 4 GB spike.** SDL sizes its first allocation from the data chunk's DECLARED length: a
+     144-byte file declaring `0xFFFFFF00` committed 4 GB before any length could be checked
+     (measured, peak commit 4,106 MB). `wavsizesaresane()` now reads the RIFF chunk headers first:
+     RIFF/WAVE magic, file at most 16 MB plus 64 KB of headers, no chunk declaring more than 16 MB, the walk stopping at the
+     `data` chunk and after 10,000 chunks (SDL's own limit -- a file of two million empty chunks held
+     the GUI thread 2.2 s before that cap, 16 ms after). ⚠ The bound is deliberately NOT "no more
+     than the file holds": a file cut short in transit declares more than it has, SDL plays it, and
+     `sdlsfx_test.cpp` pins that it still loads -- the first version of the guard refused it, and
+     that test is what caught it.
+
+   **What else the review changed.** A UTF-8 BOM (Notepad, PowerShell 5.1 `Out-File`) cost
+   `sounds.txt` its first line; now skipped. Qt turns a folder name the code page cannot hold into
+   `"??"`, which passed every rule -- the menu now tests the QString for non-ASCII before converting,
+   and pack names refuse `* ? " < > |`. A misspelled or non-WAV file (`ChipDeath.wav`,
+   `PickupChipSound.mp3`) was ignored in silence while the default played; any sound-like file
+   nothing refers to is now reported, after the load failures so it cannot crowd them out of the
+   32-entry list, which says "...and N more" when full. Only a regular file is handed to the decoder
+   (a folder under a sound's name; a named pipe on Linux would block the GUI thread). Dialogs are
+   plain text (a folder name like `<b>x` would have rendered as markup). The revert after a failed
+   pick no longer claims the previous pack was kept when it could not be reloaded either. The
+   submenu is Alt+E, because Alt+S was taken.
+
+   **Recorded limits, not fixed.** A chosen pack that has since broken is accepted silently at
+   startup and on a ruleset switch, and the menu still checks it -- the tileset's documented jc-42
+   compromise, because startup must stay silent; the next pick reports it. A symlink inside a pack
+   is followed (`stat`, not `lstat`), so one pointing at a network share would be opened; zip files
+   rarely carry them. Two Tile World instances picking packs overwrite each other's choice, as for
+   every setting.
+
+   **Verified.** Architecture review before any code (nine required changes, all adopted), then six
+   reviewers over three rounds -- code, security, failure modes, concurrency, testing, requirements --
+   all approving once their last requested changes (tests and docs) were applied. `res_test.c` 108 -> 304 checks against real folders and files, the
+   decode faked; `sdlsfx_test.cpp` (new, 13 checks) drives the real `sdlsfx.c` on SDL's dummy driver
+   and refuses each hostile file; every guard was mutation-checked (removing it fails a test). A
+   real-game playtest through UI Automation on a scratch install: the menu's listing, a good pack
+   loading and saving, a partial pack listing its problems, an unusable pack refused with the
+   previous choice kept, a pack of the three hostile files refused with the game alive and
+   answering, and MS and Lynx choices stored independently. The corpus differential was not run:
+   no engine or replay file changed, and CLAUDE.md's list does not include `res.c` or `sdlsfx.c`.
+
 
 ## Testing
 

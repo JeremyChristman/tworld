@@ -1,0 +1,115 @@
+HOW TO MAKE A SOUND PACK
+========================
+
+A sound pack is a folder of sound files that replaces some or all of Tile
+World's sounds. Make as many as you like, and pick one under
+Options > Sound Effects while a level is open.
+
+You choose a pack separately for MS and for Lynx, and Tile World remembers
+each choice. Pick your MSCC pack while playing an MS set and your Lynx pack
+while playing a Lynx set, and it switches by itself from then on.
+
+
+MAKING ONE
+----------
+
+1. Inside this folder (res\sounds), make a new folder. Its name is the pack's
+   name in the menu, for example "MSCC" or "Spooky". Use ordinary letters,
+   numbers and punctuation -- no accented letters.
+
+2. Put your sound files in it, named after the sound they replace, from the
+   list below. For example, a file called PickupChipSound.wav plays whenever
+   Chip picks up a computer chip. Capital letters don't matter.
+
+3. That's it. Open a level, go to Options > Sound Effects, and pick your pack.
+
+You don't need all of them: any sound your pack leaves out plays Tile World's
+normal sound instead.
+
+Sounds must be .wav files of 16 MB or less. MP3, OGG and other formats won't
+play -- convert them to .wav first (the free program Audacity can: open the
+file, then File > Export > Export as WAV).
+
+
+STARTING FROM TILE WORLD'S OWN SOUNDS
+-------------------------------------
+
+Tile World's normal sounds are the .wav files in the res folder itself (one
+level up from this one), and the file called rc in that folder lists which
+file plays for which sound -- open it with Notepad to see. To build a pack
+from them, copy the ones you want into your pack folder and rename each one
+after its sound. For example, to use the Lynx death sound, copy res\derezz.wav
+into your pack and name it ChipDeathSound.wav.
+
+
+USING YOUR OWN FILE NAMES (OPTIONAL)
+------------------------------------
+
+If you would rather keep your files' own names -- or use one file for several
+sounds -- add a text file called sounds.txt to the pack folder, with one line
+per sound:
+
+    PickupChipSound=Bell.wav
+    PickupToolSound=Bell.wav
+    ChipDeathSound=Bummer.wav
+
+The part before the = is a name from the list below. The part after it is a
+file in the same folder. Spaces in file names are fine. Lines starting with #
+are notes to yourself and are ignored.
+
+If something in your pack can't be used -- a file that won't play, a line in
+sounds.txt that names a file that isn't there, or a sound file whose name
+isn't one of the names below (a spelling mistake, usually) -- Tile World tells
+you which one when you pick the pack, and plays the normal sound in its place.
+
+
+THE SOUNDS
+----------
+
+"Both" means the sound plays in MS and in Lynx. Some sounds only exist in one
+of them.
+
+  Name                   When it plays                                 Plays in
+  ---------------------  --------------------------------------------  --------
+  ChipDeathSound         Chip dies (see the note below for Lynx)       Both
+  ChipDeathByTimeSound   Time runs out                                 MS
+  TickSound              The warning tick when time is almost up       MS
+  LevelCompleteSound     Finishing a level                             Both
+  PickupChipSound        Picking up a computer chip                    Both
+  PickupToolSound        Picking up a key or boots                     Both
+  BlockedMoveSound       Walking into something you can't pass         Both
+  SocketSound            The chip socket opening                       Both
+  OpenDoorSound          Opening a door                                Both
+  SwitchSound            A button is pressed                           Both
+  TeleportSound          Teleporting                                   Both
+  ThiefSound             The thief taking your boots                   Both
+  BombSound              A bomb going off                              Both
+  SplashSound            Something falling into water                  Both
+  TileEmptiedSound       Walking through dirt or a fake blue wall      Lynx
+  WallCreatedSound       A pop-up wall rising behind you               Lynx
+  TrapEnteredSound       Something steps into a bear trap              Lynx
+  BlockMovingSound       Pushing a block (repeats while it moves)      Lynx
+  SkatingForwardSound    Sliding across ice (repeats)                  Lynx
+  SkatingTurnSound       Sliding around an ice corner (repeats)        Lynx
+  SlidingSound           Riding a force floor (repeats)                Lynx
+  SlideWalkingSound      Walking on a force floor in suction boots     Lynx
+  IceWalkingSound        Walking on ice in skates                      Lynx
+  WaterWalkingSound      Swimming in flippers                          Lynx
+  FireWalkingSound       Walking through fire in fire boots            Lynx
+  DerezzSound            Never played -- listed only so every name     Neither
+                         Tile World knows is written down somewhere
+
+The sounds marked "repeats" loop for as long as the thing is happening, so a
+short sound that loops cleanly works best for them.
+
+A note on Chip's death in Lynx: ChipDeathSound plays when Chip is burned or
+caught by a monster. Drowning plays SplashSound, a bomb plays BombSound, and
+running out of time plays no sound at all. (In MS, every death plays
+ChipDeathSound except running out of time, which plays ChipDeathByTimeSound.)
+
+
+SHARING A PACK
+--------------
+
+A pack is just its folder. Zip the folder up and send it; whoever gets it
+unzips it into their own res\sounds folder.

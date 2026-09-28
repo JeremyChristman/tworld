@@ -40,14 +40,14 @@ configuration". **That was wrong, and it was the third time this project wrote t
 | | |
 |---|---|
 | `res/rc:6` | `UnsolvableList=unslist.txt` |
-| `res.c:324` | `readrcfile()` **lowercases the key** before comparing |
-| `res.c:94` | so it matches `rclist[]`'s `{ "unsolvablelist", FALSE }` |
-| `res.c:568` | → `loadtxtresource(RES_TXT_UNSLIST, loadunslistfromfile)` |
-| `series.c:404` | → `markunsolvablelevels(series)`, on every series load |
+| `res.c:343` | `readrcfile()` **lowercases the key** before comparing |
+| `res.c:96` | so it matches `rclist[]`'s `{ "unsolvablelist", FALSE }` |
+| `res.c:1119` | → `loadtxtresource(RES_TXT_UNSLIST, loadunslistfromfile)` |
+| `series.c:443` | → `markunsolvablelevels(series)`, on every series load |
 
 🔴 **Why it keeps being got wrong, since knowing that is the useful part.** `res/rc` spells the key
 `UnsolvableList`; `rclist[]` spells it `unsolvablelist`; the comparison is `strcmp`. They match only
-because of the lowercasing at `res.c:324`. So grepping for the table's spelling finds nothing in
+because of the lowercasing at `res.c:343`. So grepping for the table's spelling finds nothing in
 `res/rc` and reads exactly like proof that the resource is never set. **Follow the call, not the
 grep.** `test/unslist_test.c` now covers the parser, and `test/res_test.c` pins the
 case-insensitivity so this cannot be rediscovered a fourth time.

@@ -50,6 +50,8 @@
 #include	"../oshw.h"
 #include	"../res.h"
 #include	"../settings.h"
+#include	<sys/types.h>	/* stat(), for the regular-file guard's stub */
+#include	<sys/stat.h>
 
 /* --- the surface res.c links against, stubbed ---------------------------- *
  *
@@ -75,12 +77,62 @@ int loadfontfromfile(char const *filename, int complain)
     (void)filename; (void)complain; return TRUE;
 }
 void freefont(void) { }
+/* MOD (Jeremy, jc-59): the sound stubs RECORD now, for the sound pack cases.
+ *
+ * loadsfxfromfile() succeeds only for a file that really exists -- that is what
+ * SDL_LoadWAV does -- so a case lays real files out on disk and the loader's
+ * path-building is exercised for real. fake_badwav names a file that exists and
+ * still "will not decode", which is the one failure a real pack author hits
+ * that a missing file does not cover. fake_audio is what setaudiosystem(TRUE)
+ * answers: FALSE is "started silent, or no device". */
+static int	fake_audio = TRUE;
+static int	fake_audioclosed = 0;
+static char	fake_sfx[SND_COUNT][1024];
+static int	fake_freed[SND_COUNT];
+static int	fake_sfxcalls = 0;
+static char const *fake_badwav = NULL;
+static int	fake_notregular = 0;	/* times the decoder was handed a non-file */
+
 int loadsfxfromfile(int index, char const *filename)
 {
-    (void)index; (void)filename; return TRUE;
+    FILE       *fp;
+
+    ++fake_sfxcalls;
+    if (!filename) {
+	fake_sfx[index][0] = '\0';
+	return TRUE;
+    }
+    {
+	/* What trypackfile()'s regular-file guard is FOR: the decoder must
+	 * never be handed a folder or a pipe. Opening a folder happens to fail
+	 * on Windows anyway, so the outcome alone cannot show the guard works;
+	 * this count can. */
+	struct stat	st;
+
+	if (!stat(filename, &st) && !S_ISREG(st.st_mode))
+	    ++fake_notregular;
+    }
+    if (!(fp = fopen(filename, "rb")))
+	return FALSE;
+    fclose(fp);
+    if (fake_badwav && strstr(filename, fake_badwav))
+	return FALSE;
+    snprintf(fake_sfx[index], sizeof fake_sfx[index], "%.1000s", filename);
+    return TRUE;
 }
-void freesfx(int index) { (void)index; }
-int setaudiosystem(int active) { (void)active; return TRUE; }
+void freesfx(int index)
+{
+    fake_sfx[index][0] = '\0';
+    ++fake_freed[index];
+}
+int setaudiosystem(int active)
+{
+    if (!active) {
+	++fake_audioclosed;
+	return TRUE;
+    }
+    return fake_audio;
+}
 void setcolors(long bkgnd, long text, long bold, long dim)
 {
     (void)bkgnd; (void)text; (void)bold; (void)dim;
@@ -93,15 +145,24 @@ int loadmessagesfromfile(char const *filename) { (void)filename; return TRUE; }
 int loadunslistfromfile(char const *filename) { (void)filename; return TRUE; }
 void clearunslist(void) { }
 
-/* The settings store, faked. gettilesetoverride() reads through it. */
+/* The settings store, faked: ONE key and its value. gettilesetoverride() and
+ * getsoundpackoverride() read through it.
+ *
+ * MOD (Jeremy, jc-59): keyed now. It used to answer every key with the one
+ * value, which was fine while the tileset was the only reader -- with a second
+ * reader it would have let a sound pack case pass while reading the TILESET's
+ * key, the exact mix-up this fake must be able to catch. */
+static char	fake_stringkey[64] = "";
+
 char const *getstringsetting(char const *key)
 {
-    (void)key;
-    return fake_stringsetting[0] ? fake_stringsetting : NULL;
+    if (!fake_stringsetting[0] || strcmp(key, fake_stringkey))
+	return NULL;
+    return fake_stringsetting;
 }
 void setstringsetting(char const *key, char const *value)
 {
-    (void)key;
+    snprintf(fake_stringkey, sizeof fake_stringkey, "%s", key);
     snprintf(fake_stringsetting, sizeof fake_stringsetting, "%s",
 	     value ? value : "");
 }
@@ -399,7 +460,9 @@ static void test_override(void)
      * 🔴 THIS CASE CANNOT KILL A MUTATION OF THAT BOUND, AND THAT IS NOT A GAP
      * IN IT. Measured 2026-09-13: relax `ruleset >= Ruleset_Count` to `>` in
      * BOTH accessors and this file still passes, all 108 checks -- while
-     * run-tests.ps1 -Sanitize traps on the same build.
+     * run-tests.ps1 -Sanitize traps on the same build. (MOD, jc-59: the two
+     * accessors now share ONE bound, in getoverride(), which the sound pack
+     * reads through as well -- so there is one survivor to track, not two.)
      *
      * The reason is in the guard's own shape. The relaxed bound lets
      * ruleset == Ruleset_Count reach `tilesetkey[ruleset]`, one past a
@@ -463,6 +526,513 @@ static void test_shippedrc(void)
 	      " on line 6 and this is exactly the claim that was twice written"
 	      " down wrong");
     CHECK_STR(res(Ruleset_None, RES_TXT_UNSLIST), "unslist.txt");
+}
+
+/* --- sound packs (jc-59) --------------------------------------------------- *
+ *
+ * The loader is driven against REAL folders and files under the scratch
+ * directory, because what it does is find files: enumerate a pack folder,
+ * match names regardless of case, join paths. Only the decode is faked (see
+ * loadsfxfromfile() above). */
+
+static char	madefiles[64][600];
+static int	madefilecount = 0;
+static char	madedirs[16][600];
+static int	madedircount = 0;
+
+static void mkdir_(char const *rel)
+{
+    char	path[600];
+
+    snprintf(path, sizeof path, "%s/%s", scratchdir, rel);
+    (void)createdir(path);
+    if (madedircount < 16)
+	snprintf(madedirs[madedircount++], sizeof *madedirs, "%s", path);
+}
+
+static void mkfile_(char const *rel, char const *text)
+{
+    char	path[600];
+    FILE       *fp;
+
+    snprintf(path, sizeof path, "%s/%s", scratchdir, rel);
+    if ((fp = fopen(path, "wb"))) {
+	fputs(text, fp);
+	fclose(fp);
+    }
+    if (madefilecount < 64)
+	snprintf(madefiles[madefilecount++], sizeof *madefiles, "%s", path);
+}
+
+static void cleanup_(void)
+{
+    while (madefilecount > 0)
+	remove(madefiles[--madefilecount]);
+    while (madedircount > 0)
+	(void)removedir(madedirs[--madedircount]);
+}
+
+/* The file slot n now holds, without its directory, or "" when it is free. */
+static char const *slot(int n)
+{
+    char const *p = fake_sfx[n];
+    char const *q;
+
+    for (q = p ; *q ; ++q)
+	if (*q == '/' || *q == '\\')
+	    p = q + 1;
+    return p;
+}
+
+static int hasproblem(int kind, int line, char const *text)
+{
+    char const *t;
+    int		i, l;
+
+    for (i = 0 ; i < getsoundpackproblemcount() ; ++i)
+	if (getsoundpackproblem(i, &l, &t) == kind && l == line
+				&& (!text || !strcmp(t, text)))
+	    return TRUE;
+    return FALSE;
+}
+
+/* A fresh MS game with the rc file below and no pack chosen. */
+static void soundsetup(char const *rctext)
+{
+    int	n;
+
+    loadrc(rctext);
+    currentruleset = Ruleset_MS;
+    resources = allresources[Ruleset_MS];
+    fake_stringkey[0] = '\0';
+    fake_stringsetting[0] = '\0';
+    fake_audio = TRUE;
+    fake_badwav = NULL;
+    fake_audioclosed = 0;
+    fake_sfxcalls = 0;
+    for (n = 0 ; n < SND_COUNT ; ++n) {
+	fake_sfx[n][0] = '\0';
+	fake_freed[n] = 0;
+    }
+}
+
+static char const soundrc[] =
+    "PickupChipSound=d-chip.wav\nSplashSound=d-splash.wav\n"
+    "[MS]\nTickSound=d-tick.wav\n";
+
+static void test_soundnames(void)
+{
+    static char	howto[65536];
+    char	lower[64];
+    char	needle[80];
+    FILE       *fp;
+    size_t	len;
+    int		n, i;
+
+    tw_case("🔴 every sound has a pack name, and it is rclist[]'s name capitalized");
+    /* The checked half of a checked duplicate: soundname[] and rclist[]'s sound
+     * rows are two tables that must agree, and this is the only thing that says
+     * they do. A hole in soundname[]'s designated initializers is a NULL, which
+     * would make that sound impossible to supply from a pack. */
+    for (n = 0 ; n < SND_COUNT ; ++n) {
+	CHECK_MSG(soundname[n] != NULL, "sound %d has no pack name", n);
+	if (!soundname[n])
+	    continue;
+	for (i = 0 ; soundname[n][i] && i < (int)sizeof lower - 1 ; ++i)
+	    lower[i] = (char)tolower((unsigned char)soundname[n][i]);
+	lower[i] = '\0';
+	CHECK_STR(lower, rclist[RES_SND_BASE + n].name);
+    }
+
+    tw_case("the shipped how-to lists every sound in its table");
+    /* The third copy of the names, and the one a pack author actually reads.
+     * Anchored to a table row -- two spaces, the name, a space -- so a name
+     * that only appears inside a longer one does not count. */
+    if (!(fp = fopen("res/sounds/How to make a sound pack.txt", "rb"))) {
+	tw_skip("res/sounds/How to make a sound pack.txt not readable from here");
+	return;
+    }
+    len = fread(howto, 1, sizeof howto - 1, fp);
+    fclose(fp);
+    howto[len] = '\0';
+    for (n = 0 ; n < SND_COUNT ; ++n) {
+	if (!soundname[n])
+	    continue;
+	snprintf(needle, sizeof needle, "\n  %s ", soundname[n]);
+	CHECK_MSG(strstr(howto, needle) != NULL,
+		  "the how-to's table has no row for %s", soundname[n]);
+    }
+}
+
+static void test_soundpackpath(void)
+{
+    static char const *const refused[] = {
+	"", "   ", ".", "..", "a/b", "a\\b", "c:x", "CON", "Caf\xc3\xa9", "tab\tname",
+	/* "??" is what Qt makes of a name the code page cannot hold, which is how
+	 * a folder named in Japanese reached the loader; the rest are its kin,
+	 * none of which Windows allows in a file name anyway. */
+	"??", "a*b", "a\"b", "a<b", "a>b", "a|b"
+    };
+    char	dest[1024];
+    char	want[1024];
+    size_t	i;
+
+    if (!resdir)
+	resdir = getpathbuffer();
+    strcpy(resdir, scratchdir);
+
+    tw_case("a pack name is appended to the sound pack directory, spaces and all");
+    CHECK(getsoundpackpath(dest, "My Pack"));
+    snprintf(want, sizeof want, "%s%c%s%c%s", scratchdir, DIRSEP_CHAR,
+	     SOUNDPACKDIR, DIRSEP_CHAR, "My Pack");
+    CHECK_STR(dest, want);
+
+    tw_case("a NULL name yields the sound pack directory itself");
+    CHECK(getsoundpackpath(dest, NULL));
+    snprintf(want, sizeof want, "%s%c%s", scratchdir, DIRSEP_CHAR, SOUNDPACKDIR);
+    CHECK_STR(dest, want);
+
+    tw_case("🔴 every unsafe pack name is refused and CLEARS the destination");
+    /* Everything istilesetname() refuses, plus "." and anything outside ASCII:
+     * SDL opens WAV files by UTF-8 name on Windows while these paths are built
+     * in the local code page, so "Café" would list and then load nothing. */
+    for (i = 0 ; i < sizeof refused / sizeof *refused ; ++i) {
+	memset(dest, 'X', sizeof dest);
+	CHECK_MSG(!getsoundpackpath(dest, refused[i]),
+		  "pack name #%d was accepted", (int)i);
+	CHECK_MSG(dest[0] == '\0', "pack name #%d left a path behind", (int)i);
+    }
+
+    tw_case("a pack path too long to build is refused, and clears dest");
+    {
+	char name[400], *saved = resdir, longdir[400];
+	memset(name, 'a', 300); name[300] = '\0';
+	memset(dest, 'X', sizeof dest);
+	CHECK(!getsoundpackpath(dest, name));
+	CHECK(dest[0] == '\0');
+	memset(longdir, 'd', 300); longdir[300] = '\0';
+	resdir = longdir;
+	memset(dest, 'X', sizeof dest);
+	CHECK(!getsoundpackpath(dest, NULL));
+	CHECK(dest[0] == '\0');
+	resdir = saved;
+    }
+
+    tw_case("the override is stored under the SOUND PACK key, per ruleset");
+    fake_stringsetting[0] = '\0';
+    setsoundpackoverride(Ruleset_MS, "X");
+    CHECK_STR(fake_stringkey, "mssoundpack");
+    CHECK_MSG(gettilesetoverride(Ruleset_MS) == NULL,
+	      "the tileset read the sound pack's value");
+    CHECK_MSG(getsoundpackoverride(Ruleset_None) == NULL,
+	      "Ruleset_None read the MS key");
+    setsoundpackoverride(Ruleset_Lynx, "Y");
+    CHECK_STR(fake_stringkey, "lynxsoundpack");
+    CHECK_STR(getsoundpackoverride(Ruleset_Lynx), "Y");
+    CHECK_MSG(getsoundpackoverride(Ruleset_Count) == NULL,
+	      "an out-of-range ruleset was indexed");
+    /* (Ruleset_None is checked above, straight after the MS key is stored:
+     * here the fake holds the LYNX key, so a None mapped to "mssoundpack"
+     * would read back NULL anyway and the check would prove nothing.) */
+    setsoundpackoverride(Ruleset_Lynx, NULL);
+    CHECK_STR(fake_stringsetting, "");
+}
+
+static void test_soundload(void)
+{
+    char	longmap[800];
+    int		n, i, problems;
+
+    mkfile_("d-chip.wav", "x");
+    mkfile_("d-splash.wav", "x");
+    mkfile_("d-tick.wav", "x");
+    mkdir_("sounds");
+    mkdir_("sounds/My Pack");
+    mkfile_("sounds/My Pack/PickupChipSound.wav", "x");
+    mkfile_("sounds/My Pack/SplashSound.wav", "x");
+    mkfile_("sounds/My Pack/Bell File.wav", "x");
+    mkfile_("sounds/My Pack/sounds.txt",
+	    "# a comment\n"
+	    "; another\n"
+	    "  SplashSound  =  Bell File.wav  \n"
+	    "BogusSound=x.wav\n"
+	    "TickSound=missing.wav\n"
+	    "this line has no equals sign\n"
+	    "ThiefSound=sub/x.wav\n"
+	    "BombSound=\n");
+    mkdir_("sounds/lower");
+    mkfile_("sounds/lower/pickuptoolsound.WAV", "x");
+    mkdir_("sounds/Empty");
+    mkfile_("sounds/Empty/sounds.txt", "SplashSound=nothing.wav");
+    mkdir_("sounds/Twice");
+    mkfile_("sounds/Twice/bad.wav", "x");
+    mkfile_("sounds/Twice/sounds.txt", "SplashSound=bad.wav\nPickupChipSound=bad.wav\n");
+    mkdir_("sounds/Long");
+    mkfile_("sounds/Long/ok.wav", "x");
+    memset(longmap, 'a', sizeof longmap);
+    memcpy(longmap, "PickupChipSound=", 16);
+    strcpy(longmap + 700, ".wav\nSplashSound=ok.wav\n");
+    mkfile_("sounds/Long/sounds.txt", longmap);
+
+    mkdir_("sounds/Order");
+    mkfile_("sounds/Order/a.wav", "x");
+    mkfile_("sounds/Order/b.wav", "x");
+    mkfile_("sounds/Order/Sounds.TXT",
+	    "SplashSound=a.wav\nsplashsound=b.wav\nPickupChipSound=a.wav\n"
+	    "PICKUPCHIPSOUND=\nTickSound=.\nSwitchSound=Caf\xc3\xa9.wav\n");
+    mkdir_("sounds/Many");
+    {
+	static char many[2000];
+	many[0] = '\0';
+	for (i = 0 ; i < 40 ; ++i)
+	    sprintf(many + strlen(many), "Bogus%d=x\n", i);
+	mkfile_("sounds/Many/sounds.txt", many);
+    }
+    mkdir_("sounds/Bom");
+    mkfile_("sounds/Bom/ok.wav", "x");
+    mkfile_("sounds/Bom/sounds.txt",
+	    "\xEF\xBB\xBFPickupChipSound=ok.wav\r\nSplashSound=ok.wav\r\n");
+    mkdir_("sounds/Odd");
+    mkdir_("sounds/Odd/ThiefSound.wav");	/* a FOLDER under a sound's name */
+    mkdir_("sounds/Typos");
+    mkfile_("sounds/Typos/SplashSound.wav", "x");
+    mkfile_("sounds/Typos/ChipDeath.wav", "x");
+    mkfile_("sounds/Typos/PickupChipSound.mp3", "x");
+    mkfile_("sounds/Typos/readme.txt", "x");
+
+    tw_case("🔴 with no pack chosen, the rc sounds load and every other slot is FREED");
+    /* The stale-slot defect: a slot nothing loads for used to keep whatever it
+     * held. Seeded here with a leftover the old loader would have kept. */
+    soundsetup(soundrc);
+    snprintf(fake_sfx[SND_BOMB_EXPLODES], sizeof *fake_sfx, "stale.wav");
+    n = loadsounds();
+    CHECK_INT(n, 3);
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+    CHECK_STR(slot(SND_WATER_SPLASH), "d-splash.wav");
+    CHECK_STR(slot(SND_TIME_LOW), "d-tick.wav");
+    CHECK_STR(slot(SND_BOMB_EXPLODES), "");
+    CHECK_INT(fake_freed[SND_BOMB_EXPLODES], 1);
+    CHECK_INT(packloaded, FALSE);
+    CHECK_INT(getsoundpackproblemcount(), 0);
+
+    tw_case("the chosen pack wins: sounds.txt, then the fixed name, then rc");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "My Pack");
+    n = loadsounds();
+    CHECK_INT(n, 3);
+    CHECK_STR(slot(SND_IC_COLLECTED), "PickupChipSound.wav");
+    CHECK_STR(slot(SND_WATER_SPLASH), "Bell File.wav");	/* over SplashSound.wav */
+    CHECK_STR(slot(SND_TIME_LOW), "d-tick.wav");	/* mapped file missing */
+    CHECK_STR(slot(SND_BOMB_EXPLODES), "");		/* blank value maps nothing */
+    CHECK_INT(packloaded, TRUE);
+
+    tw_case("each sounds.txt problem is reported by kind and line, once");
+    CHECK(hasproblem(SOUNDPROBLEM_UNKNOWNSOUND, 4, "BogusSound"));
+    CHECK(hasproblem(SOUNDPROBLEM_MISSING, 5, "missing.wav"));
+    CHECK(hasproblem(SOUNDPROBLEM_BADLINE, 6, NULL));
+    CHECK(hasproblem(SOUNDPROBLEM_BADFILENAME, 7, "sub/x.wav"));
+    CHECK_INT(getsoundpackproblemcount(), 4);
+    CHECK_INT(getsoundpackproblem(-1, NULL, NULL), -1);
+    CHECK_INT(getsoundpackproblem(4, NULL, NULL), -1);
+
+    tw_case("a fixed name matches however it is capitalized");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "lower");
+    loadsounds();
+    CHECK_STR(slot(SND_ITEM_COLLECTED), "pickuptoolsound.WAV");
+    CHECK_INT(packloaded, TRUE);
+
+    tw_case("a pack chosen for MS does not reach Lynx");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "My Pack");
+    currentruleset = Ruleset_Lynx;
+    resources = allresources[Ruleset_Lynx];
+    loadsounds();
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+    CHECK_INT(packloaded, FALSE);
+
+    tw_case("a pack file that will not decode falls through and is reported");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "My Pack");
+    fake_badwav = "PickupChipSound.wav";
+    loadsounds();
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+    CHECK(hasproblem(SOUNDPROBLEM_UNREADABLE, 0, "PickupChipSound.wav"));
+    CHECK_INT(packloaded, TRUE);	/* Bell File.wav still came from it */
+
+    tw_case("one bad file mapped to two sounds is ONE problem");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Twice");
+    fake_badwav = "bad.wav";
+    loadsounds();
+    for (problems = 0, i = 0 ; i < getsoundpackproblemcount() ; ++i)
+	if (getsoundpackproblem(i, NULL, NULL) == SOUNDPROBLEM_UNREADABLE)
+	    ++problems;
+    CHECK_INT(problems, 1);
+
+    tw_case("a line too long to read is refused, and the NEXT line still counts");
+    /* filegetline() cuts an over-long line and discards the rest of it; half a
+     * filename must not be looked up as though it were a whole one. */
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Long");
+    loadsounds();
+    CHECK(hasproblem(SOUNDPROBLEM_BADLINE, 1, ""));
+    CHECK_STR(slot(SND_WATER_SPLASH), "ok.wav");
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+
+    tw_case("a later sounds.txt line wins, a blank one clears, and names ignore case");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Order");
+    loadsounds();
+    CHECK_STR(slot(SND_WATER_SPLASH), "b.wav");
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+    CHECK(hasproblem(SOUNDPROBLEM_BADFILENAME, 5, "."));
+    CHECK(hasproblem(SOUNDPROBLEM_BADFILENAME, 6, "Caf\xc3\xa9.wav"));
+    CHECK_INT(getsoundpackproblemcount(), 2);
+
+    tw_case("the problem list stops at its bound, 32, and writes nothing past it");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Many");
+    loadsounds();
+    CHECK_INT(getsoundpackproblemcount(), 32);
+    CHECK_INT(getsoundpackproblemsdropped(), 8);
+
+    tw_case("load failures outrank stray files in the bounded list");
+    {
+	char	stray[600];
+
+	mkdir_("sounds/Strays");
+	mkfile_("sounds/Strays/PickupChipSound.wav", "x");
+	for (i = 0 ; i < 40 ; ++i) {
+	    snprintf(stray, sizeof stray, "%s/sounds/Strays/s%02d.mp3", scratchdir, i);
+	    fclose(fopen(stray, "wb"));
+	}
+	soundsetup(soundrc);
+	setsoundpackoverride(Ruleset_MS, "Strays");
+	fake_badwav = "PickupChipSound.wav";
+	loadsounds();
+	CHECK(hasproblem(SOUNDPROBLEM_UNREADABLE, 0, "PickupChipSound.wav"));
+	CHECK_INT(getsoundpackproblemsdropped(), 9);
+	for (i = 0 ; i < 40 ; ++i) {
+	    snprintf(stray, sizeof stray, "%s/sounds/Strays/s%02d.mp3", scratchdir, i);
+	    remove(stray);
+	}
+    }
+
+    tw_case("🔴 a byte-order mark does not cost sounds.txt its first line");
+    /* Notepad's "UTF-8 with BOM" and PowerShell 5.1's Out-File both write one,
+     * and CRLF line ends with it. Before the fix the first name read as three
+     * garbage bytes plus PickupChipSound: its sound lost, and reported as an
+     * unknown name that was spelled correctly. */
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Bom");
+    loadsounds();
+    CHECK_STR(slot(SND_IC_COLLECTED), "ok.wav");
+    CHECK_STR(slot(SND_WATER_SPLASH), "ok.wav");
+    CHECK_INT(getsoundpackproblemcount(), 0);
+    CHECK_INT(getsoundpackproblemsdropped(), 0);
+
+    tw_case("only a regular file is handed to the decoder");
+    /* A folder named like a sound. On Linux the same guard keeps a named pipe
+     * away from SDL, which would block reading it on the thread that draws. */
+    soundsetup(soundrc);
+    fake_notregular = 0;
+    setsoundpackoverride(Ruleset_MS, "Odd");
+    loadsounds();
+    CHECK_INT(fake_notregular, 0);
+    CHECK_STR(slot(SND_BOOTS_STOLEN), "");
+    CHECK(hasproblem(SOUNDPROBLEM_UNREADABLE, 0, "ThiefSound.wav"));
+
+    tw_case("🔴 a sound file nothing refers to is reported -- a misspelling, usually");
+    /* The quiet failure: a pack author's ChipDeath.wav or PickupChipSound.mp3
+     * used to be ignored without a word while the default played. A file that
+     * is not a sound at all (readme.txt) is none of the loader's business. */
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Typos");
+    loadsounds();
+    CHECK_STR(slot(SND_WATER_SPLASH), "SplashSound.wav");
+    CHECK(hasproblem(SOUNDPROBLEM_UNUSED, 0, "ChipDeath.wav"));
+    CHECK(hasproblem(SOUNDPROBLEM_UNUSED, 0, "PickupChipSound.mp3"));
+    CHECK_INT(getsoundpackproblemcount(), 2);
+
+    tw_case("a pack folder with more files than are read says so");
+    {
+	char	crowd[600];
+
+	mkdir_("sounds/Crowd");
+	for (i = 0 ; i < MAXPACKFILES ; ++i) {
+	    snprintf(crowd, sizeof crowd, "%s/sounds/Crowd/f%04d.dat", scratchdir, i);
+	    fclose(fopen(crowd, "wb"));
+	}
+	soundsetup(soundrc);
+	setsoundpackoverride(Ruleset_MS, "Crowd");
+	loadsounds();
+	CHECK(!hasproblem(SOUNDPROBLEM_TOOMANYFILES, 0, ""));
+	snprintf(crowd, sizeof crowd, "%s/sounds/Crowd/f%04d.dat", scratchdir, i);
+	fclose(fopen(crowd, "wb"));
+	loadsounds();
+	CHECK(hasproblem(SOUNDPROBLEM_TOOMANYFILES, 0, ""));
+	for (i = 0 ; i < MAXPACKFILES + 1 ; ++i) {
+	    snprintf(crowd, sizeof crowd, "%s/sounds/Crowd/f%04d.dat", scratchdir, i);
+	    remove(crowd);
+	}
+    }
+
+    tw_case("🔴 reloadsounds(): a pack that supplies NOTHING is a failed pick");
+    /* The jc-42 rule. The rc sounds load behind it, so "sounds loaded" is true
+     * and says nothing about whether the user's choice did. */
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Empty");
+    CHECK_INT(reloadsounds(), SOUNDPACK_FAILED);
+    CHECK_STR(slot(SND_WATER_SPLASH), "d-splash.wav");
+    CHECK(hasproblem(SOUNDPROBLEM_MISSING, 1, "nothing.wav"));
+
+    tw_case("reloadsounds(): a pack folder that is not there fails the same way");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "Not There");
+    CHECK_INT(reloadsounds(), SOUNDPACK_FAILED);
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+    /* ...and says why, or its author is told to add sounds to a folder that
+     * is not there. */
+    CHECK(hasproblem(SOUNDPROBLEM_FOLDER, 0, "Not There"));
+
+    tw_case("reloadsounds(): a good pack, and the default, both succeed");
+    soundsetup(soundrc);
+    setsoundpackoverride(Ruleset_MS, "My Pack");
+    CHECK_INT(reloadsounds(), SOUNDPACK_OK);
+    setsoundpackoverride(Ruleset_MS, "");
+    CHECK_INT(reloadsounds(), SOUNDPACK_OK);
+    CHECK_STR(slot(SND_IC_COLLECTED), "d-chip.wav");
+
+    tw_case("🔴 reloadsounds() with no audio touches NOTHING and does not blame the pack");
+    /* loadsfxfromfile() fails for "no device" exactly as for "no file". Without
+     * this answer, a device hiccup during a pick would have freed every working
+     * sound and reported the pack as broken. */
+    soundsetup(soundrc);
+    snprintf(fake_sfx[SND_IC_COLLECTED], sizeof *fake_sfx, "keep.wav");
+    setsoundpackoverride(Ruleset_MS, "My Pack");
+    fake_audio = FALSE;
+    CHECK_INT(reloadsounds(), SOUNDPACK_NOAUDIO);
+    CHECK_STR(slot(SND_IC_COLLECTED), "keep.wav");
+    CHECK_INT(fake_sfxcalls, 0);
+    for (problems = 0, i = 0 ; i < SND_COUNT ; ++i)
+	problems += fake_freed[i];
+    CHECK_INT(problems, 0);
+
+    tw_case("reloadsounds() with no ruleset in play fails rather than guessing");
+    soundsetup(soundrc);
+    currentruleset = Ruleset_None;
+    CHECK_INT(reloadsounds(), SOUNDPACK_FAILED);
+    CHECK_INT(fake_sfxcalls, 0);
+
+    tw_case("reloadsounds() closes the device on zero sounds, as startup does");
+    soundsetup("");
+    CHECK_INT(reloadsounds(), SOUNDPACK_OK);
+    CHECK_INT(fake_audioclosed, 1);
+
+    cleanup_();
+    fake_badwav = NULL;
+    fake_stringsetting[0] = '\0';
 }
 
 /* --- fuzz corpus replay -------------------------------------------------- *
@@ -544,6 +1114,9 @@ int main(void)
     test_tilesetname();
     test_tilesetpath();
     test_override();
+    test_soundnames();
+    test_soundpackpath();
+    test_soundload();
     test_shippedrc();
     test_corpus();
 
@@ -554,6 +1127,6 @@ int main(void)
 	      "the scratch directory %s could not be removed", scratchdir);
 
     /* Raise this when cases are added; never lower it to make a run pass. */
-    tw_expect_atleast(108);
+    tw_expect_atleast(304);
     return tw_end();
 }

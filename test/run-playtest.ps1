@@ -196,8 +196,11 @@ try {
 
     $exe = Join-Path $scratch "Tile World.exe"
     Check "the zip contains Tile World.exe" (Test-Path $exe)
-    foreach ($f in @("README.txt", "COPYING", "tw_settings.ini", "zlib1.dll", "libzstd.dll")) {
-        Check ("the zip contains {0}" -f $f) (Test-Path (Join-Path $scratch $f))
+    # MOD (Jeremy, jc-59): the sound pack how-to is the one entry below the top level, and it is
+    # what creates res\sounds for someone extracting over an install -- so its PATH is the check.
+    foreach ($f in @("README.txt", "COPYING", "tw_settings.ini", "zlib1.dll", "libzstd.dll",
+                     "res\sounds\How to make a sound pack.txt")) {
+        Check ("the zip contains {0}" -f $f) (Test-Path -LiteralPath (Join-Path $scratch $f))
     }
     if (-not (Test-Path $exe)) { throw "nothing to test" }
 

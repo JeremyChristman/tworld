@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-58
+  Tile World  --  Jeremy Christman's fork                    build jc-59
 ==============================================================================
 
   1. What this is
@@ -72,10 +72,16 @@ There is nothing to uninstall -- delete the folder and it is gone.
     libzstd.dll         Required. Keep it next to the exe.
     README.txt          This file.
     COPYING             The GNU General Public License, version 2.
+    res\sounds\How to make a sound pack.txt
+                        How to make your own sound effects -- see jc-59 in
+                        section 7. Extracting the zip into your Tile World
+                        folder puts it in the right place.
 
 NOT included: level sets, and the res/ and data/ folders the game needs to run.
-This zip is the PROGRAM, meant to be dropped into an existing Tile World
-installation -- see the next section.
+(The zip's res\sounds folder holds only the sound pack how-to; extracting it
+adds that one file and changes nothing else in res.) This zip is the PROGRAM,
+meant to be dropped into an existing Tile World installation -- see the next
+section.
 
   >> UPGRADING? TWO THINGS BEFORE YOU EXTRACT.
      1. tw_settings.ini REPLACES save\settings in this build. Read the
@@ -83,7 +89,8 @@ installation -- see the next section.
      2. If you already have a tw_settings.ini, DO NOT let the extraction
         replace it -- the copy in this zip is the stock one, and it would
         discard your settings. Extract somewhere else and copy the exe and
-        the DLLs across by hand.
+        the DLLs across by hand -- and the res\sounds folder too, if you
+        want the sound pack how-to.
 
 
 ------------------------------------------------------------------------------
@@ -247,6 +254,8 @@ This is the complete stock file:
     selectedseries=
 
     [Sound]
+    lynxsoundpack=
+    mssoundpack=
     volume=10
 
 ON/OFF SETTINGS TAKE "true" OR "1". Anything else -- "false", "0", a typo, a
@@ -462,6 +471,23 @@ selectedseries  The level set to reopen at startup.
 [Sound]
 ---------
 
+lynxsoundpack   Which sound pack to play, named separately for each ruleset.
+mssoundpack     Values:  the NAME of a folder in res\sounds, e.g. "MSCC".
+                         Not a path. Letters, digits and ordinary punctuation
+                         only -- no accented letters.
+                Default: empty, meaning the sounds named in res\rc, exactly
+                         as before.
+                You do not normally edit these by hand. Pick a pack under
+                Options > Sound Effects while a level is open and the choice
+                is written here for you, for whichever ruleset you are
+                playing. How to make a pack: read "How to make a sound
+                pack.txt", which this download puts in res\sounds when you
+                extract it into your Tile World folder.
+                Anything that goes wrong falls back to the sounds in res\rc
+                and the game keeps running: an empty value, a missing line, a
+                folder that has been deleted or renamed, or a pack with no
+                usable sounds in it.
+
 volume          Sound volume.
                 Values:  0 (silent) to 10 (loudest).
                 Default: 10
@@ -495,6 +521,43 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-59  --  Your own sound effects, and a sound loader that can take a bad file
+--------------------------------------------------------------------
+
+  * NO CHANGE TO HOW ANY LEVEL PLAYS. Every solution replays exactly as it did
+    in jc-58. Sound never touches the game itself.
+
+  * SOUND PACKS. A sound pack is a folder of sound files in res\sounds. Pick
+    one under Options > Sound Effects while a level is open. The choice is
+    made separately for MS and for Lynx and remembered, so you can keep
+    MSCC's sounds for MS and Tile World's Lynx sounds for Lynx, and the game
+    switches between them by itself -- no more copying sound files around.
+
+    Every one of the game's sounds can be replaced. Name a file after the
+    sound it replaces (PickupChipSound.wav, for example) and put it in the
+    pack's folder; anything the pack leaves out plays the normal sound. A
+    pack can also include a small text file, sounds.txt, to use its own file
+    names or one file for several sounds. "How to make a sound pack.txt" in
+    res\sounds explains it all and lists every sound's name.
+
+    If something in a pack can't be used -- a file that won't play, a name
+    that's misspelled -- the game tells you which one when you pick the pack,
+    and plays the normal sound in its place.
+
+  * A SOUND FILE CAN NO LONGER CRASH OR FREEZE THE GAME. Sound packs are
+    files people will share, like level sets, so the part of the game that
+    reads sound files was tested against deliberately broken ones. Three got
+    through: one crashed the game, one froze it for good, and one made it
+    grab four gigabytes of memory. All three are now turned away safely,
+    and the normal sound plays instead. If you pick a pack that has one,
+    the game tells you which file.
+
+  * ONE OLD QUIRK FIXED. A sound with nothing to replace it stayed loaded
+    from before. With the normal sounds you could never hear that, but with
+    packs one pack's sound would have outlived switching to another. Such
+    sounds are now cleared.
 
 
 jc-58  --  One real memory fix, found by looking for it on purpose

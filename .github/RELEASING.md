@@ -133,7 +133,8 @@ Two mechanical guards back this up:
 
 ## What ships
 
-`package.ps1` produces `dist\TileWorld-<tag>.zip` containing exactly six files:
+`package.ps1` produces `dist\TileWorld-<tag>.zip` containing exactly seven files -- six at the top
+level and, since jc-59, one in `res/sounds/`:
 
 | File | Rule |
 |---|---|
@@ -143,13 +144,14 @@ Two mechanical guards back this up:
 | `libzstd.dll` | likewise |
 | `README.txt` | re-updated every release (step 2) |
 | `COPYING` | GPLv2 travels with the binary, as the license requires |
+| `res/sounds/How to make a sound pack.txt` | the sound pack how-to (jc-59). It is the one entry below the top level, and what makes `res\sounds` exist for someone who extracts the zip over an install -- an empty folder cannot be put in a zip. CRLF, like the README |
 
-One zip rather than loose assets, so nobody downloads the executable without the other five.
+One zip rather than loose assets, so nobody downloads the executable without the rest.
 
 The packager verifies the **archive**, not the folder it was built from: entry names must contain no
 backslash (PowerShell 5.1 writes them by default, and Info-ZIP on Linux and macOS does not treat
 those as separators — this is a public download that has to open off Windows), the file set must be
-exactly those six, and every entry must hash-match its source.
+exactly those seven, and every entry must hash-match its source.
 
 ## Build provenance
 

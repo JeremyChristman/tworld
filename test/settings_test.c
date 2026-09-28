@@ -723,14 +723,14 @@ static void test_roundtrip(void)
 		  "showinitstate=0\nshowlevelname=true\nshowlevelpack=false\n"
 		  "\n[Game]\n"
 		  "ignorepasswords=false\nselectedruleset=2\nselectedseries=\n"
-		  "\n[Sound]\nvolume=10\n"));
-    CHECK_INT((int)settings.size(), 16);
+		  "\n[Sound]\nlynxsoundpack=\nmssoundpack=\nvolume=10\n"));
+    CHECK_INT((int)settings.size(), 18);
     first = getfile();
     map1 = dumpmap();
     savesettings();
     CHECK_STR(filetext(), first.c_str());
     loadsettings();
-    CHECK_INT((int)settings.size(), 16);
+    CHECK_INT((int)settings.size(), 18);
     CHECK_STR(maptext(), map1.c_str());
 
     tw_case("...and the shipped file's missing final newline is restored");
@@ -748,7 +748,7 @@ static void test_roundtrip(void)
     settings.clear();
     settingsUnreadable = false;
     loadsettings();
-    CHECK_INT((int)settings.size(), 16);
+    CHECK_INT((int)settings.size(), 18);
     savesettings();
     CHECK_STR(filetext(), first.c_str());
 }
@@ -1271,11 +1271,12 @@ int main(void)
      * test_sectiontable() 21, none of them platform-dependent. ⚠ Twelve of
      * test_sectiontable()'s are derived from the NUMBER OF KEYS in SECTIONS[],
      * so adding a setting raises the real count on its own -- which is fine for
-     * a floor, but do not read this number as an exact total. */
+     * a floor, but do not read this number as an exact total. jc-59 took it
+     * 183 -> 185 (177 -> 179) that way: two [Sound] keys, one check each. */
 #ifdef WIN32
-    tw_expect_atleast(183);
+    tw_expect_atleast(185);
 #else
-    tw_expect_atleast(177);
+    tw_expect_atleast(179);
 #endif
     return tw_end();
 }

@@ -100,7 +100,10 @@ namespace
                        "showbuildtag", "showdeathcounter", "showinitstate",
                        "showlevelname", "showlevelpack", nullptr } },
         { "Game",    { "ignorepasswords", "selectedruleset", "selectedseries", nullptr } },
-        { "Sound",   { "volume", nullptr } },
+        /* MOD (Jeremy, jc-59): lynxsoundpack/mssoundpack name the chosen sound pack per
+         * ruleset. Alphabetical like [Display], which also keeps volume LAST -- the shipped
+         * file ends on volume=10, and verify-defaults.ps1 relies on that. */
+        { "Sound",   { "lynxsoundpack", "mssoundpack", "volume", nullptr } },
     };
 }
 

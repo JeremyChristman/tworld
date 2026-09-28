@@ -157,6 +157,9 @@ foreach ($dll in "zlib1.dll", "libzstd.dll") {
 #   showlevelpack=false  jc-56. Opt-in, like every other switch here. The pack name in the
 #                   title is this fork's addition, so a downloader gets stock Tile World --
 #                   the same reasoning as showbuildtag (ADR 0006).
+#   lynxsoundpack=  jc-59. Shipped EMPTY for the reason the tileset pair is: an empty name is
+#   mssoundpack=    refused by getsoundpackpath(), so the loader uses the rc file's sounds,
+#                   which is exactly the behavior of an absent key.
 #
 # Re-check this list whenever a default changes -- and run verify-defaults.ps1, which compares
 # these keys against settings.cpp's SECTIONS[] so that "re-check" is not left to memory.
@@ -181,6 +184,8 @@ selectedruleset=2
 selectedseries=
 
 [Sound]
+lynxsoundpack=
+mssoundpack=
 volume=10
 "@ -replace "`r`n", "`n" -replace "`n", "`r`n" |
     ForEach-Object { [IO.File]::WriteAllText((Join-Path $pkgDir "tw_settings.ini"), $_, (New-Object Text.UTF8Encoding $false)) }
@@ -189,6 +194,17 @@ volume=10
 $readme = [IO.File]::ReadAllText((Join-Path $root "README.txt"))
 $readme = $readme -replace "`r`n", "`n" -replace "`n", "`r`n"
 [IO.File]::WriteAllText((Join-Path $pkgDir "README.txt"), $readme, (New-Object Text.UTF8Encoding $false))
+
+# MOD (Jeremy, jc-59): the sound pack how-to, at res/sounds/ -- the one entry in this zip that is
+# not at the top level. It is what makes the folder exist for someone who extracts the zip over an
+# existing install (the menu lists res\sounds' subfolders, and an empty directory cannot be put in
+# a zip or in git). CRLF for Notepad, like the README.
+$howtoName = "How to make a sound pack.txt"
+$howtoDir = Join-Path $pkgDir "res\sounds"
+New-Item -ItemType Directory -Force -Path $howtoDir | Out-Null
+$howto = [IO.File]::ReadAllText((Join-Path $root "res\sounds\$howtoName"))
+$howto = $howto -replace "`r`n", "`n" -replace "`n", "`r`n"
+[IO.File]::WriteAllText((Join-Path $howtoDir $howtoName), $howto, (New-Object Text.UTF8Encoding $false))
 
 # GPL binary distribution: the license text travels WITH the binary.
 Copy-Item (Join-Path $root "COPYING") (Join-Path $pkgDir "COPYING") -Force
@@ -218,19 +234,31 @@ if (-not $found) { throw "the executable does not contain the build tag [$tag] -
 $zip = Join-Path $dist "TileWorld-$tag.zip"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName System.IO.Compression     # ZipArchiveMode lives in this one, not the above
+#
+# MOD (Jeremy, jc-59): -Recurse, for res/sounds/. Both loops below -- the writer and the expected
+# set -- must enumerate the same way and name entries through the SAME function, or the "contents
+# match" check further down fails, which is what it is for. The name is the path relative to the
+# staging folder with every separator forced to "/", for the Info-ZIP reason above.
+$pkgRoot = (Resolve-Path -LiteralPath $pkgDir).ProviderPath.TrimEnd('\')
+function Get-EntryName([IO.FileInfo]$f) {
+    if (-not $f.FullName.StartsWith($pkgRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "staged file $($f.FullName) is not under $pkgRoot"
+    }
+    return "TileWorld-$tag/" + ($f.FullName.Substring($pkgRoot.Length + 1) -replace '\\', '/')
+}
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
 try {
-    foreach ($f in (Get-ChildItem -LiteralPath $pkgDir -File | Sort-Object Name)) {
+    foreach ($f in (Get-ChildItem -LiteralPath $pkgDir -File -Recurse | Sort-Object FullName)) {
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-            $archive, $f.FullName, "TileWorld-$tag/$($f.Name)",
+            $archive, $f.FullName, (Get-EntryName $f),
             [IO.Compression.CompressionLevel]::Optimal) | Out-Null
     }
 } finally { $archive.Dispose() }
 
 # Verify the ARCHIVE, not the folder it was built from -- the zip is what people download.
 $expected = @{}
-foreach ($f in (Get-ChildItem -LiteralPath $pkgDir -File)) {
-    $expected["TileWorld-$tag/$($f.Name)"] = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+foreach ($f in (Get-ChildItem -LiteralPath $pkgDir -File -Recurse)) {
+    $expected[(Get-EntryName $f)] = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
 }
 $check = [IO.Compression.ZipFile]::OpenRead($zip)
 try {

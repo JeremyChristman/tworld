@@ -63,10 +63,13 @@
 #include	"TWMainWnd.h"
 
 #include	"../../settings.h"	/* setstringsetting, for the legacy-scores opt-in */
+#include	"../../res.h"		/* getcurrentruleset, for the sound pack menu */
+#include	"../../defs.h"		/* Ruleset_None */
 
 #include	<QApplication>
 #include	<QLabel>
 #include	<QAction>
+#include	<QMenu>
 #include	<QPalette>
 #include	<QBrush>
 #include	<QWidget>
@@ -291,6 +294,56 @@ static void test_deathcounter_menu(TileWorldMainWnd *w)
     w->UpdateDeathCounterMenu();
     CHECK_INT(reset->isVisible(), 0);
     CHECK_INT(set->isVisible(), 0);
+}
+
+/* --- the sound pack menu (jc-59) ------------------------------------------ *
+ *
+ * Only the DECISIONS a window makes without a game in progress. Loading a real
+ * pack needs a ruleset in play and an audio device, and is covered by
+ * test/res_test.c (the loader) and by hand (the dialogs). */
+
+static QMenu *submenu(QMenu *menu, char const *title)
+{
+    for (QAction *a : menu->actions())
+	if (a->menu() && a->text() == QString::fromLatin1(title))
+	    return a->menu();
+    return NULL;
+}
+
+static void test_soundpack_menu(TileWorldMainWnd *w)
+{
+    QMenu *options = named<QMenu *>(w, "menu_Options");
+    QMenu *sounds = options ? submenu(options, "Sound &Effects") : NULL;
+
+    tw_case("Options > Sound Effects sits directly below Tileset, above the line");
+    /* The two per-ruleset appearance pickers read as one group between the
+     * .ui's separator and the one this build moved below them. */
+    CHECK_MSG(options != NULL, "no Options menu");
+    CHECK_MSG(sounds != NULL, "no Sound Effects submenu under Options");
+    if (!options || !sounds)
+	return;
+    QList<QAction *> const items = options->actions();
+    int const at = items.indexOf(sounds->menuAction());
+    CHECK_MSG(at > 0 && items[at - 1]->menu() != NULL
+	      && items[at - 1]->text() == QStringLiteral("&Tileset"),
+	      "Sound Effects is not directly below Tileset");
+    CHECK_MSG(at >= 0 && at + 1 < items.size() && items[at + 1]->isSeparator(),
+	      "no separator directly below Sound Effects");
+
+    tw_case("with no level started it explains itself, and the submenu stays ENABLED");
+    /* The jc-41 trap: a submenu filled by aboutToShow that is ever disabled can
+     * never show again, so nothing could switch it back on. Rebuilt twice to
+     * prove the rebuild replaces its entries rather than piling them up. */
+    CHECK_INT(getcurrentruleset(), Ruleset_None);
+    CHECK(QMetaObject::invokeMethod(w, "OnSoundPackMenuAboutToShow", Qt::DirectConnection));
+    CHECK(QMetaObject::invokeMethod(w, "OnSoundPackMenuAboutToShow", Qt::DirectConnection));
+    CHECK_INT(sounds->actions().size(), 1);
+    if (sounds->actions().size() == 1) {
+	CHECK_STR(sounds->actions()[0]->text().toUtf8().constData(),
+		  "(start a level first)");
+	CHECK_INT(sounds->actions()[0]->isEnabled(), 0);
+    }
+    CHECK_INT(sounds->isEnabled(), 1);
 }
 
 /* --- the window title and the build tag ---------------------------------- */
@@ -852,6 +905,7 @@ int main(int argc, char **argv)
     test_construction(w);
     test_shortmsg(w);
     test_deathcounter_menu(w);
+    test_soundpack_menu(w);
     test_title(w);
     test_background(w);
     test_scoretable_model(w);
@@ -875,6 +929,6 @@ int main(int argc, char **argv)
      * Exact, and both runners now check that it is -- see run-tests.ps1 and
      * run-sanitizers.sh. Nothing here is platform-dependent: the offscreen
      * platform is the same everywhere, which is most of why it was used. */
-    tw_expect_atleast(105);
+    tw_expect_atleast(116);
     return tw_end();
 }

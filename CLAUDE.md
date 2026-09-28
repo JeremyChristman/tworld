@@ -31,7 +31,7 @@ SuperCC, measured over the whole solution corpus, and reported *levels fixed / l
 desync count reached zero at jc-28 and has stayed there.**
 
 Everything since (jc-30 onward) is quality-of-life: settings, a background color, a death counter,
-level-navigation wrapping, a tileset picker, keyboard fixes.
+level-navigation wrapping, a tileset picker, keyboard fixes, sound packs.
 
 That history is why the engine is treated the way it is here. **`mslogic.c` carries more than eighty
 `MOD (Jeremy)` edits and thirty-two `NO_FIX_*` behavior toggles.** A change to it does not just risk
@@ -250,13 +250,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,698 checks; 13 end-to-end cases, 38 checks; 3 Qt runs, 221 checks;
+Current state: **19 unit runs, 23,896 checks; 13 end-to-end cases, 38 checks; 4 Qt runs, 245 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,698 AS A MEASURE OF REACH. Three files are 94% of it.**
-`random_test.c` alone is **15,534** — 66%, because it asserts a handful of properties a couple of
+🔴 **DO NOT READ 23,896 AS A MEASURE OF REACH. Three files are 93% of it.**
+`random_test.c` alone is **15,534** — 65%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,460. That leaves about
-**1,493 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+**1,691 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -572,11 +572,16 @@ misreading in the parser is faithfully reproduced and never caught.
   - `test/qt/ccmetadata_test.cpp` — `CCMetaData.cpp`, the `.ccx` parser, 90 checks. The only parser
     in the tree **no other layer can reach**: `readextensions()` returns immediately when
     `g_pMainWnd` is null, so batch mode, the e2e cases and every fuzz target skip it by construction.
+  - `test/qt/sdlsfx_test.cpp` — `oshw-sdl/sdlsfx.c`'s guards against a hostile WAV, 13 checks, jc-59. Here
+    only because this runner links SDL; it uses no Qt. It drives the REAL loader on SDL's `dummy`
+    audio driver (no sound card needed) and asserts it refuses the three files that crashed, froze
+    and spiked the game in review -- a 1 Hz WAV, one that converts to nothing, and a 144-byte file
+    declaring 4 GB -- while still loading an ordinary, an 8-bit 11 kHz and a truncated file.
   - `test/qt/textcoder_test.cpp` — `TWTextCoder.cpp`, the CC1↔Unicode codec every level name,
     password and hint passes through, 26 checks. ⭐ **It found a shipped defect on its first run** —
     `encode()` was shifted one byte below `decode()` for eleven characters — now fixed by making
     `encode()` a reverse lookup of the decode table, so the two are inverse by construction. See §8.
-  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 105 checks, the largest file that ships. It links
+  - `test/qt/mainwnd_test.cpp` — `TWMainWnd.cpp`, 116 checks, the largest file that ships. It links
     the window against most of the core (27 declared sources; `tworld.c` owns `main()` and is
     stubbed) and drives it under `QT_QPA_PLATFORM=offscreen`. What it asserts are DECISIONS, never
     drawings: the jc-37/jc-38 short-message precedence, the death-counter menu, the window title
@@ -847,13 +852,13 @@ gaps in the ordinary suite and now have cases: `fileio.c:470` (`combinepath` in 
 trap every tick, and the Lynx engine had no beartrap case at all).
 
 🔴 **THE OTHER FIVE ARE SANITIZER-ONLY BY CONSTRUCTION, NOT BY NEGLECT — DO NOT GO HUNTING FOR A
-PLAIN-PASS TEST.** `res.c:251`, `res.c:258`, `generic/tile.c:1191`, `generic/tile.c:1194` and
+PLAIN-PASS TEST.** `res.c:259`, `res.c:267`, `generic/tile.c:1191`, `generic/tile.c:1194` and
 `generic/in.c:367` are pure out-of-bounds accesses with **no behavioral consequence any assertion can
 observe.** Measured, each one, by applying the mutation and running both layers: the plain pass is
 green and `-Sanitize` traps. The reasons are specific and are written next to each case in its test
 file —
 
-- `res.c`'s bound is followed by `!tilesetkey[ruleset]`, which absorbs whatever the out-of-bounds
+- `res.c`'s bound is followed by `!keys[ruleset]` (it was `!tilesetkey[ruleset]` before jc-59 shared the lookup), which absorbs whatever the out-of-bounds
   read returned and answers identically. Only the read differs, and no return value exposes a read.
 - `freetileset()`'s whole job is to write zero and NULL; running one element too far writes *more*
   zeroes into slots nothing reads.
@@ -869,7 +874,7 @@ The seven, for reference — each a bound the plain suite runs straight through 
 
 | site | mutation | what it opens |
 |---|---|---|
-| `res.c:251`, `res.c:258` | `ruleset >= Ruleset_Count` → `>` | lets `ruleset == Ruleset_Count` reach `tilesetkey[ruleset]`, one past the array — the jc-45/jc-50 shape exactly |
+| `res.c:259`, `res.c:267` | `ruleset >= Ruleset_Count` → `>` | lets `ruleset == Ruleset_Count` reach `keys[ruleset]`, one past the array — the jc-45/jc-50 shape exactly. Since jc-59 these are the two lines of the shared `getoverride()`/`setoverride()` pair that the tileset AND the sound pack read through |
 | `generic/tile.c:1191` | `n < sizeof tileptr / sizeof *tileptr` → `<=` | one past the tile-pointer table |
 | `generic/tile.c:1194` | `m < 16` → `<=` | one past a 16-entry row |
 | `generic/in.c:367` | `n < TWK_LAST` → `<=` | one past the key table |
@@ -912,9 +917,11 @@ the executable's own path — no `GetModuleFileName`, no `applicationDirPath`, n
 executable" is true only because double-clicking makes the two the same folder. Do not restate the
 stronger claim; it was wrong in the README and in two source comments before a review caught it.
 
-**Adding a setting touches FOUR places:** `settings.cpp`'s `SECTIONS[]`, the stock file generated by
-`package.ps1`, `README.txt` section 6, and the string literal in `settings_test.c`'s "comes back
-BYTE FOR BYTE" case. ⚠ `SECTION_MAXKEYS` is 16 and `[Display]` holds 12 keys plus a terminator.
+**Adding a setting touches FIVE places:** `settings.cpp`'s `SECTIONS[]`, the stock file generated by
+`package.ps1`, `README.txt` section 6, the string literal in `settings_test.c`'s "comes back
+BYTE FOR BYTE" case, and the three `settings.size()` assertions that follow it -- two in that case,
+one in the missing-final-newline case (jc-59 found the fifth by having to change it). A key in `[Display]` or `[Sound]` also moves `settings_test.c`'s floor, because
+part of its count is derived from the number of keys. ⚠ `SECTION_MAXKEYS` is 16 and `[Display]` holds 12 keys plus a terminator.
 
 Run **`verify-defaults.ps1`** after: it compares all three machine-readable copies against each
 other — the code's table, the shipped file, and the test's literal — and reports which one is
@@ -988,6 +995,7 @@ story here, add it to `FORK.md` instead and put the lesson here, once.
 | jc-56 | Not shipped defects — a feature, and five quiet failures found by building its guards: an unchecked third copy of the stock settings file, a documented count four out, a `foreach` variable that had been eating a script parameter since the file was written, a **flaky wall-clock test that burned the jc-55 tag**, and `package.ps1` deleting the build manifest RELEASING.md tells you to write one command earlier | `FORK.md` items 28–32 |
 | jc-58 | The main window indexed the `.ccx` table with an unchecked level number — one past the end on a stock `cc-fixlynx.dac`, much further on a crafted `.dat`. Plus two audits' worth of test and gate work: sixteen one-byte-loosenable guards, fail-open scripts, no timeouts, a floor ratchet across commits | `FORK.md` items 41–42 |
 | jc-57 | **An adversarial audit's findings.** A release gate that reported replaying solutions it had skipped; eleven of twelve engine bound-mutations surviving every local layer, jc-50 revertible wholesale among them; `encoding.c`'s run-length bound unREACHED rather than undetected; `verify-docs.ps1` failing open; and two latent `generic/tile.c` defects | `FORK.md` items 33–38 |
+| jc-59 | A feature (sound packs), and its review found the audio loader had never met a hostile file: a 1 Hz WAV that crashed the game inside SDL, an empty one that froze it as a looping sound, and a 144-byte one that made SDL commit 4 GB. Plus a latent upstream bug: a sound slot nothing loaded for kept its previous sound. The unsolvable-list hash fix and audits #5–#6 ride along | `FORK.md` items 43–49 |
 
 Every one of those is replay-neutral where it touches the engine, and the evidence is in `FORK.md`
 with the release that carries it.
@@ -1139,6 +1147,15 @@ top of that same script warns about this exact trap for `$OutDir`. Nothing was r
 showed up in a skip message naming the wrong language, and years later in a new guard that read
 `$Lang` and silently did nothing. **Knowing a trap is not the same as being immune to it** — grep
 your own loop variables against your parameter names, case-insensitively.
+
+**🔴 A BOUND THAT STOPS THE ARITHMETIC FROM WRAPPING IS NOT A BOUND THAT MAKES THE RESULT SAFE.** jc-59's
+first fix for `lengthin * len_mult` kept the product under 4 GB, so the multiplication could no longer
+wrap -- and a 6 KB WAV still crashed the game, because the NEXT consumer, SDL's converter, keeps its
+lengths in `int` and read past a 2 GB buffer. Bound a value by what everything downstream of it can
+hold, not by what your own expression can hold. And the converse, from the same fix: the first
+chunk-size guard refused any chunk longer than its file, which also refused real files cut short in
+transit -- caught only because the test asserted an ordinary truncated file must still LOAD. **A guard
+needs a case on the accepting side too**, or it can pass by refusing everything.
 
 **⚠ Some fixes are provably behavior-preserving and some are merely believed to be.** jc-51 kept the
 signed `short` and changed both predicates to `!= 0`, because for every non-negative count `> 0` and

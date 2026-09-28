@@ -201,8 +201,9 @@ jobs:
           playtest gate is a human step, and it is the only place a static-link failure shows up.
 
           The zip contains ``Tile World.exe``, a stock ``tw_settings.ini``, the two DLLs the game
-          needs beside it (``zlib1.dll`` and ``libzstd.dll``), ``README.txt`` and ``COPYING``.
-          Keep them together -- the executable will not start on its own.
+          needs beside it (``zlib1.dll`` and ``libzstd.dll``), ``README.txt``, ``COPYING``, and
+          ``res/sounds/How to make a sound pack.txt``. Keep them together -- the executable will
+          not start on its own.
 
           See README.txt section 7 for what this build changed.
 

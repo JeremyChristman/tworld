@@ -7,6 +7,8 @@
 #include	<stdlib.h>
 #include	<string.h>
 #include	<ctype.h>
+#include	<sys/types.h>	/* MOD (Jeremy, jc-59): stat(), for a sound pack's files */
+#include	<sys/stat.h>
 #include	"defs.h"
 #include	"fileio.h"
 #include	"err.h"
@@ -246,18 +248,35 @@ int getcurrentruleset(void)
     return currentruleset;
 }
 
+/* MOD (Jeremy, jc-59): the per-ruleset override lookup, shared by the tileset and
+ * the sound pack. It was written out inside the two tileset functions until the
+ * sound pack needed the same thing; a second copy would have carried the range
+ * check twice, and that check is one CLAUDE.md §5 records as caught by the
+ * sanitizer layer alone -- two copies means two survivors to keep track of.
+ */
+static char const *getoverride(char const *const keys[Ruleset_Count], int ruleset)
+{
+    if (ruleset < 0 || ruleset >= Ruleset_Count || !keys[ruleset])
+	return NULL;
+    return getstringsetting(keys[ruleset]);
+}
+
+static void setoverride(char const *const keys[Ruleset_Count], int ruleset,
+			char const *name)
+{
+    if (ruleset < 0 || ruleset >= Ruleset_Count || !keys[ruleset])
+	return;
+    setstringsetting(keys[ruleset], name ? name : "");
+}
+
 char const *gettilesetoverride(int ruleset)
 {
-    if (ruleset < 0 || ruleset >= Ruleset_Count || !tilesetkey[ruleset])
-	return NULL;
-    return getstringsetting(tilesetkey[ruleset]);
+    return getoverride(tilesetkey, ruleset);
 }
 
 void settilesetoverride(int ruleset, char const *name)
 {
-    if (ruleset < 0 || ruleset >= Ruleset_Count || !tilesetkey[ruleset])
-	return;
-    setstringsetting(tilesetkey[ruleset], name ? name : "");
+    setoverride(tilesetkey, ruleset, name);
 }
 
 /* A few resources have non-empty default values.
@@ -510,32 +529,562 @@ static int loadtxtresource(int resid, txtloader loadfunc)
     return loadfunc(filename);
 }
 
+/*
+ * MOD (Jeremy, jc-59): user-selectable sound packs. See res.h.
+ */
+
+/* The settings key naming each ruleset's chosen sound pack. Designated
+ * initializers for the same reason as tilesetkey: the enum puts Lynx first.
+ */
+static char const *const soundpackkey[Ruleset_Count] = {
+    [Ruleset_None] = NULL,
+    [Ruleset_Lynx] = "lynxsoundpack",
+    [Ruleset_MS]   = "mssoundpack"
+};
+
+/* Every sound's name as the rc file spells it. A pack supplies a sound either
+ * as <name>.wav or through a <name>= line in its sounds.txt.
+ *
+ * 🔴 THIS IS A SECOND COPY OF rclist[]'s SOUND ROWS, AND IT IS CHECKED, NOT
+ * TRUSTED. rclist[] holds the names lowercased, and they cannot simply be
+ * derived from it: a pack author writes "PickupChipSound.wav", and on a
+ * case-sensitive filesystem only the capitalized spelling names that file.
+ * test/res_test.c asserts that every row here lowercases to its rclist[] row,
+ * that no row is missing, and that the shipped how-to file names every one --
+ * CLAUDE.md §8.1's rule about two tables that must agree.
+ */
+static char const *const soundname[SND_COUNT] = {
+    [SND_CHIP_LOSES]		= "ChipDeathSound",
+    [SND_CHIP_WINS]		= "LevelCompleteSound",
+    [SND_TIME_OUT]		= "ChipDeathByTimeSound",
+    [SND_TIME_LOW]		= "TickSound",
+    [SND_DEREZZ]		= "DerezzSound",
+    [SND_CANT_MOVE]		= "BlockedMoveSound",
+    [SND_IC_COLLECTED]		= "PickupChipSound",
+    [SND_ITEM_COLLECTED]	= "PickupToolSound",
+    [SND_BOOTS_STOLEN]		= "ThiefSound",
+    [SND_TELEPORTING]		= "TeleportSound",
+    [SND_DOOR_OPENED]		= "OpenDoorSound",
+    [SND_SOCKET_OPENED]		= "SocketSound",
+    [SND_BUTTON_PUSHED]		= "SwitchSound",
+    [SND_TILE_EMPTIED]		= "TileEmptiedSound",
+    [SND_WALL_CREATED]		= "WallCreatedSound",
+    [SND_TRAP_ENTERED]		= "TrapEnteredSound",
+    [SND_BOMB_EXPLODES]		= "BombSound",
+    [SND_WATER_SPLASH]		= "SplashSound",
+    [SND_BLOCK_MOVING]		= "BlockMovingSound",
+    [SND_SKATING_FORWARD]	= "SkatingForwardSound",
+    [SND_SKATING_TURN]		= "SkatingTurnSound",
+    [SND_SLIDING]		= "SlidingSound",
+    [SND_SLIDEWALKING]		= "SlideWalkingSound",
+    [SND_ICEWALKING]		= "IceWalkingSound",
+    [SND_WATERWALKING]		= "WaterWalkingSound",
+    [SND_FIREWALKING]		= "FireWalkingSound"
+};
+
+/* TRUE when at least one sound now loaded came from the chosen pack. The jc-42
+ * lesson again: the pack sits on top of a fallback chain, so "sounds loaded" is
+ * not "YOUR pack loaded", and only this flag can tell reloadsounds() which.
+ */
+static int packloaded = FALSE;
+
+/* What went wrong in the chosen pack, for the menu to show its author.
+ * warn() reaches nobody in the GUI build, so this list is the only channel.
+ * Bounded: a pack is at most one mapping per sound plus its bad lines, and
+ * anything past the bound is dropped rather than grown.
+ */
+#define	MAXSOUNDPROBLEMS	32
+
+typedef struct soundproblem {
+    int		kind;		/* SOUNDPROBLEM_* */
+    int		line;		/* sounds.txt line, or 0 */
+    char	text[128];	/* the file or name at fault, truncated */
+} soundproblem;
+
+static soundproblem	soundproblems[MAXSOUNDPROBLEMS];
+static int		soundproblemcount = 0;
+/* How many problems did not fit. The menu says "and N more" rather than let a
+ * truncated list pass for a complete one. */
+static int		soundproblemsdropped = 0;
+
+/* A pack folder as the loader sees it: its path, what is in it, and which
+ * file sounds.txt assigned to each sound.
+ */
+#define	MAXPACKFILES	1024
+
+typedef struct soundpack {
+    char       *dir;			/* NULL when no usable pack is chosen */
+    char      **files;			/* the folder's entries, spelled as on disk */
+    int		filecount;
+    int		overflow;		/* TRUE if the folder held more than MAXPACKFILES */
+    char       *used;			/* per file: TRUE if anything in the pack names it */
+    int		mapped[SND_COUNT];	/* index into files, or -1 */
+} soundpack;
+
+static void addsoundproblem(int kind, int line, char const *text)
+{
+    soundproblem       *p;
+    int			i;
+
+    /* The same bad file mapped to three sounds is one problem, not three. */
+    for (i = 0 ; i < soundproblemcount ; ++i)
+	if (soundproblems[i].kind == kind && soundproblems[i].line == line
+				&& !strncmp(soundproblems[i].text, text,
+					    sizeof soundproblems[i].text - 1))
+	    return;
+    if (soundproblemcount >= MAXSOUNDPROBLEMS) {
+	++soundproblemsdropped;
+	return;
+    }
+    p = &soundproblems[soundproblemcount++];
+    p->kind = kind;
+    p->line = line;
+    snprintf(p->text, sizeof p->text, "%s", text);
+}
+
+/* strcmp, ignoring ASCII case. Pack names are ASCII by the time they get here
+ * (see issoundpackname), and a pack must behave the same whether the folder
+ * was written on Windows or unpacked on a case-sensitive filesystem.
+ */
+static int asciicasecmp(char const *a, char const *b)
+{
+    int	ca, cb;
+
+    for (;;) {
+	/* Folded by hand rather than with tolower(), whose answer depends on
+	 * the locale: under a Turkish one 'I' does not lower to 'i', and a pack
+	 * would stop matching its own file names. */
+	ca = (unsigned char)*a++;
+	cb = (unsigned char)*b++;
+	if (ca >= 'A' && ca <= 'Z')
+	    ca += 'a' - 'A';
+	if (cb >= 'A' && cb <= 'Z')
+	    cb += 'a' - 'A';
+	if (ca != cb || !ca)
+	    return ca - cb;
+    }
+}
+
+/* TRUE if name is safe as a pack folder name or as a file inside a pack.
+ *
+ * Everything istilesetname() refuses, plus two more:
+ *
+ * - ".", which would make the sounds folder itself a "pack".
+ * - Any byte outside ASCII. The paths built here are in the local 8-bit code
+ *   page, while SDL opens WAV files by name as UTF-8 on Windows, so a folder
+ *   called "Café" would list in the menu, read its sounds.txt, and then fail
+ *   on every single sound. Refusing it up front keeps the menu honest: it only
+ *   offers what the loader can load. (istilesetname() is left alone -- tiles
+ *   go through QImage, which takes the local code page, and fuzz_rc.c pins
+ *   that predicate's rule exactly.)
+ * - Any of * ? " < > |, which Windows never allows in a file name. They matter
+ *   because Qt turns a character the local code page cannot hold into "?": a
+ *   folder named in Japanese reaches this function as "??", passed every rule
+ *   above, and would have been offered in the menu as a pack that cannot load.
+ */
+static int issoundpackname(char const *name)
+{
+    char const *p;
+
+    if (!istilesetname(name) || !strcmp(name, ".") || strpbrk(name, "*?\"<>|"))
+	return FALSE;
+    for (p = name ; *p ; ++p)
+	if ((unsigned char)*p >= 0x80)
+	    return FALSE;
+    return TRUE;
+}
+
+int getsoundpackpath(char *dest, char const *name)
+{
+    if (!combinepath(dest, resdir, SOUNDPACKDIR)) {
+	dest[0] = '\0';
+	return FALSE;
+    }
+    if (!name)
+	return TRUE;
+    if (!issoundpackname(name) || !combinepath(dest, dest, name)) {
+	dest[0] = '\0';
+	return FALSE;
+    }
+    return TRUE;
+}
+
+char const *getsoundpackoverride(int ruleset)
+{
+    return getoverride(soundpackkey, ruleset);
+}
+
+void setsoundpackoverride(int ruleset, char const *name)
+{
+    setoverride(soundpackkey, ruleset, name);
+}
+
+int getsoundpackproblemcount(void)
+{
+    return soundproblemcount;
+}
+
+int getsoundpackproblemsdropped(void)
+{
+    return soundproblemsdropped;
+}
+
+int getsoundpackproblem(int index, int *line, char const **text)
+{
+    if (index < 0 || index >= soundproblemcount)
+	return -1;
+    if (line)
+	*line = soundproblems[index].line;
+    if (text)
+	*text = soundproblems[index].text;
+    return soundproblems[index].kind;
+}
+
+/* findfiles() callback: keep every entry of the pack folder. */
+static int collectpackfile(char const *name, void *data)
+{
+    soundpack  *pack = data;
+
+    if (pack->filecount >= MAXPACKFILES) {
+	pack->overflow = TRUE;
+	return -1;
+    }
+    x_alloc(pack->files, (pack->filecount + 1) * sizeof *pack->files);
+    pack->files[pack->filecount++] = (char*)name;
+    return 1;	/* findfiles() hands the string over to us */
+}
+
+/* TRUE if name ends in an extension a sound file would have. Only used to
+ * decide what is worth mentioning when nothing refers to it: a pack folder may
+ * also hold a readme, a picture, a license.
+ */
+static int isaudiofilename(char const *name)
+{
+    static char const *const exts[] = {
+	".wav", ".wave", ".mp3", ".ogg", ".oga", ".opus", ".flac",
+	".aif", ".aiff", ".aifc", ".wma", ".m4a", ".mid", ".midi"
+    };
+    size_t	n, e, i;
+
+    n = strlen(name);
+    for (i = 0 ; i < sizeof exts / sizeof *exts ; ++i) {
+	e = strlen(exts[i]);
+	if (n > e && !asciicasecmp(name + n - e, exts[i]))
+	    return TRUE;
+    }
+    return FALSE;
+}
+
+/* The index of the pack file whose name matches, ignoring case, or -1. */
+static int findpackfile(soundpack const *pack, char const *name)
+{
+    int	i;
+
+    for (i = 0 ; i < pack->filecount ; ++i)
+	if (!asciicasecmp(pack->files[i], name))
+	    return i;
+    return -1;
+}
+
+/* Read the pack's sounds.txt into pack->mapped.
+ *
+ * Deliberately NOT readrcfile(): that parser is bound to the rc file, accepts
+ * every non-sound resource name, and its "%s" cannot hold a filename with a
+ * space in it -- which pack authors will certainly write. The syntax matches
+ * tw_settings.ini instead: Name=value, whitespace around both ignored,
+ * whole-line comments starting with # or ;, a later line for the same sound
+ * winning over an earlier one. A blank value maps nothing, so the fixed name
+ * still applies.
+ */
+static void readsoundmap(soundpack *pack, int mapfile)
+{
+    fileinfo	file = {0};
+    char	buf[512];
+    char       *p, *end, *eq, *key, *val;
+    int		lineno, len, n, f;
+
+    if (!openfileindir(&file, pack->dir, pack->files[mapfile], "r", NULL)) {
+	addsoundproblem(SOUNDPROBLEM_UNREADABLE, 0, pack->files[mapfile]);
+	return;
+    }
+    for (lineno = 1 ; ; ++lineno) {
+	len = sizeof buf - 1;
+	if (!filegetline(&file, buf, &len, NULL))
+	    break;
+	/* filegetline() leaves len at strlen - 1 for a whole line and at
+	 * strlen when it had to cut the line short and discard the rest. A
+	 * truncated line is refused outright: half a filename is a filename
+	 * that does not exist, and saying which LINE is more use to an author.
+	 * (A final line with no newline that fills the buffer EXACTLY looks
+	 * the same and is refused too -- 510 characters, far past any real
+	 * mapping, so the two are not worth telling apart.) */
+	if (len == (int)strlen(buf)) {
+	    addsoundproblem(SOUNDPROBLEM_BADLINE, lineno, "");
+	    continue;
+	}
+	p = buf;
+	/* A byte-order mark, which Notepad's "UTF-8 with BOM" and PowerShell
+	 * 5.1's Out-File both write. Without this skip the first line's name
+	 * reads as three garbage bytes plus the name, and its sound is lost
+	 * with a report calling a correctly spelled name unknown. settings.cpp
+	 * strips one from tw_settings.ini for the same reason. */
+	if (lineno == 1 && !strncmp(p, "\xEF\xBB\xBF", 3))
+	    p += 3;
+	for ( ; isspace((unsigned char)*p) ; ++p) ;
+	end = p + strlen(p);
+	while (end > p && isspace((unsigned char)end[-1]))
+	    *--end = '\0';
+	if (!*p || *p == '#' || *p == ';')
+	    continue;
+	if (!(eq = strchr(p, '='))) {
+	    addsoundproblem(SOUNDPROBLEM_BADLINE, lineno, p);
+	    continue;
+	}
+	key = p;
+	for (end = eq ; end > key && isspace((unsigned char)end[-1]) ; --end) ;
+	*end = '\0';
+	for (val = eq + 1 ; isspace((unsigned char)*val) ; ++val) ;
+
+	for (n = 0 ; n < SND_COUNT ; ++n)
+	    if (soundname[n] && !asciicasecmp(key, soundname[n]))
+		break;
+	if (n == SND_COUNT) {
+	    addsoundproblem(SOUNDPROBLEM_UNKNOWNSOUND, lineno, key);
+	    continue;
+	}
+	pack->mapped[n] = -1;
+	if (!*val)
+	    continue;
+	if (!issoundpackname(val)) {
+	    addsoundproblem(SOUNDPROBLEM_BADFILENAME, lineno, val);
+	    continue;
+	}
+	if ((f = findpackfile(pack, val)) < 0) {
+	    addsoundproblem(SOUNDPROBLEM_MISSING, lineno, val);
+	    continue;
+	}
+	pack->mapped[n] = f;
+	pack->used[f] = 1;	/* even if a later line overrides it: it is named */
+    }
+    fileclose(&file, NULL);
+}
+
+/* Release what opensoundpack() gathered. Safe on a pack it never filled. */
+static void closesoundpack(soundpack *pack)
+{
+    int	i;
+
+    for (i = 0 ; i < pack->filecount ; ++i)
+	free(pack->files[i]);
+    free(pack->files);
+    free(pack->used);
+    free(pack->dir);
+    pack->files = NULL;
+    pack->used = NULL;
+    pack->dir = NULL;
+    pack->filecount = 0;
+}
+
+/* Gather the chosen pack for the ruleset in play. FALSE -- with the pack left
+ * empty -- when none is chosen or the choice cannot be a pack at all.
+ */
+static int opensoundpack(soundpack *pack)
+{
+    char const *sel;
+    int		n, m;
+
+    pack->dir = NULL;
+    pack->files = NULL;
+    pack->filecount = 0;
+    pack->overflow = FALSE;
+    pack->used = NULL;
+    for (n = 0 ; n < SND_COUNT ; ++n)
+	pack->mapped[n] = -1;
+
+    sel = getoverride(soundpackkey, currentruleset);
+    if (!sel || !*sel)
+	return FALSE;
+    pack->dir = getpathbuffer();
+    if (!getsoundpackpath(pack->dir, sel)) {
+	closesoundpack(pack);
+	return FALSE;
+    }
+    if (!findfiles(pack->dir, pack, collectpackfile)) {
+	/* Deleted, renamed or unreadable since the menu listed it. Said out
+	 * loud, or the author is told to go and add sounds to a folder that is
+	 * not there. */
+	addsoundproblem(SOUNDPROBLEM_FOLDER, 0, sel);
+	closesoundpack(pack);
+	return FALSE;
+    }
+    if (pack->overflow)
+	addsoundproblem(SOUNDPROBLEM_TOOMANYFILES, 0, "");
+    if (!(pack->used = calloc(pack->filecount ? pack->filecount : 1, 1)))
+	memerrexit();
+    if ((m = findpackfile(pack, SOUNDPACKMAP)) >= 0) {
+	pack->used[m] = 1;
+	readsoundmap(pack, m);
+    }
+    return TRUE;
+}
+
+/* MOD (Jeremy, jc-59): report every sound-like file NOTHING in the pack refers
+ * to. Called AFTER the load, so that files which failed to load are listed
+ * first: a folder of stray .mp3s must not push the real failures out of a
+ * bounded problem list.
+ */
+static void reportunused(soundpack *pack)
+{
+    char	fixed[64];
+    int		n, f;
+
+    /* A sound the pack leaves out is not a problem, but a file
+     * called ChipDeath.wav or PickupChipSound.mp3 almost certainly is one: the
+     * author meant it to be used, and without this it would be ignored in
+     * silence, the default would play, and the menu would show the pack as
+     * working. "Refers to" means named on ANY sounds.txt line (readsoundmap()
+     * marks those, including one a later line overrides -- the message would
+     * otherwise say sounds.txt does not mention a file it plainly does) or
+     * matching a sound's fixed name: a fixed-name file that sounds.txt
+     * overrides is still a deliberate file, not a typo. */
+    for (n = 0 ; n < SND_COUNT ; ++n) {
+	if (!soundname[n])
+	    continue;
+	snprintf(fixed, sizeof fixed, "%s.wav", soundname[n]);
+	if ((f = findpackfile(pack, fixed)) >= 0)
+	    pack->used[f] = 1;
+    }
+    for (f = 0 ; f < pack->filecount ; ++f)
+	if (!pack->used[f] && isaudiofilename(pack->files[f]))
+	    addsoundproblem(SOUNDPROBLEM_UNUSED, 0, pack->files[f]);
+}
+
+/* Load one pack file into slot n. A file that is in the folder and still will
+ * not load is an author's problem worth reporting; path is scratch space.
+ *
+ * Only a REGULAR file is handed to the decoder. A folder can hold other things
+ * under a sound's name -- a subfolder, or, unpacked from an archive on Linux, a
+ * named pipe, which SDL would sit reading forever on the thread that draws the
+ * game.
+ */
+static int trypackfile(soundpack const *pack, int n, int f, char *path)
+{
+    struct stat	st;
+
+    if (combinepath(path, pack->dir, pack->files[f])
+			&& !stat(path, &st) && S_ISREG(st.st_mode)
+			&& loadsfxfromfile(n, path))
+	return TRUE;
+    addsoundproblem(SOUNDPROBLEM_UNREADABLE, 0, pack->files[f]);
+    return FALSE;
+}
+
+/* The pack's sound for slot n: its sounds.txt entry, then <name>.wav. */
+static int loadpacksound(soundpack const *pack, int n, char *path)
+{
+    char	fixed[64];
+    int		f;
+
+    if (!soundname[n])
+	return FALSE;
+    if (pack->mapped[n] >= 0 && trypackfile(pack, n, pack->mapped[n], path))
+	return TRUE;
+    snprintf(fixed, sizeof fixed, "%s.wav", soundname[n]);
+    f = findpackfile(pack, fixed);
+    if (f >= 0 && f != pack->mapped[n] && trypackfile(pack, n, f, path))
+	return TRUE;
+    return FALSE;
+}
+
 /* Load all of the sound resources.
+ *
+ * MOD (Jeremy, jc-59): three changes.
+ *
+ * 1. The chosen sound pack is tried FIRST, per sound, over the rc file's
+ *    names -- the same place the chosen tileset sits in loadimages().
+ *
+ * 2. A slot nothing loads for is now FREED. It used to keep whatever it held
+ *    before: inaudible with the stock rc file (no ruleset switch leaves a slot
+ *    the new engine plays unfilled), but with packs, pack A's sound would have
+ *    outlived switching to pack B. Sound never reaches the engine, so this
+ *    cannot touch a replay.
+ *
+ * 3. Returns -1, touching NO slot, when there is no audio at all -- started
+ *    silent, or no device opens. loadsfxfromfile() fails for those exactly as
+ *    it fails for a missing file, and without this every working sound would
+ *    have been freed because of the DEVICE, and the user told their pack was
+ *    at fault. setaudiosystem(TRUE) is what loadsfxfromfile() already calls
+ *    first; asking once here only moves that question to where it can be
+ *    answered for the whole pass.
+ *
+ * Also: combinepath()'s result is checked on every tier now. It leaves the
+ * buffer stale when a path is too long (see loadimages()), which was harmless
+ * while every name was a short literal in rc and is not with a user-named
+ * pack in the path -- a stale buffer would load the PREVIOUS sound's file.
  */
 static int loadsounds(void)
 {
+    soundpack	pack;
     char       *path;
-    int		count;
+    int		count, havepack;
     int		n, f;
 
+    soundproblemcount = 0;
+    soundproblemsdropped = 0;
+    packloaded = FALSE;
+    if (!setaudiosystem(TRUE))
+	return -1;
+
+    havepack = opensoundpack(&pack);
     path = getpathbuffer();
     count = 0;
     for (n = 0 ; n < SND_COUNT ; ++n) {
 	f = FALSE;
-	if (*resources[RES_SND_BASE + n].str) {
-	    combinepath(path, resdir, resources[RES_SND_BASE + n].str);
-	    f = loadsfxfromfile(n, path);
+	if (havepack && loadpacksound(&pack, n, path)) {
+	    f = TRUE;
+	    packloaded = TRUE;
 	}
+	if (!f && *resources[RES_SND_BASE + n].str
+	       && combinepath(path, resdir, resources[RES_SND_BASE + n].str))
+	    f = loadsfxfromfile(n, path);
 	if (!f && resources != globalresources
-	       && *globalresources[RES_SND_BASE + n].str) {
-	    combinepath(path, resdir, globalresources[RES_SND_BASE + n].str);
+	       && *globalresources[RES_SND_BASE + n].str
+	       && combinepath(path, resdir, globalresources[RES_SND_BASE + n].str))
 	    f = loadsfxfromfile(n, path);
-	}
 	if (f)
 	    ++count;
+	else
+	    freesfx(n);
     }
     free(path);
+    if (havepack)
+	reportunused(&pack);
+    closesoundpack(&pack);
     return count;
+}
+
+/* MOD (Jeremy, jc-59): reload just the sounds for the ruleset in play,
+ * picking up a changed sound pack. Not loadgameresources(), for the reason
+ * reloadtileset() gives: its caller treats failure as fatal.
+ */
+int reloadsounds(void)
+{
+    char const *sel;
+    int		n;
+
+    if (currentruleset == Ruleset_None)
+	return SOUNDPACK_FAILED;
+    n = loadsounds();
+    if (n < 0)
+	return SOUNDPACK_NOAUDIO;
+    /* The same rule loadgameresources() applies, so the two paths agree. */
+    if (n == 0)
+	setaudiosystem(FALSE);
+    /* "Some sounds loaded" is not "the chosen pack loaded" -- see packloaded. */
+    sel = getoverride(soundpackkey, currentruleset);
+    if (sel && *sel && !packloaded)
+	return SOUNDPACK_FAILED;
+    return SOUNDPACK_OK;
 }
 
 /* Load all resources that are available. FALSE is returned if the
@@ -551,7 +1100,9 @@ int loadgameresources(int ruleset)
     loadfont();
     if (!loadimages())
 	return FALSE;
-    if (loadsounds() == 0)
+    /* MOD (Jeremy, jc-59): -1 is "no audio at all" (see loadsounds), which
+     * closes the device exactly as zero sounds always has. */
+    if (loadsounds() <= 0)
 	setaudiosystem(FALSE);
     return TRUE;
 }

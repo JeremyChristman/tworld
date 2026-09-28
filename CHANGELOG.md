@@ -23,6 +23,46 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+Nothing yet.
+
+## jc-59 — 2026-09-28
+
+**Sound packs, and an audio loader hardened against the files they will bring.** One feature a
+player asked for, and — because packs make every WAV something a stranger hands you — three
+hostile-file defects its review found in the audio path, each reproduced before it was fixed. The
+unreleased work since jc-58, listed below the new section, rides along: two blind audits, the OFF
+mutation operator, and a level-hash fix that never mattered on Windows. `FORK.md` item 49 for the
+sound packs; items 43–48 for the rest.
+
+### Added — sound packs: Options > Sound Effects
+
+A sound pack is a folder in `res\sounds`. Pick one under **Options > Sound Effects** while a level
+is open; the choice is made **per ruleset** and remembered (`mssoundpack` / `lynxsoundpack` in
+`[Sound]`), so an MSCC pack for MS and a Lynx pack for Lynx switch by themselves. Every one of the
+26 sounds can be replaced: a file named after the sound (`PickupChipSound.wav`, any capitalization)
+is used as-is, and an optional `sounds.txt` maps any sound to any file in the folder
+(`PickupChipSound=Bell.wav`). Anything a pack leaves out plays the normal sound. A pick is saved only
+once the pack has actually supplied a sound; a pack with problems — a file that will not play, a
+`sounds.txt` line naming a missing file, a sound file whose name matches no sound — gets a
+plain-text message naming each one. The release zip now carries `res/sounds/How to make a sound
+pack.txt`, so extracting it into an install creates the folder.
+
+### Fixed — the audio loader, against hostile WAV files (shipped)
+
+- **A crash:** a 6 KB WAV claiming a 1 Hz sample rate made SDL's converter read past a 2 GB buffer
+  (measured, access violation). The converted size is now capped at 64 MB, computed in 64 bits.
+- **A freeze:** a WAV whose audio converts to nothing hung the audio thread, holding its lock, when
+  used as a looping sound (measured). Such a file is refused, and the callback skips a zero length.
+- **A 4 GB spike:** a 144-byte WAV declaring four gigabytes made SDL commit 4 GB before any check
+  (measured). RIFF chunk headers are now checked first; the walk stops at the audio and after
+  10,000 chunks.
+- **A leftover sound (upstream's):** a slot nothing loaded for kept whatever it held before, so one
+  pack's sound could outlive switching to another. Such slots are now freed. Replay-neutral: sound
+  never reaches the engine.
+- Two small leaks on the loader's error paths.
+
+---
+
 **Blind audit #5 — no change to the shipped executable.** A fifth double-blind audit judged the
 world-class claim false. Every finding was reproduced before it was conceded; the full record,
 including what was defended and why, is `FORK.md` item 43.

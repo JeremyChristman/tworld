@@ -291,6 +291,8 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	m_bgColor(),
 	m_pTilesetMenu(nullptr),
 	m_pTilesetGroup(nullptr),
+	m_pSoundPackMenu(nullptr),
+	m_pSoundPackGroup(nullptr),
 	m_pSortFilterProxyModel()
 {
 	setupUi(this);
@@ -354,9 +356,22 @@ TileWorldMainWnd::TileWorldMainWnd(QWidget* pParent, Qt::WindowFlags flags)
 	m_pTilesetGroup = new QActionGroup(m_pTilesetMenu);
 	m_pTilesetGroup->setExclusive(true);
 	menu_Options->insertMenu(action_BackgroundColor, m_pTilesetMenu);
-	menu_Options->insertSeparator(action_BackgroundColor);
 	connect(m_pTilesetMenu, &QMenu::aboutToShow, this, &TileWorldMainWnd::OnTilesetMenuAboutToShow);
 	connect(m_pTilesetMenu, &QMenu::triggered, this, &TileWorldMainWnd::OnTilesetChosen);
+
+	/* MOD (Jeremy, jc-59): Options > Sound Effects, directly under Tileset and built the same
+	 * way, for the same reason: its contents are whatever folders are in res\sounds. */
+	/* Alt+E, not Alt+S: Options already has "&Show Timer on Untimed Levels", and two items on
+	 * one letter make Qt cycle between them instead of opening either. */
+	m_pSoundPackMenu = new QMenu(tr("Sound &Effects"), menu_Options);
+	m_pSoundPackGroup = new QActionGroup(m_pSoundPackMenu);
+	m_pSoundPackGroup->setExclusive(true);
+	menu_Options->insertMenu(action_BackgroundColor, m_pSoundPackMenu);
+	/* The separator that closes the group, moved down from the tileset block so the group now
+	 * reads Tileset, Sound Effects, then the background color below the line. */
+	menu_Options->insertSeparator(action_BackgroundColor);
+	connect(m_pSoundPackMenu, &QMenu::aboutToShow, this, &TileWorldMainWnd::OnSoundPackMenuAboutToShow);
+	connect(m_pSoundPackMenu, &QMenu::triggered, this, &TileWorldMainWnd::OnSoundPackChosen);
 
 	action_displayCCX->setChecked(getintsetting("displayccx"));
 	action_forceShowTimer->setChecked(getintsetting("forceshowtimer") > 0);
@@ -2077,6 +2092,264 @@ void TileWorldMainWnd::OnTilesetChosen(QAction* pAction)
 				.arg(sLabel));
 }
 
+/*
+ * MOD (Jeremy, jc-59): Options > Sound Effects. The tileset menu's twin: a submenu listing the
+ * sound packs -- the FOLDERS in res\sounds -- for the ruleset in play, rebuilt on every open.
+ * res.c decides what a pack is and loads it; this only offers the choices and reports.
+ */
+
+/* What went wrong in the pack that was just loaded, one line per problem, in words a pack
+ * author can act on. Empty when nothing did. The problems belong to the LAST load, so this
+ * must be read before anything reloads the sounds again.
+ */
+static QString SoundPackProblemText()
+{
+	QStringList lines;
+	int const nCount = getsoundpackproblemcount();
+	for (int i = 0; i < nCount; ++i)
+	{
+		int nLine = 0;
+		char const* szText = nullptr;
+		int const nKind = getsoundpackproblem(i, &nLine, &szText);
+		QString const sText = QString::fromLocal8Bit(szText != nullptr ? szText : "");
+		QString const sWhere = (nLine > 0)
+			? QObject::tr("sounds.txt, line %1: ").arg(nLine) : QString();
+		switch (nKind)
+		{
+		case SOUNDPROBLEM_UNREADABLE:
+			lines << sWhere + QObject::tr("\"%1\" could not be played. It must be a .wav file "
+				"of 16 MB or less.").arg(sText);
+			break;
+		case SOUNDPROBLEM_MISSING:
+			lines << sWhere + QObject::tr("\"%1\" is not in the pack's folder.").arg(sText);
+			break;
+		case SOUNDPROBLEM_UNKNOWNSOUND:
+			lines << sWhere + QObject::tr("\"%1\" is not the name of a sound. Check the "
+				"spelling against the list in the how-to.").arg(sText);
+			break;
+		case SOUNDPROBLEM_BADFILENAME:
+			lines << sWhere + QObject::tr("\"%1\" must be the name of a file in the pack's own "
+				"folder, with no accented letters.").arg(sText);
+			break;
+		case SOUNDPROBLEM_BADLINE:
+			lines << sWhere + QObject::tr("this line could not be read. It should look like "
+				"PickupChipSound=Bell.wav");
+			break;
+		case SOUNDPROBLEM_UNUSED:
+			lines << QObject::tr("\"%1\" is not used: its name is not a sound's name, and "
+				"sounds.txt does not mention it. Check the spelling -- and only .wav files "
+				"play.").arg(sText);
+			break;
+		case SOUNDPROBLEM_FOLDER:
+			lines << QObject::tr("The folder \"%1\" could not be opened. Was it moved or "
+				"renamed?").arg(sText);
+			break;
+		case SOUNDPROBLEM_TOOMANYFILES:
+			lines << QObject::tr("The folder holds so many files that only some of them were "
+				"looked at.");
+			break;
+		default:
+			break;
+		}
+	}
+	/* A full list says so, rather than pass for a complete one. No number: once the list is
+	 * full, duplicates can no longer be recognized, so a count would overstate it. */
+	if (getsoundpackproblemsdropped() > 0)
+		lines << QObject::tr("...and more.");
+	return lines.join(QLatin1Char('\n'));
+}
+
+/* A warning box whose text is shown EXACTLY as given. QMessageBox::warning() guesses whether its
+ * text is rich text, and these messages carry folder and file names from a pack someone else
+ * made -- a name like "<b>x" would be rendered as markup rather than read as a name. */
+static void SoundPackWarning(QWidget* pParent, const QString& sText)
+{
+	QMessageBox box(QMessageBox::Warning, QObject::tr("Sound Effects"), sText,
+		QMessageBox::Ok, pParent);
+	box.setTextFormat(Qt::PlainText);
+	box.exec();
+}
+
+void TileWorldMainWnd::BuildSoundPackMenu()
+{
+	for (QAction* pOld : m_pSoundPackMenu->actions())
+	{
+		m_pSoundPackGroup->removeAction(pOld);
+		delete pOld;
+	}
+
+	/* The ruleset in play, never the radio button; and an explanation rather than a disabled
+	 * submenu when there is none -- both for the reasons BuildTilesetMenu() gives. */
+	int const nRuleset = getcurrentruleset();
+	if (nRuleset == Ruleset_None)
+	{
+		QAction* pNone = m_pSoundPackMenu->addAction(tr("(start a level first)"));
+		pNone->setEnabled(false);
+		return;
+	}
+
+	char const* szCurrent = getsoundpackoverride(nRuleset);
+	QString const sCurrent = (szCurrent != nullptr)
+		? QString::fromLocal8Bit(szCurrent) : QString();
+
+	QAction* pDefault = m_pSoundPackMenu->addAction(tr("&Default"));
+	pDefault->setCheckable(true);
+	pDefault->setChecked(sCurrent.isEmpty());
+	pDefault->setData(QString());
+	m_pSoundPackGroup->addAction(pDefault);
+
+	char* szDir = getpathbuffer();
+	bool const bHaveDir = getsoundpackpath(szDir, nullptr);
+	QDir dir(bHaveDir ? QString::fromLocal8Bit(szDir) : QString());
+	free(szDir);
+
+	/* Folders only: the how-to file lives in res\sounds too, and a pack is a folder. */
+	QFileInfoList const folders = bHaveDir
+		? dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable,
+			QDir::Name | QDir::IgnoreCase)
+		: QFileInfoList();
+
+	int nListed = 0;
+	char* szProbe = getpathbuffer();
+	for (const QFileInfo& fi : folders)
+	{
+		QString const sName = fi.fileName();
+		if (nListed == 0)
+			m_pSoundPackMenu->addSeparator();
+		++nListed;
+
+		/* "&" in a folder name would otherwise become a keyboard accelerator and vanish. */
+		QString sText = sName;
+		sText.replace(QLatin1Char('&'), QLatin1String("&&"));
+
+		/* A folder the loader would refuse is still LISTED, disabled and saying why. Leaving
+		 * it out -- what the tileset menu does with a bad filename -- is right for a stray
+		 * file but wrong here: a pack author who named their folder "Café" would see it
+		 * simply not appear, with nothing to say that the name is the reason.
+		 *
+		 * The name is checked for non-ASCII HERE, on the QString, before any conversion:
+		 * toLocal8Bit() turns a character the code page cannot hold into "?", so a folder
+		 * named in Japanese would otherwise reach res.c as "??" -- which res.c now refuses
+		 * too, but the menu must not depend on that to be honest. */
+		bool bUsable = true;
+		for (QChar const ch : sName)
+			if (ch.unicode() >= 0x80)
+				bUsable = false;
+		if (bUsable)
+			bUsable = getsoundpackpath(szProbe, sName.toLatin1().constData());
+		if (!bUsable)
+		{
+			QAction* pBad = m_pSoundPackMenu->addAction(
+				tr("%1  (can't be used: rename it without accented letters)")
+					.arg(sText));
+			pBad->setEnabled(false);
+			continue;
+		}
+
+		QAction* pAction = m_pSoundPackMenu->addAction(sText);
+		pAction->setCheckable(true);
+		pAction->setChecked(sName == sCurrent);
+		pAction->setData(sName);
+		m_pSoundPackGroup->addAction(pAction);
+	}
+	free(szProbe);
+
+	if (nListed == 0)
+	{
+		m_pSoundPackMenu->addSeparator();
+		QAction* pEmpty = m_pSoundPackMenu->addAction(
+			tr("No sound packs yet -- make a folder in res\\%1, in your Tile World folder")
+				.arg(SOUNDPACKDIR));
+		pEmpty->setEnabled(false);
+	}
+}
+
+void TileWorldMainWnd::OnSoundPackMenuAboutToShow()
+{
+	BuildSoundPackMenu();
+}
+
+/* Try a sound pack, keeping the previous one if it supplies nothing.
+ *
+ * Written to the settings file only once it has proved loadable, as with ApplyTileset. Unlike
+ * a tileset, a failure here is NEVER fatal: no sound is not a reason to lose a level in
+ * progress, and res.c leaves the rc file's sounds loaded whenever a pack fails.
+ */
+void TileWorldMainWnd::ApplySoundPack(const QString& sFolder, const QString& sLabel)
+{
+	int const nRuleset = getcurrentruleset();
+	if (nRuleset == Ruleset_None)
+		return;
+
+	char const* szPrev = getsoundpackoverride(nRuleset);
+	QByteArray const prev = (szPrev != nullptr) ? QByteArray(szPrev) : QByteArray();
+	QByteArray const want = sFolder.toLocal8Bit();
+
+	setsoundpackoverride(nRuleset, want.constData());
+	int const nResult = reloadsounds();
+	/* Read now: the revert below reloads, and that replaces the list. */
+	QString const sProblems = SoundPackProblemText();
+
+	if (nResult == SOUNDPACK_OK)
+	{
+		savesettings();
+		if (!sProblems.isEmpty())
+			SoundPackWarning(this,
+				tr("\"%1\" is loaded, but part of it could not be used, so those sounds "
+				   "play the default instead:\n\n%2").arg(sLabel, sProblems));
+		return;
+	}
+
+	setsoundpackoverride(nRuleset, prev.constData());
+
+	if (nResult == SOUNDPACK_NOAUDIO)
+	{
+		/* res.c changed nothing in this case, so there is nothing to put back -- and the pack
+		 * is not to blame, so the message must not say it is. */
+		SoundPackWarning(this,
+			tr("Sound is switched off, or no audio device is available, so \"%1\" could not "
+			   "be loaded. Nothing was changed.").arg(sLabel));
+		return;
+	}
+
+	/* Only a chosen PACK can fail: reloadsounds() cannot return FAILED for Default, whose
+	 * sounds are whatever the rc file supplies. So sFolder is not empty from here on. */
+
+	/* Put back what was playing. If even that no longer loads -- its folder deleted since --
+	 * the rc file's sounds are what is actually loaded now, so the choice is cleared to match
+	 * rather than leave the menu's checkmark on a pack nobody can hear (the jc-42 lesson), and
+	 * the message says so instead of claiming the old pack was kept. The cleared choice is NOT
+	 * written here, but it will be by the next save of anything, and at exit -- deliberately:
+	 * from then on the file says what the game is actually playing. */
+	/* When the previous choice was Default there is nothing to reload: the failed pick has
+	 * already left the rc file's sounds loaded, and those ARE the default. */
+	bool const bLostPrev = !prev.isEmpty() && reloadsounds() == SOUNDPACK_FAILED;
+	if (bLostPrev)
+		setsoundpackoverride(nRuleset, "");
+
+	QString sMessage = bLostPrev
+		? tr("\"%1\" has no sounds Tile World could use, and the previous sound pack could "
+		     "not be loaded either, so the default sounds are playing.").arg(sLabel)
+		: tr("\"%1\" has no sounds Tile World could use, so the previous sound effects "
+		     "were kept.").arg(sLabel);
+	sMessage += QLatin1String("\n\n") + (!sProblems.isEmpty() ? sProblems
+		: tr("A pack needs at least one .wav file named after a sound, such as "
+		     "PickupChipSound.wav. See \"How to make a sound pack.txt\" in res\\%1.")
+			.arg(SOUNDPACKDIR));
+	SoundPackWarning(this, sMessage);
+}
+
+void TileWorldMainWnd::OnSoundPackChosen(QAction* pAction)
+{
+	if (pAction == nullptr || !pAction->isCheckable())
+		return;
+
+	/* Copied out before ApplySoundPack runs, for the reason OnTilesetChosen gives: nothing may
+	 * read pAction after a call that can end in the menu being rebuilt. */
+	QString const sFolder = pAction->data().toString();
+	ApplySoundPack(sFolder, sFolder.isEmpty() ? tr("Default") : sFolder);
+}
+
 
 /* Display a message to the user. cfile and lineno can be NULL and 0
  * respectively; otherwise, they identify the source code location
@@ -2388,6 +2661,10 @@ void TileWorldMainWnd::OnMenuActionTriggered(QAction* pAction)
 	 * of fixed actions and must not be extended to cover a variable-length list. */
 	if (pAction != nullptr && m_pTilesetMenu != nullptr
 	    && m_pTilesetMenu->actions().contains(pAction))
+		return;
+	/* MOD (Jeremy, jc-59): the Sound Effects submenu's runtime entries, for the same reason. */
+	if (pAction != nullptr && m_pSoundPackMenu != nullptr
+	    && m_pSoundPackMenu->actions().contains(pAction))
 		return;
 
 	if (pAction == action_Prologue)
