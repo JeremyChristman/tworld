@@ -705,17 +705,30 @@ static void test_soundpackpath(void)
 
     tw_case("a pack path too long to build is refused, and clears dest");
     {
-	char name[400], *saved = resdir, longdir[400];
-	memset(name, 'a', 300); name[300] = '\0';
-	memset(dest, 'X', sizeof dest);
-	CHECK(!getsoundpackpath(dest, name));
-	CHECK(dest[0] == '\0');
-	memset(longdir, 'd', 300); longdir[300] = '\0';
+	/* Sized from PATH_MAX, never a literal: 300 characters is "too long"
+	 * on Windows (260) and comfortably short on Linux (4,096), where this
+	 * case first ran in CI and failed all four checks. And the destination
+	 * is a real path buffer -- getsoundpackpath()'s contract is
+	 * getpathbufferlen() bytes, which on Linux is larger than `dest`. */
+	int const len = PATH_MAX + 8;
+	char *saved = resdir;
+	char *name = malloc(len + 1);
+	char *longdir = malloc(len + 1);
+	char *out = getpathbuffer();
+
+	memset(name, 'a', len); name[len] = '\0';
+	memset(out, 'X', getpathbufferlen());
+	CHECK(!getsoundpackpath(out, name));
+	CHECK(out[0] == '\0');
+	memset(longdir, 'd', len); longdir[len] = '\0';
 	resdir = longdir;
-	memset(dest, 'X', sizeof dest);
-	CHECK(!getsoundpackpath(dest, NULL));
-	CHECK(dest[0] == '\0');
+	memset(out, 'X', getpathbufferlen());
+	CHECK(!getsoundpackpath(out, NULL));
+	CHECK(out[0] == '\0');
 	resdir = saved;
+	free(out);
+	free(longdir);
+	free(name);
     }
 
     tw_case("the override is stored under the SOUND PACK key, per ruleset");
