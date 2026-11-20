@@ -346,6 +346,23 @@
 #define	FIX_TELEPORT_EXIT_CHIP_TILE	1
 #endif
 
+/* MOD (Jeremy, jc-60): a clone is let past a creature in its way only when that creature is
+ * the SAME KIND, ON by default. canmakemove()'s CMM_CLONECANTBLOCK branch ends with upstream's
+ * `if (F->dir == cr->dir) return TRUE;`, which waves the clone through for ANY creature facing
+ * its way -- it compares direction and never identity. SuperCC's whole clone test is
+ * tile-against-tile (MSCreatureList: `newTile == clone.toTile()`), so a paramecium is not
+ * cloned past a teeth however both face. Upstream's comment there says the branch exists for
+ * a turning tank, whose tile still shows its old facing; requiring the same id keeps exactly
+ * that case. Measured on Jacques#932 (a route recorded in another Tile World fork): at SuperCC
+ * tick 513 / TW tick 1024 a red button fires cloner (23,20), a paramecium facing east, with a
+ * teeth facing east on (24,20); Tile World cloned and SuperCC did not, and with this fix the
+ * two engines' traces are identical across all 926 state changes.
+ * Build with -DNO_FIX_CLONE_IDENTITY to restore the old behavior.
+ */
+#if !defined(NO_FIX_CLONE_IDENTITY) && !defined(FIX_CLONE_IDENTITY)
+#define	FIX_CLONE_IDENTITY	1
+#endif
+
 /* MOD (Jeremy, jc-34): a failed sanity check sends the user to THIS fork's tracker, not upstream's.
  * Of all the places to inherit an upstream URL, this was the worst one: nearly every engine change
  * in this fork is in this file, so the crash most likely to fire this assert is one of ours -- and
@@ -2135,8 +2152,15 @@ static int canmakemove(creature const* cr, int dir, int flags) {
             if (F->state & (CS_SLIP | CS_SLIDE))
                 return floor == crtile(cr->id, cr->dir);
 #endif
+#ifdef FIX_CLONE_IDENTITY
+            /* MOD (Jeremy, jc-60): the same KIND of creature, not merely the same facing --
+             * see the FIX_CLONE_IDENTITY block at the top of this file. */
+            if (F->dir == cr->dir && F->id == cr->id)
+                return TRUE;
+#else
             if (F->dir == cr->dir)
                 return TRUE;
+#endif
             return FALSE;
         }
         if (!(movelaw_creature(floor) & dir))

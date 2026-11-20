@@ -64,9 +64,10 @@ HOW IT AVOIDS LYING
     from `git ls-files`, so a crash mid-run cannot leave a mutated repository --
     and, incidentally, cannot let test\run-tests.ps1 write a mutant's check count
     into docs\test-counts.tsv, which verify-docs.ps1 treats as authoritative.
- 2. It only mutates lines that SURVIVE PREPROCESSING. mslogic.c is 4,969 lines,
-    of which 2,181 reach the compiler; the rest are comments, blanks, directives
-    and the inactive arms of 32 NO_FIX_* toggles. A mutant in an inactive #else
+ 2. It only mutates lines that SURVIVE PREPROCESSING. mslogic.c is 4,993 lines (jc-60),
+    of which 2,181 reached the compiler when last counted (jc-59; jc-60 swapped one compiled
+    line for another); the rest are comments, blanks, directives
+    and the inactive arms of 33 NO_FIX_* toggles. A mutant in an inactive #else
     arm cannot fail a test, so counting it as a survivor invents a test gap in
     this fork's most important file. The line set comes from `gcc -E`, not from a
     table.

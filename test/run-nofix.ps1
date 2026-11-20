@@ -6,9 +6,9 @@ Checks (or rebuilds) the NO_FIX_* differential matrix.
 
 WHAT THE MATRIX IS FOR
 
-mslogic.c carries 32 NO_FIX_* toggles, each isolating one engine fix from the
+mslogic.c carries 33 NO_FIX_* toggles, each isolating one engine fix from the
 desync project (docs/adr/0002). Nothing tested any of them: the golden master
-can distinguish only two of the 32 over all 903 committed levels, because a
+can distinguish only two of the 33 over all 903 committed levels, because a
 random walk through a real level never CONSTRUCTS a tank on a cloner or a block
 on a teleport.
 

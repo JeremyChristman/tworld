@@ -25,6 +25,26 @@ stay attached to something someone can see.
 
 Nothing yet.
 
+## jc-60 — 2026-11-19
+
+**A clone machine follows the MS rule for a creature in its way.** One engine line, measured.
+
+### Fixed
+- **A clone is let past a creature standing on its exit only when that creature is the same kind
+  facing the same way** (`FIX_CLONE_IDENTITY`, `canmakemove()`). Upstream's last test there
+  compared direction only, so any creature facing the clone's way counted -- a paramecium was
+  cloned past a teeth. SuperCC compares tiles. Found through a Jacques #932 route recorded in
+  another Tile World fork that replayed in Tile World and killed Chip in SuperCC; with the fix the
+  two engines' traces are identical across all 926 state changes. Corpus against jc-59:
+  **identical, 0 of 334 sets differ (19,363 valid / 1,204 invalid on both)**. Build with
+  `-DNO_FIX_CLONE_IDENTITY` for the old behavior.
+
+### Changed (tests and tooling)
+- `mslogic_test.c`: a clone refused past a different creature facing its way, and still allowed
+  past an identical one. The new toggle is unit-guarded (10 of the 15 toggles without a witness).
+- `verify-docs.ps1`: the witness patterns use the matrix's row count instead of a literal 32, and
+  compound number words are built, so the 33rd toggle did not leave two facts unverifiable.
+
 ## jc-59 — 2026-09-28
 
 **Sound packs, and an audio loader hardened against the files they will bring.** One feature a

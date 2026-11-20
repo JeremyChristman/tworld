@@ -1,6 +1,6 @@
 /* nofix.c: the NO_FIX_* differential matrix.
  *
- * MOD (Jeremy). THE PROBLEM. mslogic.c carries 32 NO_FIX_* toggles. Each one
+ * MOD (Jeremy). THE PROBLEM. mslogic.c carries 33 NO_FIX_* toggles. Each one
  * isolates a single engine fix from the jc-2..jc-29 desync work, so that a
  * future investigation can put the old behavior back and measure against it
  * (docs/adr/0002). They are the machinery this whole fork was built with.

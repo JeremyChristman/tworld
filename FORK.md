@@ -2063,6 +2063,47 @@ exactly what's mine:
    answering, and MS and Lynx choices stored independently. The corpus differential was not run:
    no engine or replay file changed, and CLAUDE.md's list does not include `res.c` or `sdlsfx.c`.
 
+50. **jc-60: a clone is let past a creature in its way only when that creature is the same kind**
+   (`mslogic.c` `canmakemove()`, `FIX_CLONE_IDENTITY`; `test/mslogic_test.c`,
+   `test/nofix/nofix-matrix.tsv`, `verify-docs.ps1`).
+
+   **How it was found.** A Jacques #932 route recorded in another Tile World fork (joshua-bone's,
+   whose page notes it "includes the existing turning-tank/cloning identity bug in canmakemove")
+   replayed valid in official Tile World 2.3.1 and in jc-59, and killed Chip in BOTH SuperCC
+   builds (official 2.0.3 and the fork) at tick 1,842. The differential trace (`build.ps1
+   -Trace`, `TW_TRACE_LEVEL=932`, aligned by SuperCC's `trace.ps1 -Compare`) put the first
+   divergence at state change 257 of 926 -- SuperCC tick 513 / Tile World tick 1024 -- with Tile
+   World holding one extra creature: a paramecium on the clone machine at (23,20). The trace's
+   own clone line said why: `cloner@23,20 tile=6B dir=8 dest=24,20 desttop=63 canmake=1` -- a
+   paramecium facing east (0x6B) cloned past a TEETH facing east (0x63).
+
+   **The defect.** `canmakemove()`'s `CMM_CLONECANTBLOCK` branch decides whether a creature in the
+   clone's way blocks it. It first lets an IDENTICAL tile through (the MS rule, and SuperCC's whole
+   test: `MSCreatureList: newTile == clone.toTile()`), then ended with upstream's
+   `if (F->dir == cr->dir) return TRUE;` -- direction only, so any creature facing the clone's way
+   counted as identical. Upstream's comment says that branch is for a turning tank, whose tile
+   still shows its old facing; requiring `F->id == cr->id` as well keeps exactly that case and
+   nothing else.
+
+   **Measured before shipping.** A throwaway trace build with the one-line change: the clone is
+   refused (`canmake=0`), the route is invalid, and the two engines' traces are **identical across
+   all 926 state changes**, Chip dying on the same tick with the same RNG. Corpus differential
+   against a jc-59 build of the same compiler: **IDENTICAL, 0 of 334 per-set outputs differ, 19,363
+   valid / 1,204 invalid on both, warnings identical** -- no recorded solution relied on the broad
+   rule, which fits: they were recorded in SuperCC, which never allowed it. Control for that zero:
+   the #932 route through the two executables -- jc-59 valid, jc-60 invalid. The golden master's
+   1,806 digests did not move, so its reach is 2 of 33 toggles now.
+
+   **Guard.** Two `mslogic_test.c` cases: a pink ball on a cloner, a TANK facing east on its exit
+   held by a wall -- pressing the button clones nothing (and with `-DNO_FIX_CLONE_IDENTITY` it
+   clones, so `run-nofix.ps1` counts the toggle as GUARDED: 10 of the 15 toggles without a witness now);
+   and the control, a tank cloned past an identical tank, which must still clone. Writing them
+   turned up a fixture trap worth keeping: a creature tile not added with `fix_addcreature()` is
+   not a live monster, and the creature count drops by one a few ticks in.
+   `verify-docs.ps1` had two patterns hardcoding "of the 32" and a number-word table that knew
+   only "thirty-two", so the 33rd toggle made two facts unverifiable; the patterns now use the
+   matrix's own row count and compound number words are built rather than listed.
+
 
 ## Testing
 
@@ -2076,7 +2117,7 @@ release. Only the ASan and fuzz layers are separate, being Linux-only.
 | unit | `test/run-tests.ps1` | a C compiler | one module at a time: the RNG, the `.tws` codec, the MS engine, the keyboard arbitration |
 | end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
 | golden master | `test/run-golden.ps1` | a C compiler | 🔴 **the only automated check that can see an engine behavior change**: all 903 committed levels through BOTH engines, deterministic input, gamestate hashed every tick |
-| differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 32 `NO_FIX_*` desync toggles**: for 18 of them, a committed input that provably tells a fix-on build from a fix-off one |
+| differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 33 `NO_FIX_*` desync toggles**: for 18 of them, a committed input that provably tells a fix-on build from a fix-off one |
 | sanitize | `test/run-tests.ps1 -Sanitize` | a C compiler | 🔴 **the only local layer that can see a memory-safety guard being deleted**: the same unit cases under a trapping UndefinedBehaviorSanitizer, ~11 s. Added jc-57, after an audit reverted jc-50 wholesale with every other layer green. ⚠ An ORACLE, not coverage — it sees only what a test actually executes |
 
 As of 2026-09-06: **15 unit runs / 17,531 checks, 12 end-to-end cases / 35 checks, and 2 Qt runs / 116

@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-59
+  Tile World  --  Jeremy Christman's fork                    build jc-60
 ==============================================================================
 
   1. What this is
@@ -521,6 +521,21 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-60  --  Clone machines follow the MS rule for a monster in the way
+---------------------------------------------------------------------
+
+  * NO SOLUTION IN THE COLLECTION CHANGES. All 19,363 that replayed in jc-59
+    still replay, and the 1,204 that did not still do not, across 334 level
+    sets.
+
+  * WHEN A RED BUTTON FIRES A CLONE MACHINE AND A MONSTER STANDS WHERE THE
+    CLONE WOULD STEP OUT, the clone now comes out only if that monster is the
+    same kind of monster facing the same way -- the rule in the MS game, and
+    in SuperCC. Until now Tile World let ANY monster facing the same way
+    count, so it could clone a paramecium past a teeth. A route that depended
+    on that worked in Tile World and failed in SuperCC; the two now agree.
 
 
 jc-59  --  Your own sound effects, and a sound loader that can take a bad file

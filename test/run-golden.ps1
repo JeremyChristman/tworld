@@ -13,7 +13,7 @@ automated replay gate was a single end-to-end case with one valid and one
 invalid solution.
 
 🔴 READ test\golden\golden.c BEFORE TRUSTING OR CHANGING ANYTHING HERE. In
-particular it records, with measurements, that this detects only 2 of the 32
+particular it records, with measurements, that this detects only 2 of the 33
 NO_FIX_* engine toggles, and that raising the tick count or the walk count was
 tried and bought nothing. It is a smoke alarm, not an audit, and it does NOT
 replace test\run-corpus.ps1 -- 18,640 recorded human solutions reach places a

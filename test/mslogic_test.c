@@ -326,7 +326,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(308);
+    tw_expect_atleast(322);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1996,6 +1996,129 @@ int main(void)
 	CHECK_MSG(creaturecount == 3,
 		  "the second button press produced no clone; got %d creatures."
 		  " The cloner latched on and never released", creaturecount);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a clone is NOT let past a different creature that merely faces its way");
+    {
+	/* jc-60, FIX_CLONE_IDENTITY. canmakemove()'s CMM_CLONECANTBLOCK branch
+	 * lets a clone through a creature in its way when that creature is
+	 * "identical". Upstream's last test there was `F->dir == cr->dir` --
+	 * direction only -- so ANY creature facing the clone's way counted.
+	 * SuperCC compares tiles, so only the same kind does. Measured on
+	 * Jacques#932: a paramecium was cloned past a teeth, both facing east.
+	 *
+	 * Here a pink ball on the cloner faces east, and a TANK facing east sits
+	 * on the exit, held there by a wall (a tank never turns). Pressing the
+	 * button must clone nothing. With -DNO_FIX_CLONE_IDENTITY it clones. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_BUTTON_RED);
+	fix_settop(&lv, 10, 10, 0x4B);			/* a Ball, facing east */
+	fix_setbot(&lv, 10, 10, FIX_CLONEMACHINE);
+	fix_settop(&lv, 11, 10, 0x4F);			/* a Tank, facing east */
+	fix_settop(&lv, 12, 10, FIX_WALL);
+	fix_addcreature(&lv, 11, 10);			/* the tank is a live monster */
+	fix_addcloner(&lv, 6, 5, 10, 10);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount == 2,
+		  "expected Chip and the tank at the start; got %d creatures",
+		  creaturecount);
+
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 6, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(creaturecount == 2,
+		  "a ball was cloned past a TANK because both face east -- the"
+		  " direction-only identity test is back; got %d creatures",
+		  creaturecount);
+	CHECK_MSG(cellat(11 + CXGRID * 10)->top.id == crtile(Tank, EAST),
+		  "the tank left the cloner's exit, so this case proved nothing;"
+		  " top tile there is %02X", cellat(11 + CXGRID * 10)->top.id);
+    }
+
+    /* ================================================================== */
+    tw_case("a clone IS let past an identical creature in its way -- the real rule stays");
+    {
+	/* The control for the case above: the identity rule itself is MS's, and
+	 * the fix must not take it away. A tank on the cloner, the same tank
+	 * tile on the exit: the clone fires (and simply cannot move yet). This
+	 * passes through the tile comparison, before the line jc-60 changed. */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_BUTTON_RED);
+	fix_settop(&lv, 10, 10, 0x4F);			/* a Tank, facing east */
+	fix_setbot(&lv, 10, 10, FIX_CLONEMACHINE);
+	fix_settop(&lv, 11, 10, 0x4F);			/* the same, on the exit */
+	fix_settop(&lv, 12, 10, FIX_WALL);
+	fix_addcreature(&lv, 11, 10);			/* the tank is a live monster */
+	fix_addcloner(&lv, 6, 5, 10, 10);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(creaturecount == 2,
+		  "expected Chip and the tank at the start; got %d creatures",
+		  creaturecount);
+
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 6, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(creaturecount == 3,
+		  "an identical tank in the way stopped the clone -- that is the"
+		  " MS identity rule, and it must still let it through; got %d"
+		  " creatures", creaturecount);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a TURNING tank on the exit still lets a tank clone through -- the branch's own case");
+    {
+	/* The line jc-60 narrowed exists for a turning tank: a blue button
+	 * reverses it, its live direction flips at once (with CS_TURNING) but
+	 * its map TILE still shows the old facing, so the tile comparison above
+	 * that line says "different". The two cases above never reach the line
+	 * -- the jc-60 review replaced its whole test with `if (0)` and every
+	 * case still passed. This one asks canmakemove() directly, the way
+	 * activatecloner() does: a tank template facing east, and on the exit a
+	 * tank whose tile reads WEST while it has just been turned EAST.
+	 *   - a TANK clone must get through (the case the branch exists for);
+	 *   - a BALL clone must not (jc-60 itself: same facing, different kind). */
+	creature	dummy;
+	creature*	f;
+	int		exitpos;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 10, 10, 0x4F);			/* a Tank template, facing east */
+	fix_setbot(&lv, 10, 10, FIX_CLONEMACHINE);
+	fix_settop(&lv, 11, 10, 0x4D);			/* a Tank on the exit, facing WEST */
+	fix_addcreature(&lv, 11, 10);
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	exitpos = 11 + CXGRID * 10;
+	f = lookupcreature(exitpos, FALSE);
+	CHECK_MSG(f != NULL && f->id == Tank,
+		  "no live tank on the cloner's exit, so this case proves nothing");
+	if (f) {
+	    /* What a blue button leaves behind: live facing east, tile still west. */
+	    f->dir = EAST;
+	    f->state |= CS_TURNING;
+	    CHECK_MSG(cellat(exitpos)->top.id == crtile(Tank, WEST),
+		      "the exit's tile no longer shows the OLD facing (%02X), so the"
+		      " tile comparison would answer before the line under test",
+		      cellat(exitpos)->top.id);
+
+	    memset(&dummy, 0, sizeof dummy);
+	    dummy.id = Tank;
+	    dummy.dir = EAST;
+	    dummy.pos = 10 + CXGRID * 10;
+	    CHECK_MSG(canmakemove(&dummy, EAST, CMM_CLONECANTBLOCK),
+		      "a tank clone was refused by a TURNING tank facing its way -- the"
+		      " turning-tank allowance is gone");
+
+	    dummy.id = Ball;
+	    CHECK_MSG(!canmakemove(&dummy, EAST, CMM_CLONECANTBLOCK),
+		      "a ball clone was let past a turning TANK because both face east"
+		      " -- the direction-only identity test is back");
+	}
     }
 
     /* ================================================================== */

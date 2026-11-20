@@ -450,7 +450,9 @@ if (Need-Source $matrix "It records which NO_FIX_* engine toggles have a differe
         # and the negation is derived and checked separately below.
         patterns = @(
             '(\d+)\s+have such a witness',
-            '(\d+)\s+of\s+(?:the\s+)?32[^.\r\n]{0,60}?\bhave\s+(?:such\s+)?a\s+witness',
+            # The total is the matrix's own row count, not a literal: "of the 32" went
+            # stale the day jc-60 added the 33rd toggle.
+            "(\d+)\s+of\s+(?:the\s+)?$($rows.Count)[^.\r\n]{0,60}?\bhave\s+(?:such\s+)?a\s+witness",
             '(\d+)\s+NO_FIX_\*?\s+witness',
             '(\d+)\s+witness(?:es)?\b',
             '(?:holds|records|found)\s+(\d+)\s+witness'
@@ -463,7 +465,7 @@ if (Need-Source $matrix "It records which NO_FIX_* engine toggles have a differe
         value = $rows.Count - $withWitness
         source = "test/nofix/nofix-matrix.tsv"
         patterns = @(
-            '(\d+)\s+of\s+(?:the\s+)?32[^.\r\n]{0,60}?\bhave\s+no\s+(?:differential\s+)?witness',
+            "(\d+)\s+of\s+(?:the\s+)?$($rows.Count)[^.\r\n]{0,60}?\bhave\s+no\s+(?:differential\s+)?witness",
             '(\d+)\s+toggle\(?s\)?\s+have no witness'
         )
     }
@@ -599,7 +601,17 @@ if (Need-Source $baseline "coverage.ps1 -UpdateBaseline writes it; it carries th
 $numberWords = @{
     "one"=1;"two"=2;"three"=3;"four"=4;"five"=5;"six"=6;"seven"=7;"eight"=8;"nine"=9;"ten"=10;
     "eleven"=11;"twelve"=12;"thirteen"=13;"fourteen"=14;"fifteen"=15;"sixteen"=16;
-    "seventeen"=17;"eighteen"=18;"nineteen"=19;"twenty"=20;"thirty-two"=32
+    "seventeen"=17;"eighteen"=18;"nineteen"=19;"twenty"=20
+}
+# Compound words ("thirty-two", "thirty-three") are BUILT, not listed: this table held
+# "thirty-two" alone, so the toggle count went uncheckable the moment jc-60 added the 33rd
+# toggle -- the fact reported "no document asserts" against a correct document.
+$tensWords = @{ "twenty"=20; "thirty"=30; "forty"=40; "fifty"=50; "sixty"=60; "seventy"=70; "eighty"=80; "ninety"=90 }
+foreach ($tens in @($tensWords.Keys)) {
+    $numberWords[$tens] = $tensWords[$tens]
+    foreach ($unit in @("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")) {
+        $numberWords["$tens-$unit"] = $tensWords[$tens] + $numberWords[$unit]
+    }
 }
 function Resolve-Number([string]$token) {
     if ($token -match '^\d+$') { return [int]$token }
