@@ -43,7 +43,8 @@ the same code in a fraction of the time. What the static link changes is packagi
 
 - **A PowerShell 7 construct fails CI**, which is the point: `&&`, `||`, ternary and `??` are all
   parse errors on 5.1, and the maintainer runs 5.1.
-- **CI cannot catch a static-link-only failure.** Missing `zlib1.dll`/`libzstd.dll`, or a Qt static
+- **CI cannot catch a static-link-only failure.** A missing DLL (zlib's or libzstd's -- since jc-61 `package.ps1`
+  reads which from the exe), or a Qt static
   plugin problem, surfaces only when `package.ps1` runs. That is a real gap, and it is why the
   release checklist has a human extract the zip and play the game.
 - **The unit job is separate so that it is the one that tells you what broke.** It needs one package

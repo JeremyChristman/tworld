@@ -25,9 +25,28 @@ stay attached to something someone can see.
 
 Nothing yet.
 
-## jc-60 — 2026-11-19
+## jc-61 — 2026-11-21
 
-**A clone machine follows the MS rule for a creature in its way.** One engine line, measured.
+> ⚠ **`jc-60` is a burned tag: it exists in the repository and nothing was ever published under
+> it.** It was tagged with this same engine fix, and the release workflow built a zip that could
+> not start: MSYS2's zlib package had renamed its DLL between jc-59 and jc-60, so CI's exe imported
+> `libz-1.dll` while `package.ps1` shipped `zlib1.dll` by a hard-coded name. Every archive check
+> passed, because the zip held exactly what had been staged. The corpus replay through the draft
+> asset caught it: all 334 launches exited `0xC0000135` (DLL not found). The tag ruleset forbids
+> moving or deleting a `jc-*` tag and the fix changed `package.ps1`, so the corrected release is
+> jc-61; jc-60's draft was deleted unpublished.
+
+**A clone machine follows the MS rule for a creature in its way, and the release zip ships the
+DLLs its executable actually imports.**
+
+### Fixed (release packaging)
+- **`package.ps1` reads the DLLs to ship from the executable's import table** (and each shipped
+  DLL's, recursively), skips what Windows provides, and refuses to package an import it cannot
+  find, instead of copying two hard-coded names. Planted defect: packaging jc-60's CI exe on a
+  machine without `libz-1.dll` is refused, naming the DLL. `run-playtest.ps1` checks the zip
+  against the exe's imports the same way, through one shared rule (`dll-imports.ps1`), which judges
+  MSYS2's own DLLs before "present in System32", and on jc-60's zip fails "the zip contains libz-1.dll,
+  which the exe imports".
 
 ### Fixed
 - **A clone is let past a creature standing on its exit only when that creature is the same kind
@@ -40,8 +59,11 @@ Nothing yet.
   `-DNO_FIX_CLONE_IDENTITY` for the old behavior.
 
 ### Changed (tests and tooling)
-- `mslogic_test.c`: a clone refused past a different creature facing its way, and still allowed
-  past an identical one. The new toggle is unit-guarded (10 of the 15 toggles without a witness).
+- `mslogic_test.c`: a clone refused past a different creature facing its way, still allowed past an
+  identical one, and `canmakemove()` asked directly with a TURNING tank on the exit (a tank clone
+  allowed, a ball refused) -- the case the changed line exists for, which the review measured as
+  unguarded (`if (0)` in its place passed every earlier case). The new toggle is unit-guarded (10
+  of the 15 toggles without a witness).
 - `verify-docs.ps1`: the witness patterns use the matrix's row count instead of a literal 32, and
   compound number words are built, so the 33rd toggle did not leave two facts unverifiable.
 

@@ -72,6 +72,10 @@ param(
     # the shipped binary are exercised.
     [string[]]$Sets = @("CCLP1.dat-ms.dac", "CCLP1.dat-lynx.dac"),
 
+    # Reads the exe's import table (jc-61). Its folder is also where MSYS2's own DLLs are, which
+    # is how a missing MSYS2 DLL is told apart from one Windows provides.
+    [string]$Objdump = "C:\msys64\mingw64\bin\objdump.exe",
+
     [switch]$NoSolutions,
     [switch]$NoGui,
     [switch]$KeepScratch
@@ -198,11 +202,30 @@ try {
     Check "the zip contains Tile World.exe" (Test-Path $exe)
     # MOD (Jeremy, jc-59): the sound pack how-to is the one entry below the top level, and it is
     # what creates res\sounds for someone extracting over an install -- so its PATH is the check.
-    foreach ($f in @("README.txt", "COPYING", "tw_settings.ini", "zlib1.dll", "libzstd.dll",
+    foreach ($f in @("README.txt", "COPYING", "tw_settings.ini",
                      "res\sounds\How to make a sound pack.txt")) {
         Check ("the zip contains {0}" -f $f) (Test-Path -LiteralPath (Join-Path $scratch $f))
     }
     if (-not (Test-Path $exe)) { throw "nothing to test" }
+
+    # MOD (Jeremy, jc-61): the DLLs are checked against the EXE'S OWN IMPORTS, not a list of names.
+    # This line used to require zlib1.dll and libzstd.dll by name, and jc-60's CI exe imported
+    # libz-1.dll instead: the zip held both named files, the check passed, and the game could not
+    # start. The rule -- and its walk into each shipped DLL's own imports -- is dll-imports.ps1's,
+    # the same one package.ps1 packages by, so the two cannot drift apart.
+    . (Join-Path $root "dll-imports.ps1")
+    if (Test-Path -LiteralPath $Objdump) {
+        try {
+            $needed = Resolve-NeededDlls -Objdump $Objdump -Exe $exe -ShipDir $scratch -MsysBin (Split-Path $Objdump)
+            Check "the exe's import table could be read" $true
+            foreach ($dll in $needed.Ship.Keys) { Check ("the zip contains {0}, which the exe needs" -f $dll) $true }
+            foreach ($dll in $needed.Missing) { Check ("the zip contains {0}, which the exe imports" -f $dll) $false }
+        } catch {
+            Check ("the exe's import table could be read: {0}" -f $_.Exception.Message) $false
+        }
+    } else {
+        Check "objdump is available to read the exe's imports ($Objdump)" $false
+    }
 
     # ---- the build tag -------------------------------------------------------
     #

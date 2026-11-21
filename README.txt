@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-60
+  Tile World  --  Jeremy Christman's fork                    build jc-61
 ==============================================================================
 
   1. What this is
@@ -68,8 +68,11 @@ There is nothing to uninstall -- delete the folder and it is gone.
 
     Tile World.exe      The program.
     tw_settings.ini     Its settings file, with stock defaults.
-    zlib1.dll           Required. Keep it next to the exe.
-    libzstd.dll         Required. Keep it next to the exe.
+    *.dll               Required. Keep every .dll from the zip next to the
+                        exe. Today they are libzstd.dll and zlib's DLL,
+                        named zlib1.dll or libz-1.dll depending on the
+                        build -- the zip holds exactly the ones this exe
+                        needs.
     README.txt          This file.
     COPYING             The GNU General Public License, version 2.
     res\sounds\How to make a sound pack.txt
@@ -523,8 +526,15 @@ nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
 
-jc-60  --  Clone machines follow the MS rule for a monster in the way
+jc-61  --  Clone machines follow the MS rule for a monster in the way
 ---------------------------------------------------------------------
+
+  * IF YOU ARE LOOKING FOR jc-60, THERE IS NO SUCH DOWNLOAD. It was tagged
+    with this same change, and its zip could not start: the build had come to
+    need a differently named DLL than the one packed beside it. The packager
+    now reads which DLLs the program needs from the program itself, and
+    refuses to build a zip that is missing one. Tags here are never reused or
+    moved, so the corrected build is jc-61 and nothing was released as jc-60.
 
   * NO SOLUTION IN THE COLLECTION CHANGES. All 19,363 that replayed in jc-59
     still replay, and the 1,204 that did not still do not, across 334 level

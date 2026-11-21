@@ -200,8 +200,8 @@ jobs:
           **This is a draft.** Unpack the attached zip and play the game before publishing -- the
           playtest gate is a human step, and it is the only place a static-link failure shows up.
 
-          The zip contains ``Tile World.exe``, a stock ``tw_settings.ini``, the two DLLs the game
-          needs beside it (``zlib1.dll`` and ``libzstd.dll``), ``README.txt``, ``COPYING``, and
+          The zip contains ``Tile World.exe``, a stock ``tw_settings.ini``, the DLLs the game
+          needs beside it (read from the exe's own imports), ``README.txt``, ``COPYING``, and
           ``res/sounds/How to make a sound pack.txt``. Keep them together -- the executable will
           not start on its own.
 

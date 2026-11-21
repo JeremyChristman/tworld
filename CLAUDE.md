@@ -108,7 +108,7 @@ a mutation check needs. `-w` is there because `-O1` turns on `-Wformat-truncatio
 .\build-dynamic\tworld2.exe        # needs C:\msys64\mingw64\bin on PATH for Qt's DLLs
 ```
 
-🔺 **A scratch copy of the executable needs `zlib1.dll` and `libzstd.dll` beside it**, or it dies
+🔺 **A scratch copy of the executable needs the DLLs it imports beside it** (`libzstd.dll` and `zlib1.dll` -- or `libz-1.dll`, which CI's MSYS2 switched to between jc-59 and jc-60; `objdump -p` lists them), or it dies
 with `0xC0000135` (`STATUS_DLL_NOT_FOUND`) — **no window, no stderr, and the process lingers**, so it
 looks like a hang. Worse, the resulting "System Error" dialog survives killing the process and then
 steals focus. If keys mysteriously go nowhere during a playtest, hunt for a `#32770` window titled
@@ -959,8 +959,9 @@ Check [`docs/adr/`](docs/adr/) before changing anything that looks wrong.
    callers are not the player navigating, and wrapping breaks each.
 7. **"Last level" is `count - 1`, not `islastinseries()`.** The latter also answers TRUE for a
    `.dac`'s `lastlevel=` line, which stock `CCLP1-MS.dac` sets to 144 over a 149-level `.dat`.
-8. **The static link, and the two DLLs that survive it.** `zlib1.dll` and `libzstd.dll` are pinned as
-   dynamic imports by Qt's static CMake config.
+8. **The static link, and the DLLs that survive it.** zlib and libzstd are pinned as dynamic imports
+   by Qt's static CMake config; zlib's file is `zlib1.dll` or `libz-1.dll` depending on the MSYS2
+   build, which is why `package.ps1` reads the names from the exe (jc-61) instead of listing them.
    [ADR 0001](docs/adr/0001-one-statically-linked-executable.md).
 9. **The score screen's grand-total row is 32 px where its neighbors are 20.** Pre-existing; the
    obvious cure was built, measured and backed out because it would elide long level names on sets

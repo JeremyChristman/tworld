@@ -2063,7 +2063,7 @@ exactly what's mine:
    answering, and MS and Lynx choices stored independently. The corpus differential was not run:
    no engine or replay file changed, and CLAUDE.md's list does not include `res.c` or `sdlsfx.c`.
 
-50. **jc-60: a clone is let past a creature in its way only when that creature is the same kind**
+50. **jc-61 (first tagged as jc-60, burned -- item 51): a clone is let past a creature in its way only when that creature is the same kind**
    (`mslogic.c` `canmakemove()`, `FIX_CLONE_IDENTITY`; `test/mslogic_test.c`,
    `test/nofix/nofix-matrix.tsv`, `verify-docs.ps1`).
 
@@ -2103,6 +2103,52 @@ exactly what's mine:
    `verify-docs.ps1` had two patterns hardcoding "of the 32" and a number-word table that knew
    only "thirty-two", so the 33rd toggle made two facts unverifiable; the patterns now use the
    matrix's own row count and compound number words are built rather than listed.
+   The review also measured that replacing the narrowed line with `if (0)` passed both cases above
+   -- neither reaches it -- so a third case asks `canmakemove()` directly, the way
+   `activatecloner()` does, with a TURNING tank on the exit (live facing east, tile still west,
+   `CS_TURNING`): a tank clone must get through, a ball clone must not. `if (0)` now fails it.
+   Not taken from the review, with reasons: gating the line on `CS_TURNING` as well (a second
+   behavior change with no traced divergence behind it -- the playbook's first rule is to measure
+   a divergence before writing a predicate; recorded as a follow-up idea), and checking the total
+   in "N of the M" sentences (FORK.md quotes historical sentences such as "25 of the 32 toggles
+   have a witness", which would cry wolf).
+
+51. **jc-61: the release zip ships the DLLs its executable actually imports** (`package.ps1`,
+   `test/run-playtest.ps1`, `.github/workflows/release.yml`, `.github/RELEASING.md`, README.txt
+   section 3).
+
+   **What broke.** `jc-60` was tagged with item 50, and the release workflow built a zip whose
+   executable could not start. Between jc-59 and jc-60 MSYS2's zlib package renamed its DLL, so
+   CI's static build imported `libz-1.dll` -- while `package.ps1` copied two hard-coded names,
+   `zlib1.dll` and `libzstd.dll`, and CI's MSYS2 still had a `zlib1.dll` to copy. Every archive
+   check passed: the zip held exactly what had been staged, and staging had never asked the exe.
+   The maintainer's local MSYS2 still links `zlib1.dll`, so the local playtest was green too.
+   **Caught by RELEASING step 7** -- the corpus replay through the downloaded draft asset: all 334
+   launches exited `0xC0000135` (STATUS_DLL_NOT_FOUND) and the run recorded 0 sets, which read at
+   first as "328 sets differ". `objdump -p` on the asset named the import. jc-59's published exe
+   imports `zlib1.dll`, so this is drift in CI's environment since then, not a jc-60 change.
+
+   **The fix.** `package.ps1` reads the DLLs from the executable's import table (`objdump -p`),
+   follows each shipped DLL's own imports, skips what Windows provides (a file in System32, or an
+   API-set name), ships the rest from `-Dlls`, and **refuses to package** an import it cannot
+   find. An exe whose parse shows no KERNEL32.dll import is refused too, since an empty list
+   would otherwise ship a zip with no DLLs. `run-playtest.ps1` checks the extracted zip against
+   the exe's imports instead of the two names. Both apply ONE rule, in a shared `dll-imports.ps1`.
+   From review: a DLL found in MSYS2's folder is judged BEFORE "in System32", so a third-party
+   copy lying in System32 cannot pass as part of Windows and be left out (the jc-60 failure again,
+   on a clean machine); `objdump` runs under ErrorActionPreference=Continue, since one stderr
+   warning under Stop would kill PowerShell 5.1 with an opaque NativeCommandError; the playtest
+   follows shipped DLLs' own imports as the packager does, checks after its "no exe" guard, and
+   takes `-Objdump` (so does `package.ps1`, instead of deriving it from `-Dlls`).
+
+   **Planted defects, both caught.** Packaging jc-60's CI exe on the maintainer's machine (no
+   `libz-1.dll` in its MSYS2) is refused: "imports libz-1.dll, which is neither part of Windows nor
+   in C:\msys64\mingw64\bin -- the release would not start". The playtest run on jc-60's zip fails
+   "the zip contains libz-1.dll, which the exe imports", alongside every launch check.
+
+   **The tag.** The ruleset forbids moving or deleting a `jc-*` tag, and the fix changed
+   `package.ps1`, so the corrected release is jc-61 and jc-60's draft release was deleted
+   unpublished -- the jc-55 precedent.
 
 
 ## Testing
@@ -2179,8 +2225,9 @@ cmake --build build-static
 strip build-static/tworld2.exe                # -> rename to "Tile World.exe"
 ```
 
-Ship `zlib1.dll` + `libzstd.dll` from `/mingw64/bin` beside the exe (Qt's static CMake config pins
-those two as dynamic imports; SDL2 and the qwindows platform plugin are baked in). Packages needed:
+Ship the DLLs the exe imports from `/mingw64/bin` beside it -- `package.ps1` reads them from the exe
+since jc-61 (today `libzstd.dll` and `zlib1.dll`, or `libz-1.dll` on a newer MSYS2; Qt's static
+CMake config pins zlib and zstd as dynamic imports; SDL2 and the qwindows platform plugin are baked in). Packages needed:
 `mingw-w64-x86_64-{gcc,cmake,ninja,qt5-static,SDL2}`. **Never build inside a Dropbox/synced folder**
 (sync fights the compiler); copy the source to a local scratch dir first.
 

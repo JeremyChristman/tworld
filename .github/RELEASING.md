@@ -99,7 +99,7 @@ Two mechanical guards back this up:
    Open a set, change a setting, check `Help > About`.
 
    ⚠ This step is where a static-link failure surfaces, and nowhere else. CI builds the *dynamic*
-   flavor, so a missing `zlib1.dll`, a Qt static-plugin problem, or a binary that dies with
+   flavor, so a missing DLL, a Qt static-plugin problem, or a binary that dies with
    `0xC0000135` before it can draw a window will reach you only here.
 
 6. **Commit, push, tag.**
@@ -140,8 +140,7 @@ level and, since jc-59, one in `res/sounds/`:
 |---|---|
 | `Tile World.exe` | the build being released, stripped. The shipped name has a space and no "tworld" in it — set deliberately, because that filename has caused false conclusions before |
 | `tw_settings.ini` | a stock settings file. **Every value must be what the code defaults to when the key is absent** — `verify-defaults.ps1` checks the key set against `settings.cpp`; the values are still a human responsibility |
-| `zlib1.dll` | pinned as a dynamic import by Qt's static config. The game will not start without it |
-| `libzstd.dll` | likewise |
+| the DLLs the exe imports | read from the exe's own import table by `package.ps1` (jc-61), recursively, skipping what Windows provides -- today `libzstd.dll` and zlib's DLL, which is `zlib1.dll` or `libz-1.dll` depending on the MSYS2 build (CI's became `libz-1.dll` between jc-59 and jc-60). The packager refuses an import it cannot find. The game will not start without them |
 | `README.txt` | re-updated every release (step 2) |
 | `COPYING` | GPLv2 travels with the binary, as the license requires |
 | `res/sounds/How to make a sound pack.txt` | the sound pack how-to (jc-59). It is the one entry below the top level, and what makes `res\sounds` exist for someone who extracts the zip over an install -- an empty folder cannot be put in a zip. CRLF, like the README |

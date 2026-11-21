@@ -25,6 +25,11 @@ Two dynamic imports survive and **must ship beside the executable**: `zlib1.dll`
 Qt's static CMake config pins those two; SDL2 and the platform plugin are baked in. `package.ps1`
 copies both and fails the package if either is missing.
 
+> **Amended 2026-11-21 (jc-61):** the two names were MSYS2's, not Qt's, and one changed: CI's zlib
+> became `libz-1.dll` between jc-59 and jc-60, while `package.ps1` kept shipping `zlib1.dll`, so
+> jc-60's zip could not start (a burned tag). `package.ps1` now reads the DLLs from the exe's import
+> table and refuses an import it cannot find.
+
 ## Consequences
 
 - The download is four files plus a license, and the program runs from anywhere it is unpacked.

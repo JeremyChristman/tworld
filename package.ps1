@@ -4,8 +4,8 @@ Assembles the release zip that gets attached to the GitHub release:
     dist\TileWorld-<tag>.zip
         Tile World.exe      the build, stripped
         tw_settings.ini     a STOCK settings file
-        zlib1.dll           \  the only two dynamic imports the static Qt build
-        libzstd.dll         /  keeps; the game will not start without them
+        <DLLs>              every DLL the exe imports that Windows does not provide, READ FROM
+                            THE EXE (today libzstd.dll and zlib1.dll, or libz-1.dll on a newer MSYS2)
         README.txt
         COPYING
 
@@ -33,6 +33,8 @@ param(
     [string]$Exe = "build-static\tworld2.exe",
     [string]$Dlls = "C:\msys64\mingw64\bin",
     [string]$Strip = "C:\msys64\mingw64\bin\strip.exe",
+    # jc-61: reads the exe's import table, so the zip ships the DLLs the exe actually needs.
+    [string]$Objdump = "C:\msys64\mingw64\bin\objdump.exe",
     [switch]$SkipTests
 )
 $ErrorActionPreference = "Stop"
@@ -121,13 +123,28 @@ if (Test-Path $Strip) {
     Copy-Item $exePath (Join-Path $pkgDir "Tile World.exe")
 }
 
-# Qt's static cmake config pins these two as dynamic imports; SDL2 and the Windows platform
-# plugin are baked into the exe. Without them the game does not start at all.
-foreach ($dll in "zlib1.dll", "libzstd.dll") {
-    $src = Join-Path $Dlls $dll
-    if (-not (Test-Path $src)) { throw "missing $dll in $Dlls -- the release needs it" }
-    Copy-Item $src (Join-Path $pkgDir $dll)
+# MOD (Jeremy, jc-61): the DLLs to ship are READ FROM THE EXECUTABLE, not named here.
+# Qt's static cmake config leaves a couple of dynamic imports (SDL2 and the Windows platform
+# plugin are baked in). This loop used to copy two hard-coded names, zlib1.dll and libzstd.dll --
+# and jc-60's CI build imported libz-1.dll instead, because MSYS2's zlib package renamed its DLL
+# between jc-59 and jc-60. The zip shipped zlib1.dll beside an exe that never loads it, every
+# launch died with 0xC0000135 (DLL not found), and the archive checks below passed, because the
+# zip did hold exactly what this loop had staged. Caught only by the corpus replay through the
+# published asset, before anyone downloaded it.
+# Now: walk the exe's import table (and each shipped DLL's, in case one pulls in another),
+# skip what Windows itself provides, ship the rest from $Dlls, and REFUSE to package anything
+# that resolves to neither -- the release would not start.
+# The rule lives in dll-imports.ps1, shared with test\run-playtest.ps1 so the packager and its
+# checker cannot disagree (jc-61 review).
+. (Join-Path $root "dll-imports.ps1")
+if (-not (Test-Path -LiteralPath $Objdump)) { throw "objdump not found at $Objdump -- it reads which DLLs the exe imports" }
+$needed = Resolve-NeededDlls -Objdump $Objdump -Exe (Join-Path $pkgDir "Tile World.exe") -ShipDir $Dlls -MsysBin $Dlls
+if ($needed.Missing.Count -gt 0) {
+    throw ("the exe (or a DLL shipped with it) imports {0}, which is neither in {1} nor part of Windows -- the release would not start" -f ($needed.Missing -join ', '), $Dlls)
 }
+$shipDlls = $needed.Ship
+foreach ($dll in $shipDlls.Keys) { Copy-Item -LiteralPath $shipDlls[$dll] (Join-Path $pkgDir $dll) }
+Write-Host ("  DLLs the exe needs beside it (read from its imports): {0}" -f $(if ($shipDlls.Count) { @($shipDlls.Keys) -join ', ' } else { 'none' }))
 
 # A stock settings file. Key order and section names match settings.cpp's SECTIONS.
 #
