@@ -23,7 +23,13 @@ stay attached to something someone can see.
 
 ## Unreleased
 
-Nothing yet.
+### Changed (release pipeline)
+- **`release.yml` installs static Qt 5 from a pinned file** (`mingw-w64-x86_64-qt5-static-5.15.19-1`, by
+  URL and SHA-256), because MSYS2 removed it from the mingw64 repository database on 2026-11-21 as
+  part of deprecating MINGW64 -- six minutes before jc-61's release run, which failed "target not
+  found". The step lives in the workflow, not `install-toolchain.ps1`, so a release dispatched for
+  an existing tag (which checks out that tag's tree) still gets it. A stopgap until the toolchain
+  moves to UCRT64.
 
 ## jc-61 — 2026-11-21
 
