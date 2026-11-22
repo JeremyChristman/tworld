@@ -23,14 +23,48 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+- 🔴 **The corpus totals had never counted the two biggest sets.** `tworld.c` prints
+  `"  Valid solutions:%4d"`, so the space after the colon is padding, and a count of 1,000 or more
+  has none: `  Valid solutions:1325`. `test\run-corpus.ps1` required a space, so **Joshie (1,325
+  valid) and Voting-CCLP5 (1,695) read as giving no verdict**, and the run left them out of its
+  totals, its "verified" count and, once that list existed, named them among the sets that give
+  none. The per-set comparison hashes each set's whole output, so a regression in either would still
+  have shown as DIFFER; the gate was never blind to them, but every valid total it printed was 3,020
+  low and its verified count 2 low. The parser is one function now, `Read-BatchVerdict` in
+  `test\corpus-folder.ps1`, used by both `run-corpus.ps1` and `run-playtest.ps1` (which had the same
+  pattern, and would have FAILED a set that size rather than skip it), and `-SelfTest` pins it on the
+  4-digit line and on real output, where the verdict follows the invalid-level lines.
+- 🔴 **And CC1 itself had never been verified by the corpus gate.** Tile World picks the set with
+  `strcmp` (`series.c`), and five saves differ from their `.dac` only by case: `CC1.dat-ms.dac.tws`
+  and `CC1.dat-lynx.dac.tws` against `CC1.DAT-*.dac`, plus IsaacD1-Old, No_Good_Can_Come_of_This
+  and QuicksForPieGuy. The script named each set from its `.tws`, so all five gave "no such data
+  file" in every build, which the no-verdict list read as "no data file". Windows opens the `.tws`
+  under either spelling, which is why the game itself never noticed. The set is now named as its
+  `.dac` is spelled on disk; recordings keep the `.tws`'s name, so old and new compare set for set.
+  They replay: CC1 149 of 149 MS and 148 of 148 Lynx, No_Good 1 of 1, QuicksForPieGuy 5 of 6 (#6 is
+  documented as impossible), IsaacD1-Old 168 of 205 (the 37 invalid are exactly the levels
+  documented as needing help).
+- **With both fixes the corpus is 22,953 valid and 1,243 invalid over 328 sets that give a verdict;
+  6 give none** (no solutions in the file, or a password that does not match). The earlier figures
+  in this file (19,363 / 1,204 from jc-59 to jc-62) left out eight sets: Cybersmack I, Joshie,
+  Voting-CCLP5 and the five above. Their IDENTICAL verdicts stand for Joshie and Voting-CCLP5, whose
+  whole outputs were compared, and say nothing about the other six, which printed the same error in
+  every build; those six are verified for the first time here, through the published jc-62, with
+  every failure on a level the maintainer documents as not yet solved (impossible, or needing help).
+  🔴 **A baseline recorded before the case fix must be recorded again**: `-Compare` against one
+  fails, correctly, on CC1 MS and Lynx, IsaacD1-Old, No_Good and QuicksForPieGuy, whose outputs went
+  from an error to a verdict (and each now shows its diff rather than a PowerShell error about an
+  empty `.out`). Across the parser fix alone, where the outputs are identical, it now says the two
+  cover the same sets with different verdict counts, instead of the red "did not cover the same
+  sets". Found on the desktop's goose/gander pass, 2026-11-22, reading the no-verdict list the
+  laptop's pass added.
 - 🔴 **The corpus gate had never verified `Cybersmack I`.** `test\run-corpus.ps1` passed its set
   name to `Start-Process` unquoted, and Windows PowerShell 5.1 quotes nothing, so the program got
   "Cybersmack" plus a stray argument ("no such data file"), gave no verdict, and the run counted that
-  as fine. Every path and set name is quoted now. With it, the corpus is **19,462 valid and 1,205
-  invalid** over 321 sets that give a verdict (it read 19,363 and 1,204 before: Cybersmack I is 99
-  valid, and its one invalid, #88, is a level documented as impossible). The 13 sets that still give
-  no verdict (no data file, and so on) are now listed by name in every run, because a set silent in
-  both builds compares IDENTICAL. A set name with `[` or `]` is handled too: `Start-Process` reads its
+  as fine. Every path and set name is quoted now (Cybersmack I is 99 valid, and its one invalid,
+  #88, is a level documented as impossible). The sets that still give no verdict (no data file, and
+  so on) are now listed by name in every run, because a set silent in both builds compares
+  IDENTICAL. A set name with `[` or `]` is handled too: `Start-Process` reads its
   redirect paths as wildcards, so the recording's file names replace them, and an `-Out` or scratch
   folder containing them is refused before anything is copied.
 - **`test\run-corpus.ps1` no longer passes a run that checked nothing.** With the corpus on a drive

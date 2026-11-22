@@ -171,6 +171,15 @@ program returns `EXIT_SUCCESS` however many solutions failed. And even with `-q`
 "no solutions were found at all" are both exit 0.
 
 **Parse stdout and require `Valid solutions:   N` with a real N.** Never trust the exit code alone.
+⚠ **Those spaces are `%4d` padding** (`tworld.c`): from 1,000 up there are none
+(`Valid solutions:1325`), so a pattern that requires one (`:\s+`) silently drops the biggest sets —
+the corpus gate lost Joshie and Voting-CCLP5 from every valid total that way until 2026-11-22. Read it
+with `Read-BatchVerdict` in `test\corpus-folder.ps1` rather than writing another pattern.
+
+⚠ **And name the set as its `.dac` is spelled ON DISK.** `series.c` picks the set with `strcmp`, so
+`CC1.dat-ms.dac` finds nothing when the file is `CC1.DAT-ms.dac` ("no such data file"), while
+Windows opens the `.tws` under either spelling — so the game works and a script that names the set
+from its `.tws` gets no verdict. That kept CC1 itself out of the corpus gate until the same day.
 
 ### 3.3 The test harness must compile in the same preprocessor world as the build
 

@@ -61,7 +61,9 @@ not print `all green` over one. The Qt layer is the only thing that reaches the 
    Windows-GUI-subsystem binary: `& .\tworld2.exe -b ...` returns in ~11 ms against a one-second
    runtime, `$LASTEXITCODE` comes back **empty**, and stdout is lost. Use
    `Start-Process -Wait -PassThru -NoNewWindow` with redirects. **And batch verify's exit code is not
-   a verdict** — parse stdout for `Valid solutions:   N`.
+   a verdict** — parse stdout for `Valid solutions:   N`, whose spaces are `%4d` padding and vanish
+   from 1,000 up (use `Read-BatchVerdict` in `test\corpus-folder.ps1`). Name the set as its `.dac`
+   is spelled on disk: Tile World matches it case-sensitively.
 
 3. **Tests compile with `-std=gnu11`/`-std=gnu++11`, never `-std=c99`.** Strict ANSI leaves `WIN32`
    undefined, and `fileio.c` branches on it to pick `DIRSEP_CHAR` — so a strict test would exercise

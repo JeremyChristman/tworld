@@ -1,14 +1,17 @@
 <#
-corpus-folder.ps1 -- where the default solution corpus is, and what makes a folder one.
+corpus-folder.ps1 -- where the default solution corpus is, what makes a folder one, and how a
+batch verify's verdict is read.
 
-Dot-sourced by test\run-corpus.ps1, by test\run-playtest.ps1 (its fallback when
-neither -Data nor TWORLD_PLAYTEST_DATA is given) and by .github\workflows\
-corpus.yml's probe -- change it with all three in mind:
+Dot-sourced by test\run-corpus.ps1, by test\run-playtest.ps1 (always: its replay
+check reads the verdict here, and the default corpus is its fallback when neither
+-Data nor TWORLD_PLAYTEST_DATA is given) and by .github\workflows\corpus.yml's
+probe -- change it with all three in mind:
 
     . .\test\corpus-folder.ps1
     $p = Resolve-DefaultCorpus
     $problem = Get-CorpusProblem $p      # $null when $p is usable
     $full = ConvertTo-FullCorpusPath $p  # a relative path made absolute, safely
+    $v = Read-BatchVerdict $stdout       # .Valid / .Invalid, $null when not printed
 
 🔴 ONE COPY, IN-PROCESS, ON PURPOSE. The probe first read a literal default out
 of run-corpus.ps1 with a regex; when the default became computed (2026-11-22),
@@ -77,4 +80,25 @@ function Get-CorpusProblem([string]$Path) {
     }
     if (-not $tws) { return "no .tws solution file in $(Join-Path $Path 'save')" }
     return $null
+}
+
+# The verdict a batch verify (-b) printed on stdout: .Valid and .Invalid as
+# numbers, each $null when its line is absent ("No solutions were found.", an
+# error, an executable that never started). Used by run-corpus.ps1's recording
+# and run-playtest.ps1's replay check.
+#
+# 🔴 THE SPACE AFTER THE COLON IS PADDING, NOT SYNTAX. tworld.c prints
+# "  Valid solutions:%4d" and "Invalid solutions:%4d", so a count of 1,000 or
+# more has no space at all: "  Valid solutions:1325". Both callers required one
+# (\s+), so Joshie (1,325 valid) and Voting-CCLP5 (1,695) read as giving no
+# verdict and were left out of every corpus total, 3,020 solutions (found on
+# the desktop's goose/gander pass, 2026-11-22). The per-set comparison hashes
+# the whole stdout, so a change in either set would still have shown as DIFFER;
+# what was wrong was the totals, the verified count and the no-verdict list.
+# One copy here, so the two callers cannot drift apart again.
+function Read-BatchVerdict([string]$Text) {
+    $valid = $null; $invalid = $null
+    if ($Text -match '(?m)^\s*Valid solutions:\s*(\d+)\s*$') { $valid = [int]$Matches[1] }
+    if ($Text -match '(?m)^Invalid solutions:\s*(\d+)\s*$')  { $invalid = [int]$Matches[1] }
+    return [pscustomobject]@{ Valid = $valid; Invalid = $invalid }
 }

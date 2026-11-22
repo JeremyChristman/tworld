@@ -95,11 +95,13 @@ THE TRAPS THIS SCRIPT ENCODES
      verified nothing at all. Everything goes through Start-Process -Wait.
   2. Batch verify's exit code is only a verdict with -q, and even then "0
      invalid" and "no solutions at all" are both 0. The verdict is parsed from
-     stdout: "Valid solutions: N".
+     stdout: "Valid solutions: N", where the space is %4d PADDING and is gone
+     from 1,000 up ("Valid solutions:1325"). Read-BatchVerdict reads it.
   3. The set argument must be a BARE filename found inside -L, never a path.
   4. A .tws is named "<dacname>.tws", so the set for save\CCLP1.dat-ms.dac.tws
-     is the .dac of that name. Sets with no .tws are skipped -- there is nothing
-     to verify.
+     is the .dac of that name -- spelled as the .dac is ON DISK, because Tile
+     World matches the name case-sensitively and Windows does not. Sets with no
+     .tws are skipped -- there is nothing to verify.
 #>
 param(
     [string]$Exe,
@@ -124,7 +126,7 @@ param(
 )
 $ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot "corpus-folder.ps1")   # Resolve-DefaultCorpus, Get-CorpusProblem, ConvertTo-FullCorpusPath
+. (Join-Path $PSScriptRoot "corpus-folder.ps1")   # Resolve-DefaultCorpus, Get-CorpusProblem, ConvertTo-FullCorpusPath, Read-BatchVerdict
 
 # The default corpus: -Corpus, then $env:TWORLD_CORPUS, then the conventional
 # folder under this user's profile (Resolve-DefaultCorpus).
@@ -166,24 +168,34 @@ function Compare-Runs([string]$a, [string]$b) {
     $sa = Get-Content -LiteralPath (Join-Path $a "summary.tsv")
     $sb = Get-Content -LiteralPath (Join-Path $b "summary.tsv")
 
+    # "sets" is every set the run RECORDED; "verdicts" only those that gave one.
+    # The coverage warning below compares the first: it used to compare the
+    # second, so a recording made before a parser fix (which read fewer
+    # verdicts from the same output) was reported as covering different sets
+    # while every per-set output was identical (review, 2026-11-22).
     function Totals($lines) {
-        $v = 0; $i = 0; $n = 0
+        $v = 0; $i = 0; $n = 0; $rows = 0
         foreach ($l in $lines) {
             $f = $l -split "`t"
+            if ($f.Count -ge 3) { $rows++ }
             if ($f.Count -ge 3 -and $f[1] -ne 'NA') { $v += [int]$f[1]; $i += [int]$f[2]; $n++ }
         }
-        return @{ sets = $n; valid = $v; invalid = $i }
+        return @{ sets = $rows; verdicts = $n; valid = $v; invalid = $i }
     }
     $ta = Totals $sa
     $tb = Totals $sb
     Write-Host ""
     Write-Host "########## corpus comparison ##########"
-    Write-Host ("  {0,-28} {1,4} sets  {2,6} valid  {3,5} invalid" -f (Split-Path -Leaf $a), $ta.sets, $ta.valid, $ta.invalid)
-    Write-Host ("  {0,-28} {1,4} sets  {2,6} valid  {3,5} invalid" -f (Split-Path -Leaf $b), $tb.sets, $tb.valid, $tb.invalid)
+    Write-Host ("  {0,-28} {1,4} sets ({2,4} with a verdict)  {3,6} valid  {4,5} invalid" -f (Split-Path -Leaf $a), $ta.sets, $ta.verdicts, $ta.valid, $ta.invalid)
+    Write-Host ("  {0,-28} {1,4} sets ({2,4} with a verdict)  {3,6} valid  {4,5} invalid" -f (Split-Path -Leaf $b), $tb.sets, $tb.verdicts, $tb.valid, $tb.invalid)
     if ($ta.sets -ne $tb.sets) {
         Write-Host ("  THESE TWO RUNS DID NOT COVER THE SAME SETS ({0} vs {1})." -f $ta.sets, $tb.sets) -ForegroundColor Red
         Write-Host "     A comparison across different set lists is not a differential. Every set" -ForegroundColor Red
         Write-Host "     present in only one of the two runs is listed as a difference below." -ForegroundColor Red
+    } elseif ($ta.verdicts -ne $tb.verdicts) {
+        Write-Host ("  The same sets, but {0} vs {1} gave a verdict: either a set's output changed (listed" -f $ta.verdicts, $tb.verdicts) -ForegroundColor Yellow
+        Write-Host "     below), or the two were recorded by run-corpus.ps1 versions that read verdicts" -ForegroundColor Yellow
+        Write-Host "     differently. The per-set comparison below is what decides." -ForegroundColor Yellow
     }
 
     $differing = @()
@@ -270,7 +282,10 @@ function Compare-Runs([string]$a, [string]$b) {
         $fa = Join-Path $a $d
         $fb = Join-Path $b $d
         if ((Test-Path -LiteralPath $fa) -and (Test-Path -LiteralPath $fb)) {
-            $diff = Compare-Object (Get-Content -LiteralPath $fa) (Get-Content -LiteralPath $fb) | Select-Object -First 6
+            # @( ): an EMPTY .out reads as $null, which Compare-Object refuses (a
+            # set that went from an error to a verdict showed a PowerShell error
+            # here instead of its diff; review, 2026-11-22).
+            $diff = Compare-Object @(Get-Content -LiteralPath $fa) @(Get-Content -LiteralPath $fb) | Select-Object -First 6
             foreach ($line in $diff) {
                 Write-Host ("      {0} {1}" -f $line.SideIndicator, $line.InputObject) -ForegroundColor Yellow
             }
@@ -322,7 +337,8 @@ if ($SelfTest) {
         }
         [IO.File]::WriteAllText((Join-Path $dir "summary.tsv"), (($lines -join "`r`n") + "`r`n"))
     }
-    function Rec([string]$out, [string]$err, [int]$valid, [int]$invalid) {
+    # $valid/$invalid untyped: a summary row can hold "NA" (no verdict).
+    function Rec([string]$out, [string]$err, $valid, $invalid) {
         return @{ out = $out; err = $err; valid = $valid; invalid = $invalid }
     }
 
@@ -365,6 +381,14 @@ if ($SelfTest) {
            b = @{ "S1" = (Rec $okOut "" 149 0); "S2" = (Rec $okOut "" 38 0) }
            code = 1; expect = "THESE TWO RUNS DID NOT COVER THE SAME SETS (1 vs 2)" },
 
+        # The same set, the same output, but the OLDER recording's parser read no
+        # verdict from it (the %4d bug). Coverage is the same, so this is the
+        # yellow advisory and a pass -- not the red warning, and not a failure.
+        @{ name = "fewer verdicts from identical outputs is advisory, not a coverage gap"
+           a = @{ "S1" = (Rec $okOut "" "NA" "0") }
+           b = @{ "S1" = (Rec $okOut "" 149 0) }
+           code = 0; expect = "The same sets, but 0 vs 1 gave a verdict" },
+
         @{ name = "differing warnings are advisory, not a verdict"
            a = @{ "S1" = (Rec $okOut "bad tile at 4,5`r`n" 149 0) }
            b = @{ "S1" = (Rec $okOut "bad tile at 6,7`r`n" 149 0) }
@@ -403,13 +427,44 @@ if ($SelfTest) {
             Write-Host $text
         }
     }
+
+    # The RECORDING's parser, Read-BatchVerdict (corpus-folder.ps1). tworld.c
+    # pads the count with %4d, so from 1,000 up there is no space after the
+    # colon; requiring one left Joshie (1,325) and Voting-CCLP5 (1,695) out of
+    # every total until 2026-11-22. Case 2 is that exact line.
+    $parses = @(
+        @{ name = "a padded verdict is read"
+           text = "  Valid solutions: 149`r`nInvalid solutions:   0`r`n"; valid = 149; invalid = 0 },
+        @{ name = "a 4-digit verdict is read (no space after the colon)"
+           text = "  Valid solutions:1325`r`nInvalid solutions:1001`r`n"; valid = 1325; invalid = 1001 },
+        @{ name = "no solutions at all is no verdict"
+           text = "No solutions were found.`r`n"; valid = $null; invalid = $null },
+        # Real output (Cybersmack I): the verdict comes AFTER the invalid-level
+        # lines. A pattern that lost its (?m) passed the three cases above and
+        # dropped 152 of 323 sets on the real corpus (review, reproduced).
+        @{ name = "a verdict after invalid-level lines is read"
+           text = "Solution for level 88 is invalid`r`n  Valid solutions:  99`r`nInvalid solutions:   1`r`n"; valid = 99; invalid = 1 }
+    )
+    foreach ($c in $parses) {
+        $v = Read-BatchVerdict $c.text
+        if ($v.Valid -eq $c.valid -and $v.Invalid -eq $c.invalid) {
+            Write-Host ("  ok    {0}" -f $c.name) -ForegroundColor Green
+        } else {
+            $failures++
+            Write-Host ("  FAIL  {0}" -f $c.name) -ForegroundColor Red
+            Write-Host ("        expected valid={0} invalid={1}, got valid={2} invalid={3}" -f
+                        $c.valid, $c.invalid, $v.Valid, $v.Invalid) -ForegroundColor Red
+        }
+    }
+    $total = $cases.Count + $parses.Count
+
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host ""
     if ($failures) {
-        Write-Host ("  {0} of {1} self test(s) FAILED" -f $failures, $cases.Count) -ForegroundColor Red
+        Write-Host ("  {0} of {1} self test(s) FAILED" -f $failures, $total) -ForegroundColor Red
         exit 1
     }
-    Write-Host ("  all {0} self test(s) passed" -f $cases.Count) -ForegroundColor Green
+    Write-Host ("  all {0} self test(s) passed" -f $total) -ForegroundColor Green
     exit 0
 }
 
@@ -498,10 +553,23 @@ if ($Filter) { $tws = @($tws | Where-Object { $_.Name -like "*$Filter*" }) }
 # second would silently overwrite the first (review). Refused before anything is
 # replayed and before -Out is cleared, so a good recording there survives; only
 # sets that will actually be replayed (they have a .dac) count.
+# 🔴 THE SET IS NAMED AS ITS .dac IS SPELLED ON DISK, NOT AS ITS .tws IS. Tile
+# World picks the set with strcmp (series.c), so "CC1.dat-ms.dac" matches nothing
+# when the file is CC1.DAT-ms.dac -- while Windows opens the .tws under either
+# spelling, which is why the game itself never noticed. Five saves in the
+# collection differ from their .dac only by case (CC1 MS and Lynx, IsaacD1-Old,
+# No_Good_Can_Come_of_This, QuicksForPieGuy): "no such data file" in every build,
+# so this gate had never verified them, CC1 included (desktop goose/gander pass,
+# 2026-11-22). A PowerShell hashtable's keys ignore case, so this lookup is what
+# finds the real spelling; the RECORDING keeps the .tws's name, so recordings
+# made before and after compare set for set.
+$dacNames = @{}
+foreach ($d in @(Get-ChildItem -LiteralPath $setsDir -Filter *.dac -File)) { $dacNames[$d.Name] = $d.Name }
+
 $recNames = @{}
 foreach ($t in $tws) {
     $b = $t.Name -replace '\.tws$', ''
-    if (-not (Test-Path -LiteralPath (Join-Path $setsDir $b))) { continue }
+    if (-not $dacNames.ContainsKey($b)) { continue }
     $r = $b -replace '[\[\]]', '_'
     if ($recNames.ContainsKey($r)) {
         $where = if ($KeepScratch -or $ScratchCorpus) { " (the scratch corpus is at $scratch)" } else { "" }
@@ -529,7 +597,8 @@ function ConvertTo-QuotedArg([string]$s) { '"' + $s + '"' }
 $n = 0; $noDac = 0; $totalValid = 0; $totalInvalid = 0; $withVerdict = 0; $noVerdict = @()
 foreach ($t in $tws) {
     $base = $t.Name -replace '\.tws$', ''       # e.g. CCLP1.dat-ms.dac
-    if (-not (Test-Path -LiteralPath (Join-Path $setsDir $base))) { $noDac++; continue }
+    if (-not $dacNames.ContainsKey($base)) { $noDac++; continue }
+    $dac = $dacNames[$base]                      # the .dac's own spelling: see $dacNames
     $n++
 
     $rec = $base -replace '[\[\]]', '_'          # the recording's file name: see Assert-NoWildcard
@@ -539,15 +608,17 @@ foreach ($t in $tws) {
     $argv = @("-b", "-r", "-R", $resDir, "-L", $setsDir, "-D", $dataDir, "-S", $saveDir) | ForEach-Object {
         if ($_.StartsWith("-")) { $_ } else { ConvertTo-QuotedArg $_ }
     }
-    $argv += ConvertTo-QuotedArg $base
+    $argv += ConvertTo-QuotedArg $dac
     $p = Start-Process -FilePath $exePath -WorkingDirectory $scratch -NoNewWindow -Wait -PassThru `
          -ArgumentList $argv -RedirectStandardOutput $o -RedirectStandardError $e
 
     $text = Get-Content -LiteralPath $o -Raw -ErrorAction SilentlyContinue
     if ($null -eq $text) { $text = "" }
-    $valid = "NA"; $invalid = "NA"
-    if ($text -match '(?m)^\s*Valid solutions:\s+(\d+)\s*$')   { $valid = $Matches[1] }
-    if ($text -match '(?m)^Invalid solutions:\s+(\d+)\s*$')    { $invalid = $Matches[1] }
+    # Read-BatchVerdict (corpus-folder.ps1): "  Valid solutions:%4d" has no space
+    # at all from 1,000 up, which left Joshie and Voting-CCLP5 out of every total.
+    $verdict = Read-BatchVerdict $text
+    $valid   = if ($null -ne $verdict.Valid)   { [string]$verdict.Valid }   else { "NA" }
+    $invalid = if ($null -ne $verdict.Invalid) { [string]$verdict.Invalid } else { "NA" }
     if ($valid -ne "NA")   { $totalValid += [int]$valid; $withVerdict++ } else { $noVerdict += $base }
     if ($invalid -ne "NA") { $totalInvalid += [int]$invalid }
 

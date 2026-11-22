@@ -116,11 +116,14 @@ Push-Location $root
 #      location under this user's profile. ONE copy of that rule, in
 #      test\corpus-folder.ps1 -- this script used to carry its own, which is how
 #      the two would have drifted apart (review, 2026-11-22).
+#
+# Loaded unconditionally: the replay check below reads its verdict through
+# Read-BatchVerdict, the same parser run-corpus.ps1 records with.
+. (Join-Path $PSScriptRoot "corpus-folder.ps1")
 if (-not $Data) {
     if ($env:TWORLD_PLAYTEST_DATA) {
         $Data = $env:TWORLD_PLAYTEST_DATA
     } else {
-        . (Join-Path $PSScriptRoot "corpus-folder.ps1")
         $Data = Resolve-DefaultCorpus
     }
 }
@@ -376,10 +379,14 @@ try {
             # ⚠ Batch verify's EXIT CODE IS NOT A VERDICT -- it is only one with
             # -q, and even then "0 invalid" and "no solutions at all" are both 0.
             # The verdict is parsed from stdout. See CLAUDE.md section 3.2.
+            # Read-BatchVerdict (corpus-folder.ps1): from 1,000 up, %4d leaves no
+            # space after the colon, so a set that big would have read as valid=0
+            # and FAILED here (the default sets are smaller, so it never did).
+            $verdict = Read-BatchVerdict $r.StdOut
             $valid = 0
-            if ($r.StdOut -match '(?m)^\s*Valid solutions:\s+(\d+)\s*$') { $valid = [int]$Matches[1] }
+            if ($null -ne $verdict.Valid) { $valid = $verdict.Valid }
             $invalid = -1
-            if ($r.StdOut -match '(?m)^Invalid solutions:\s+(\d+)\s*$') { $invalid = [int]$Matches[1] }
+            if ($null -ne $verdict.Invalid) { $invalid = $verdict.Invalid }
             $replayOk = ($valid -gt 0 -and $invalid -eq 0)
             Check ("{0}: solutions replay through the SHIPPED binary" -f $set) `
                   $replayOk `
