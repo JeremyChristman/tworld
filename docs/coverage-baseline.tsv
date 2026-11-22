@@ -6,20 +6,20 @@
 # means exactly what it always did. The end-to-end tests run an uninstrumented
 # build and are not counted anywhere here.
 file	lines	linesHit	branches	branchesHit
-encoding.c	139	131	87	77
-fileio.c	242	131	150	67
+encoding.c	139	134	87	80
+fileio.c	242	178	150	90
 generic/dirinput.c	33	33	45	44
 generic/in.c	167	93	167	85
 generic/tile.c	609	261	289	115
-lxlogic.c	1073	631	1008	505
-mslogic.c	1654	997	1494	733
+lxlogic.c	1073	637	1008	511
+mslogic.c	1654	1053	1496	785
 oshw-qt/CCMetaData.cpp	114	105	174	100
 oshw-qt/CCMetaData.h	9	9	0	0
 oshw-qt/oshwbind.cpp	173	10	138	7
 oshw-qt/oshwbind.h	10	1	0	0
-oshw-qt/TWApp.cpp	71	24	62	2
+oshw-qt/TWApp.cpp	71	24	66	2
 oshw-qt/TWDisplayWidget.cpp	16	5	14	2
-oshw-qt/TWMainWnd.cpp	1118	322	1811	293
+oshw-qt/TWMainWnd.cpp	1301	351	2224	325
 oshw-qt/TWMainWnd.h	1	1	0	0
 oshw-qt/TWProgressBar.cpp	50	14	70	3
 oshw-qt/TWProgressBar.h	6	0	0	0
@@ -27,10 +27,10 @@ oshw-qt/TWTextCoder.cpp	22	20	28	20
 oshw-qt/TWTheme.cpp	64	53	84	36
 play.c	297	79	130	44
 random.c	43	43	8	8
-res.c	199	82	178	73
-score.cpp	229	177	134	56
-series.c	571	110	311	76
-settings.cpp	202	185	320	207
-solution.c	444	212	309	93
+res.c	416	307	362	250
+score.cpp	229	177	132	56
+series.c	572	148	311	95
+settings.cpp	202	185	316	205
+solution.c	444	247	309	120
 tworld.c	1352	63	968	64
-unslist.c	118	107	92	78
+unslist.c	118	107	92	80
