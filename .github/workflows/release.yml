@@ -57,27 +57,32 @@ jobs:
       - name: Install the toolchain packages
         run: >
           powershell -ExecutionPolicy Bypass -File .github/install-toolchain.ps1
-          -Extra mingw-w64-x86_64-cmake,mingw-w64-x86_64-ninja,mingw-w64-x86_64-SDL2
+          -Extra cmake,ninja,SDL2
 
-      # 🔴 STATIC QT 5, PINNED BY FILE (2026-11-21). MSYS2 is deprecating its MINGW64 environment
-      # (news, 2026-03-15 and 2026-10-24: "dropping MINGW64 builds from leaf packages") and removed
-      # mingw-w64-x86_64-qt5-static from the repository database at 12:44 UTC that day -- six
-      # minutes before jc-61's release run, which failed "target not found". The FILE stays on the
-      # mirror, so it is fetched by URL, checked against the SHA-256 below (the same 5.15.19-1 the
-      # jc-60 run installed, and byte-identical to the maintainer's local pacman cache), and
-      # installed with pacman -U, which resolves its one dependency (vulkan) from the database.
-      # It lives HERE, not in .github/install-toolchain.ps1 or docs/toolchain.lock, deliberately:
-      # a release dispatched for an existing tag checks out THAT TAG's tree, so only this file's
-      # copy on main reaches it. ⚠ A STOPGAP: more MINGW64 packages will go the same way, and the
-      # durable fix is moving the toolchain to UCRT64.
+      # 🔴 STATIC QT 5, PINNED BY FILE. Since jc-62 the toolchain is UCRT64 (docs/toolchain.lock,
+      # msys_env), whose database still lists qt5-static -- but MINGW64's removed it at 12:44 UTC on
+      # 2026-11-21, six minutes before jc-61's release run ("target not found"), and Qt 5 is past
+      # its end of life, so the same can happen here. The FILE stays on the mirror when the
+      # database drops it, so it is fetched by URL, checked against the SHA-256 below (taken from
+      # repo.msys2.org on 2026-11-21, the same 5.15.19-1 Qt the MINGW64 releases linked), and
+      # installed with pacman -U, which resolves its dependencies from the database. A pin also
+      # keeps a silent repackaging (a -2) from changing the shipped bytes. The step refuses a pinned
+      # file that is not the configured environment's, so changing msys_env without this fails
+      # here, loudly. It lives HERE, not in install-toolchain.ps1, because a release dispatched for
+      # an existing tag checks out THAT TAG's tree while running main's copy of this workflow. ⚠ So
+      # a tag older than jc-62 (MINGW64, no msys-env.ps1) can no longer be released by it.
       - name: Install the pinned static Qt 5
         env:
-          QT5_STATIC_FILE: mingw-w64-x86_64-qt5-static-5.15.19-1-any.pkg.tar.zst
-          QT5_STATIC_SHA256: B1A8D9368540DA00F99DFD71A890EB1BA4B7BF631C437AEB9A5F6C1849C06196
+          QT5_STATIC_FILE: mingw-w64-ucrt-x86_64-qt5-static-5.15.19-1-any.pkg.tar.zst
+          QT5_STATIC_SHA256: 8BBBB97279F7A7B4C1ABAADAD10E16D0207B8BB43733E2D3FA0F290B64A4156C
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           $ProgressPreference = "SilentlyContinue"   # PS 5.1 renders the bar per chunk: a 200 MB download crawls
-          $url = "https://repo.msys2.org/mingw/mingw64/$env:QT5_STATIC_FILE"
+          . .\msys-env.ps1
+          if (-not $env:QT5_STATIC_FILE.StartsWith("$($MsysEnv.Prefix)-qt5-static-")) {
+              throw "the pinned $env:QT5_STATIC_FILE is not $($MsysEnv.Name)'s qt5-static (docs/toolchain.lock says msys_env=$($MsysEnv.Name))"
+          }
+          $url = "$($MsysEnv.RepoUrl)/$env:QT5_STATIC_FILE"
           $dst = Join-Path $env:RUNNER_TEMP $env:QT5_STATIC_FILE
           Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
           $got = (Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash

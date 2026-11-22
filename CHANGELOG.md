@@ -23,13 +23,42 @@ stay attached to something someone can see.
 
 ## Unreleased
 
-### Changed (release pipeline)
-- **`release.yml` installs static Qt 5 from a pinned file** (`mingw-w64-x86_64-qt5-static-5.15.19-1`, by
-  URL and SHA-256), because MSYS2 removed it from the mingw64 repository database on 2026-11-21 as
-  part of deprecating MINGW64 -- six minutes before jc-61's release run, which failed "target not
-  found". The step lives in the workflow, not `install-toolchain.ps1`, so a release dispatched for
-  an existing tag (which checks out that tag's tree) still gets it. A stopgap until the toolchain
-  moves to UCRT64.
+## jc-62 — 2026-11-22
+
+The toolchain moves from MSYS2's MINGW64 environment to UCRT64. No engine change: the same source,
+the same gcc 16.2.0 and the same Qt 5.15.19, with Windows' Universal C Runtime in place of
+`msvcrt.dll`.
+
+### Changed
+- **Built in MSYS2's UCRT64 environment.** MSYS2 is retiring MINGW64, and removed its static Qt 5
+  on 2026-11-21. The exe now imports the C runtime from Windows (`api-ms-win-crt-*`, part of
+  Windows 10 and 11; Windows 7 and 8.1 need the "Update for Universal C Runtime"); the DLLs that
+  ship beside it are still `libz-1.dll` and `libzstd.dll`. **Corpus against jc-61's published
+  download: 0 of 334 per-set outputs differ** (19,363 valid, 1,204 invalid, warnings identical).
+  All six local layers green on the new toolchain, the golden master's 1,806 digests (recorded on
+  MINGW64) and the 18 `NO_FIX_*` witnesses included.
+
+### Changed (build and release pipeline)
+- **One line names the environment: `msys_env` in `docs/toolchain.lock`.** A new `msys-env.ps1`
+  reads it for every script; `.github/install-toolchain.ps1` reads it too and prefixes bare
+  package names, so the workflows no longer name the environment. The move found `mingw64` written
+  by hand in thirteen scripts and two workflows, where a missed one would have kept finding the old
+  compiler without failing.
+- **One compiler finder and one PATH rule, in `msys-env.ps1`.** `Resolve-MsysTool` (used by
+  `test\run-tests.ps1`, `coverage.ps1`, `mutate.ps1`, `run-golden.ps1`, `run-nofix.ps1`) takes the
+  configured environment's tool, and THROWS when MSYS2 is installed but that environment is not, so
+  a PC with only MINGW64 (the laptop, today) cannot test green with MINGW64's gcc from `PATH`; `PATH`
+  is used only with no MSYS2 at all. `Set-PathFirst` moves the environment's bin to the FRONT of
+  `PATH` even when it is already further down, where six scripts used to skip the prepend and leave
+  another environment's DLLs first. `run-nofix.sh` parses the lock as leniently and fails as
+  loudly.
+- **`release.yml` installs static Qt 5 from a pinned file** (UCRT64's `qt5-static-5.15.19-1`, by URL
+  and SHA-256), and refuses a pinned file that is not the configured environment's. The pin first
+  went in for MINGW64 on 2026-11-21, when MSYS2 removed the package from that database six minutes
+  before jc-61's release run; it stays because Qt 5 is past its end of life everywhere. A tag older
+  than jc-62 can no longer be released by this workflow.
+- The desktop now builds with exactly CI's pinned compiler (it was on MINGW64's gcc 16.1.0); the
+  laptop must run `.github\install-toolchain.ps1` before it builds.
 
 ## jc-61 — 2026-11-21
 

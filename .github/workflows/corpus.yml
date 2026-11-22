@@ -118,6 +118,11 @@ jobs:
 
       # A worktree rather than a second clone: same object store, no refetch, and
       # it cannot disturb the checkout this job is testing.
+      # ⚠ A baseline_ref older than jc-62 is built by ITS OWN build.ps1, which uses MINGW64 (and
+      # whatever gcc that tree has; install-toolchain.ps1 pins only the msys_env one), while HEAD
+      # builds in UCRT64. A verdict difference against such a ref could then be the toolchain, not
+      # the change. jc-62's own corpus run found the two toolchains agree on all 334 sets, so this
+      # is a caveat, not a known difference -- and it ends once the baseline is jc-62 or later.
       - name: Build the baseline revision
         if: steps.probe.outputs.present == 'True'
         run: |

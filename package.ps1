@@ -31,14 +31,20 @@ packaging FAILS if README.txt's header does not name that same tag.
 #>
 param(
     [string]$Exe = "build-static\tworld2.exe",
-    [string]$Dlls = "C:\msys64\mingw64\bin",
-    [string]$Strip = "C:\msys64\mingw64\bin\strip.exe",
+    # These three default to the configured MSYS2 environment's bin (docs\toolchain.lock, read
+    # through msys-env.ps1 below): empty means "that one". A default cannot call it from here.
+    [string]$Dlls = "",
+    [string]$Strip = "",
     # jc-61: reads the exe's import table, so the zip ships the DLLs the exe actually needs.
-    [string]$Objdump = "C:\msys64\mingw64\bin\objdump.exe",
+    [string]$Objdump = "",
     [switch]$SkipTests
 )
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
+. (Join-Path $root "msys-env.ps1")   # jc-62: the environment comes from docs\toolchain.lock
+if (-not $Dlls)    { $Dlls    = $MsysEnv.Bin }
+if (-not $Strip)   { $Strip   = Join-Path $MsysEnv.Bin "strip.exe" }
+if (-not $Objdump) { $Objdump = Join-Path $MsysEnv.Bin "objdump.exe" }
 
 # The unit tests gate the release (added jc-43). A test suite that nothing runs
 # is documentation, and the defects it covers are the silent kind -- a wrong

@@ -52,6 +52,7 @@ param(
     [string]$Cc
 )
 $ErrorActionPreference = "Continue"
+. (Join-Path $PSScriptRoot "..\msys-env.ps1")   # the MSYS2 environment, from docs\toolchain.lock (jc-62)
 $repo = Split-Path -Parent $PSScriptRoot
 
 # 🔴 THE CHECK FLOOR, EXACT, like every unit test's tw_expect_atleast(N). This
@@ -192,7 +193,7 @@ Write-Host "executable: $script:exePath"
 # freshness cannot be checked, and that is SAID rather than guessed at.
 if (-not $exeWasGiven) {
     $buildDir = Split-Path -Parent $script:exePath
-    $ninjaExe = Join-Path "C:\msys64\mingw64\bin" "ninja.exe"
+    $ninjaExe = Join-Path $MsysEnv.Bin "ninja.exe"
     if (-not (Test-Path $ninjaExe)) { $ninjaExe = (Get-Command ninja -ErrorAction SilentlyContinue).Source }
     $pending = $null
     if ($ninjaExe -and (Test-Path (Join-Path $buildDir "build.ninja"))) {
@@ -227,10 +228,9 @@ if (-not $exeWasGiven) {
 }
 
 # A dynamic build needs Qt's DLLs on PATH. Harmless for a static one.
-$mingwBin = "C:\msys64\mingw64\bin"
+$mingwBin = $MsysEnv.Bin
 if (Test-Path $mingwBin) {
-    $segments = $env:Path -split ';'
-    if ($segments -notcontains $mingwBin) { $env:Path = "$mingwBin;$env:Path" }
+    Set-PathFirst $mingwBin   # msys-env.ps1: exact, and moves an existing copy to the front (jc-62)
 }
 
 # The build tag this executable should be claiming. Read from fork.h, which is

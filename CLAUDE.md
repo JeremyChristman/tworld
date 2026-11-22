@@ -42,7 +42,14 @@ a bug; it risks silently invalidating solutions that took people years to record
 ## 2. Commands
 
 Everything is PowerShell, targeting **Windows PowerShell 5.1**. The toolchain is **MSYS2** at
-`C:\msys64` (gcc, cmake, ninja, Qt5 — and `qt5-static` for the shipping build).
+`C:\msys64`, its **UCRT64** environment since jc-62 (gcc, cmake, ninja, Qt5 — and `qt5-static` for
+the shipping build). 🔴 **The environment is ONE line, `msys_env` in `docs/toolchain.lock`**, read by
+every script through `msys-env.ps1` (and by `.github/install-toolchain.ps1`, which also takes bare
+package names and prefixes them). Never write `C:\msys64\ucrt64` into a script: the MINGW64 → UCRT64
+move found that path hand-written in thirteen scripts and two workflows, and a missed one keeps
+finding the old compiler without failing. The compiler finders now prefer that environment over
+`PATH` for the same reason. Set up a PC with `.github\install-toolchain.ps1 -Extra
+cmake,ninja,SDL2,pkgconf,qt5-base` (CI's pinned compiler) plus the static Qt file `release.yml` pins.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1                    # -> build-static\tworld2.exe (ships)
@@ -92,7 +99,7 @@ a mutation check needs. `-w` is there because `-O1` turns on `-Wformat-truncatio
 
 `build.ps1` does three things by hand that are easy to forget and that fail confusingly:
 
-1. **Puts `C:\msys64\mingw64\bin` first on `PATH`.** The gcc driver cannot spawn `cc1` unless its own
+1. **Puts the environment's bin (`C:\msys64\ucrt64\bin`) first on `PATH`.** The gcc driver cannot spawn `cc1` unless its own
    directory is on `PATH`, and when it cannot it fails with a nonzero exit and **not one word of
    diagnostic**. Calling gcc by full path is not enough.
 2. **Removes `NoDefaultCurrentDirectoryInExePath` from the environment.** `CMakeLists.txt` generates
@@ -105,10 +112,10 @@ a mutation check needs. `-w` is there because `-O1` turns on `-Wformat-truncatio
 ### Running it
 
 ```powershell
-.\build-dynamic\tworld2.exe        # needs C:\msys64\mingw64\bin on PATH for Qt's DLLs
+.\build-dynamic\tworld2.exe        # needs C:\msys64\ucrt64\bin on PATH for Qt's DLLs
 ```
 
-🔺 **A scratch copy of the executable needs the DLLs it imports beside it** (`libzstd.dll` and `zlib1.dll` -- or `libz-1.dll`, which CI's MSYS2 switched to between jc-59 and jc-60; `objdump -p` lists them), or it dies
+🔺 **A scratch copy of the executable needs the DLLs it imports beside it** (`libzstd.dll` and `libz-1.dll` under UCRT64; MINGW64 builds before jc-60 imported `zlib1.dll`; `objdump -p` lists them -- and the C runtime, `api-ms-win-crt-*`, is Windows' own), or it dies
 with `0xC0000135` (`STATUS_DLL_NOT_FOUND`) — **no window, no stderr, and the process lingers**, so it
 looks like a hang. Worse, the resulting "System Error" dialog survives killing the process and then
 steals focus. If keys mysteriously go nowhere during a playtest, hunt for a `#32770` window titled
@@ -960,8 +967,10 @@ Check [`docs/adr/`](docs/adr/) before changing anything that looks wrong.
 7. **"Last level" is `count - 1`, not `islastinseries()`.** The latter also answers TRUE for a
    `.dac`'s `lastlevel=` line, which stock `CCLP1-MS.dac` sets to 144 over a 149-level `.dat`.
 8. **The static link, and the DLLs that survive it.** zlib and libzstd are pinned as dynamic imports
-   by Qt's static CMake config; zlib's file is `zlib1.dll` or `libz-1.dll` depending on the MSYS2
-   build, which is why `package.ps1` reads the names from the exe (jc-61) instead of listing them.
+   by Qt's static CMake config; zlib's file is `libz-1.dll` today and was `zlib1.dll` in older MSYS2
+   builds, which is why `package.ps1` reads the names from the exe (jc-61) instead of listing them.
+   Since jc-62 (UCRT64) the C runtime is Windows' Universal C Runtime (`api-ms-win-crt-*`), built
+   into Windows 10 and 11; Windows 7 and 8.1 need Microsoft's "Update for Universal C Runtime".
    [ADR 0001](docs/adr/0001-one-statically-linked-executable.md).
 9. **The score screen's grand-total row is 32 px where its neighbors are 20.** Pre-existing; the
    obvious cure was built, measured and backed out because it would elide long level names on sets

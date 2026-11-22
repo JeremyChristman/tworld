@@ -95,25 +95,16 @@ $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
 $baselineFile = Join-Path $root "docs\coverage-baseline.tsv"
 
-function Resolve-Tool([string]$explicit, [string]$name) {
-    if ($explicit) {
-        if (-not (Test-Path $explicit)) { throw "not found: $explicit" }
-        return $explicit
-    }
-    $onPath = Get-Command $name -ErrorAction SilentlyContinue
-    if ($onPath) { return $onPath.Source }
-    $msys = Join-Path "C:\msys64\mingw64\bin" "$name.exe"
-    if (Test-Path $msys) { return $msys }
-    throw "no $name found: put it on PATH, install MSYS2 at C:\msys64, or pass -Cc/-Cxx"
-}
+# The compiler and gcov through msys-env.ps1's Resolve-MsysTool, the one copy of that rule, as in
+# test\run-tests.ps1 (jc-62: PATH first would measure another environment's compiler).
+. (Join-Path $root "msys-env.ps1")
 
-$Cc = Resolve-Tool $Cc "gcc"
-$Cxx = Resolve-Tool $Cxx "g++"
-$gcov = Resolve-Tool $null "gcov"
+$Cc = Resolve-MsysTool $Cc "gcc"
+$Cxx = Resolve-MsysTool $Cxx "g++"
+$gcov = Resolve-MsysTool $null "gcov"
 
 $mingwBin = Split-Path -Parent $Cc
-$segments = $env:Path -split ';'
-if ($segments -notcontains $mingwBin) { $env:Path = "$mingwBin;$env:Path" }
+Set-PathFirst $mingwBin   # msys-env.ps1: exact, and moves an existing copy to the front (jc-62)
 
 # A private directory per run. The .gcno lands beside the executable at compile
 # time and the .gcda is written next to it when the binary runs, so the runner is

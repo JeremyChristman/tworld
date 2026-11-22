@@ -144,7 +144,7 @@ endif()
 
 if(OSHW STREQUAL "qt")
     # MOD (Jeremy): when configured against a static Qt (CMAKE_PREFIX_PATH=
-    # /mingw64/qt5-static), link the windows platform plugin in and go
+    # <msys env>/qt5-static, /ucrt64 since jc-62), link the windows platform plugin in and go
     # fully static so the exe needs no bundled DLLs. Dynamic builds are
     # unaffected (plugin target doesn't exist there).
     if(TARGET Qt5::QWindowsIntegrationPlugin)

@@ -68,7 +68,8 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $qtDir    = Join-Path $PSScriptRoot "qt"
-$binDir   = Join-Path $MsysRoot "mingw64\bin"
+. (Join-Path $PSScriptRoot "..\msys-env.ps1")   # the environment (and -MsysRoot), from docs\toolchain.lock
+$binDir   = $MsysEnv.Bin
 
 if (-not (Test-Path $qtDir)) {
     Write-Host "no test\qt directory - nothing to run" -ForegroundColor Yellow

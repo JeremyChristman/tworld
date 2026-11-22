@@ -38,8 +38,18 @@
 # evidence; the golden master is.
 #
 # HOW TO FIND A VERSION STRING: the package files are listed at
-# https://repo.msys2.org/mingw/mingw64/ -- take the part between
-# "mingw-w64-x86_64-gcc-" and "-any.pkg.tar.zst".
+# https://repo.msys2.org/mingw/<msys_env>/ (ucrt64 today) -- take the part
+# between "mingw-w64-ucrt-x86_64-gcc-" and "-any.pkg.tar.zst". gcc and gcc-libs
+# must both exist at that version (see "TWO FILES" above).
+
+# The MSYS2 ENVIRONMENT everything builds in. The package prefix, the repository
+# folder and the C:\msys64\<env> tree every script uses all follow from this one
+# line: msys-env.ps1 reads it for the scripts, .github\install-toolchain.ps1 for
+# CI. UCRT64 since 2026-11-21 (jc-62): MSYS2 is retiring MINGW64, and removed its
+# static Qt 5 that day. 🔴 CHANGING IT IS A COMPILER CHANGE: a different C
+# runtime under the same gcc version. It was made with the full checklist above,
+# the solution corpus included, and so must the next one be.
+msys_env=ucrt64
 
 # The MSYS2 package release, exactly as it appears in the file name.
 gcc_pkgver=16.2.0-3
@@ -50,10 +60,14 @@ gcc_pkgver=16.2.0-3
 gcc_version=16.2.0
 
 # --------------------------------------------------------------------------
-# NOTE: THE MAINTAINER'S DESKTOP IS NOT ON THIS VERSION, and that is recorded
-# rather than hidden. It builds with gcc 16.1.0 while CI now pins 16.2.0.
+# NOTE: THE DESKTOP IS ON THIS PIN since 2026-11-21: the UCRT64 toolchain went on
+# it through .github\install-toolchain.ps1, the script CI runs, so it builds with
+# exactly CI's compiler. ⚠ The LAPTOP must run the same script before it builds
+# (it has only the MINGW64 tree, and every script now looks in ucrt64\bin).
 #
-# That divergence is not currently a problem, and there is direct evidence
+# History, kept because the evidence still holds: until then the desktop built
+# with MINGW64's gcc 16.1.0 while CI pinned 16.2.0, and that divergence was not a
+# problem, with direct evidence
 # rather than an assumption: test/golden/engine-snapshot.tsv was generated on
 # the 16.1.0 desktop, and the `golden` CI job recomputes all 1,806 digests on
 # Linux with a different compiler entirely and gets the same answers. Two

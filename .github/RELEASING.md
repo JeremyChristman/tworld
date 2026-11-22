@@ -140,7 +140,7 @@ level and, since jc-59, one in `res/sounds/`:
 |---|---|
 | `Tile World.exe` | the build being released, stripped. The shipped name has a space and no "tworld" in it — set deliberately, because that filename has caused false conclusions before |
 | `tw_settings.ini` | a stock settings file. **Every value must be what the code defaults to when the key is absent** — `verify-defaults.ps1` checks the key set against `settings.cpp`; the values are still a human responsibility |
-| the DLLs the exe imports | read from the exe's own import table by `package.ps1` (jc-61), recursively, skipping what Windows provides -- today `libzstd.dll` and zlib's DLL, which is `zlib1.dll` or `libz-1.dll` depending on the MSYS2 build (CI's became `libz-1.dll` between jc-59 and jc-60). The packager refuses an import it cannot find. The game will not start without them |
+| the DLLs the exe imports | read from the exe's own import table by `package.ps1` (jc-61), recursively, skipping what Windows provides -- today `libzstd.dll` and zlib's DLL, `libz-1.dll` (`zlib1.dll` in MSYS2 builds before jc-60); since jc-62 (UCRT64) the C runtime is Windows' own `api-ms-win-crt-*`, which the packager leaves out as Windows-provided. The packager refuses an import it cannot find. The game will not start without them |
 | `README.txt` | re-updated every release (step 2) |
 | `COPYING` | GPLv2 travels with the binary, as the license requires |
 | `res/sounds/How to make a sound pack.txt` | the sound pack how-to (jc-59). It is the one entry below the top level, and what makes `res\sounds` exist for someone who extracts the zip over an install -- an empty folder cannot be put in a zip. CRLF, like the README |

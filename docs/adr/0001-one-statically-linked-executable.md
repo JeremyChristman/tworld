@@ -30,10 +30,18 @@ copies both and fails the package if either is missing.
 > jc-60's zip could not start (a burned tag). `package.ps1` now reads the DLLs from the exe's import
 > table and refuses an import it cannot find.
 
+> **Amended 2026-11-22 (jc-62):** the static Qt is now UCRT64's (`/ucrt64/qt5-static`, the same
+> 5.15.19-1, pinned by file in `release.yml`): MSYS2 is retiring MINGW64 and removed its
+> `qt5-static` on 2026-11-21. The C runtime moved with it, from `msvcrt.dll` to Windows' Universal C
+> Runtime (`api-ms-win-crt-*`, part of Windows 10 and 11; an update on 7 and 8.1). The surviving
+> imports are `libz-1.dll` and `libzstd.dll`. The decision itself, one statically linked exe, is
+> unchanged; and the corpus showed the runtime change moved no replay (0 of 334 sets).
+
 ## Consequences
 
 - The download is four files plus a license, and the program runs from anywhere it is unpacked.
-- **Building the release requires `mingw-w64-x86_64-qt5-static`**, which is a large package and not
+- **Building the release requires the environment's `qt5-static`** (`mingw-w64-ucrt-x86_64-qt5-static`
+  since jc-62; `mingw-w64-x86_64-qt5-static` before), which is a large package and not
   what a stock MSYS2 install has. `build.ps1 -Flavor dynamic` exists so that ordinary development
   and CI do not need it.
 - A scratch copy of the executable **without those two DLLs dies with `0xC0000135`

@@ -14,8 +14,8 @@ agent -- or a person six months from now -- should not have to reconstruct them.
 
 FLAVORS
 
-  static    Release, Qt5 static (CMAKE_PREFIX_PATH=/mingw64/qt5-static). ONE self-contained exe;
-            this is what gets packaged. Needs mingw-w64-x86_64-qt5-static, which a stock MSYS2
+  static    Release, Qt5 static (CMAKE_PREFIX_PATH=<env>/qt5-static). ONE self-contained exe;
+            this is what gets packaged. Needs <prefix>-qt5-static, which a stock MSYS2
             install does not have. See docs\adr\0001-one-statically-linked-executable.md.
   dynamic   Release against the ordinary shared Qt5. Builds much faster and is the right choice for
             "does it still compile"; the exe needs Qt's DLLs on PATH to actually run.
@@ -25,7 +25,8 @@ FLAVORS
 
 WHAT THIS SCRIPT DOES THAT YOU WOULD FORGET
 
-  1. Puts MSYS2's mingw64\bin FIRST on PATH. The gcc driver cannot spawn cc1 unless its own
+  1. Puts the MSYS2 environment's bin FIRST on PATH (ucrt64\bin: the environment, and the package
+     prefix written <prefix> here, come from docs\toolchain.lock through msys-env.ps1). The gcc driver cannot spawn cc1 unless its own
      directory is on PATH, and it fails with a nonzero exit and NOT ONE WORD of diagnostic when it
      cannot -- calling it by full path is not enough.
   2. Removes NoDefaultCurrentDirectoryInExePath from the environment. CMakeLists.txt generates a
@@ -77,16 +78,18 @@ function Fail([string]$message) {
 
 # ---------------------------------------------------------------- toolchain --
 
-$mingwBin = Join-Path $MsysRoot "mingw64\bin"
+. (Join-Path $PSScriptRoot "msys-env.ps1")   # the environment, from docs\toolchain.lock
+$mingwBin = $MsysEnv.Bin
 if (-not (Test-Path $mingwBin)) {
-    Fail "no MSYS2 mingw64 at $mingwBin. Install MSYS2, or pass -MsysRoot. Packages needed: mingw-w64-x86_64-{gcc,cmake,ninja,SDL2}, plus qt5-static for the static flavor."
+    Fail ("no MSYS2 $($MsysEnv.Name) at $mingwBin. Run .github\install-toolchain.ps1 -Extra " +
+          "cmake,ninja,SDL2,pkgconf,qt5-base (the pinned compiler, installed as CI installs it), add " +
+          "$($MsysEnv.Prefix)-qt5-static for the static flavor, or pass -MsysRoot.")
 }
 
 # Exact segment comparison, not -like: a directory containing [ or ] is a wildcard PATTERN to -like
 # and would silently fail to match, skipping the prepend and reintroducing the silent gcc failure
 # this exists to prevent. (Same reasoning as test\run-tests.ps1.)
-$segments = $env:Path -split ';'
-if ($segments -notcontains $mingwBin) { $env:Path = "$mingwBin;$env:Path" }
+Set-PathFirst $mingwBin   # msys-env.ps1: exact, and moves an existing copy to the front (jc-62)
 
 # See the header, item 2. Remove-Item on a variable that is not set throws under -ErrorAction Stop,
 # so this is guarded rather than wrapped in a try.
@@ -97,7 +100,7 @@ if (Test-Path Env:\NoDefaultCurrentDirectoryInExePath) {
 $cmake = Join-Path $mingwBin "cmake.exe"
 $ninja = Join-Path $mingwBin "ninja.exe"
 foreach ($tool in @($cmake, $ninja)) {
-    if (-not (Test-Path $tool)) { Fail "missing $tool -- pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja" }
+    if (-not (Test-Path $tool)) { Fail "missing $tool -- pacman -S $($MsysEnv.Prefix)-cmake $($MsysEnv.Prefix)-ninja" }
 }
 
 # --------------------------------------------------------------- build tag --
@@ -176,9 +179,9 @@ $cmakeArgs = @(
     "-DOSHW=$oshw"
 )
 if ($Flavor -eq "static") {
-    $qtStatic = Join-Path $MsysRoot "mingw64\qt5-static"
+    $qtStatic = Join-Path $MsysEnv.Dir "qt5-static"
     if (-not (Test-Path $qtStatic)) {
-        Fail "no static Qt at $qtStatic -- pacman -S mingw-w64-x86_64-qt5-static, or build with -Flavor dynamic."
+        Fail "no static Qt at $qtStatic -- install $($MsysEnv.Prefix)-qt5-static (release.yml pins the file), or build with -Flavor dynamic."
     }
     # CMake wants forward slashes here; a backslash path is treated as containing escapes.
     $cmakeArgs += "-DCMAKE_PREFIX_PATH=$($qtStatic -replace '\\','/')"

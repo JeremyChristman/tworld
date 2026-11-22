@@ -19,8 +19,11 @@ careless change there invalidates solutions people spent years recording.
 
 ## Setup
 
-- **Windows and MSYS2 at `C:\msys64`**: `mingw-w64-x86_64-{gcc,cmake,ninja,SDL2}`, plus
-  `mingw-w64-x86_64-qt5-static` for the shipping build. No package manager, no dependency manifest.
+- **Windows and MSYS2 at `C:\msys64`, its UCRT64 environment** (jc-62): `.github\install-toolchain.ps1
+  -Extra cmake,ninja,SDL2,pkgconf,qt5-base` installs the pinned compiler as CI does, plus
+  `mingw-w64-ucrt-x86_64-qt5-static` (the file `release.yml` pins) for the shipping build. The
+  environment is `msys_env` in `docs/toolchain.lock`, read by every script through `msys-env.ps1`;
+  never write `C:\msys64\<env>` into a script. No package manager, no dependency manifest.
 - All tooling is PowerShell, and it targets **Windows PowerShell 5.1** on purpose.
 
 ## Build, test, package

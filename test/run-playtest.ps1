@@ -74,7 +74,8 @@ param(
 
     # Reads the exe's import table (jc-61). Its folder is also where MSYS2's own DLLs are, which
     # is how a missing MSYS2 DLL is told apart from one Windows provides.
-    [string]$Objdump = "C:\msys64\mingw64\bin\objdump.exe",
+    # Empty means the configured MSYS2 environment's (docs\toolchain.lock, via msys-env.ps1; jc-62).
+    [string]$Objdump = "",
 
     [switch]$NoSolutions,
     [switch]$NoGui,
@@ -85,6 +86,8 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $root "msys-env.ps1")
+if (-not $Objdump) { $Objdump = Join-Path $MsysEnv.Bin "objdump.exe" }
 Push-Location $root
 
 # ---- where to borrow level data and solutions from -------------------------

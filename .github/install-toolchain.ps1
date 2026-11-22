@@ -3,7 +3,13 @@ Installs the MSYS2 build toolchain on a CI runner, with the COMPILER PINNED to
 the exact version recorded in docs\toolchain.lock.
 
     .github\install-toolchain.ps1
-    .github\install-toolchain.ps1 -Extra mingw-w64-x86_64-cmake,mingw-w64-x86_64-qt5
+    .github\install-toolchain.ps1 -Extra cmake,qt5
+
+The MSYS2 ENVIRONMENT comes from docs\toolchain.lock (msys_env, read through msys-env.ps1): it
+names the package prefix, the repository folder and the tree gcc is checked in. A bare name given
+to -Extra gets that prefix (cmake -> mingw-w64-ucrt-x86_64-cmake), so a workflow never names the
+environment itself; a full mingw-w64-* name is passed as it is. It runs on a developer machine
+too, which is how a PC gets exactly CI's compiler (2026-11-21).
 
 WHY THE COMPILER IS PINNED AND THE REST IS NOT
 
@@ -54,8 +60,9 @@ foreach ($key in @("gcc_pkgver", "gcc_version")) {
 
 $pkgver  = $lock["gcc_pkgver"]
 $wantver = $lock["gcc_version"]
-$pkgfile = "mingw-w64-x86_64-gcc-$pkgver-any.pkg.tar.zst"
-$url     = "https://repo.msys2.org/mingw/mingw64/$pkgfile"
+. (Join-Path $repoRoot "msys-env.ps1")
+$pkgfile = "$($MsysEnv.Prefix)-gcc-$pkgver-any.pkg.tar.zst"
+$url     = "$($MsysEnv.RepoUrl)/$pkgfile"
 
 # 🔴 gcc-libs COMES WITH IT, BY URL, IN THE SAME TRANSACTION. The gcc package
 # depends on EXACTLY its own release of gcc-libs, and pacman resolves that from
@@ -71,9 +78,10 @@ $url     = "https://repo.msys2.org/mingw/mingw64/$pkgfile"
 # that is genuinely gone from repo.msys2.org, that is the real expiry this
 # arrangement was designed to announce, and docs\toolchain.lock has the
 # checklist for bumping.
-$libsfile = "mingw-w64-x86_64-gcc-libs-$pkgver-any.pkg.tar.zst"
-$libsurl  = "https://repo.msys2.org/mingw/mingw64/$libsfile"
+$libsfile = "$($MsysEnv.Prefix)-gcc-libs-$pkgver-any.pkg.tar.zst"
+$libsurl  = "$($MsysEnv.RepoUrl)/$libsfile"
 
+Write-Host "MSYS2 environment: $($MsysEnv.Name) ($($MsysEnv.Dir))"
 Write-Host "pinned compiler: $pkgfile (with $libsfile)"
 
 # -Sy, not -Syu: refreshing the package database is enough to install from, and
@@ -91,7 +99,7 @@ if ($LASTEXITCODE -ne 0) {
 could not install the pinned compiler $pkgfile.
 
 If the package has been removed from repo.msys2.org, pick a current version
-from https://repo.msys2.org/mingw/mingw64/ and update docs\toolchain.lock --
+from $($MsysEnv.RepoUrl)/ and update docs\toolchain.lock --
 but read that file first: bumping the compiler on this project is a deliberate
 act with a checklist (golden master, NO_FIX_* matrix, and the solution corpus),
 not a version bump to wave through.
@@ -112,7 +120,19 @@ $packages = @()
 foreach ($e in $Extra) {
     foreach ($one in ($e -split ",")) {
         $one = $one.Trim()
-        if ($one -ne "") { $packages += $one }
+        if ($one -eq "") { continue }
+        # A bare name is this environment's package (see the header). A full name must BE this
+        # environment's: another one's (the old mingw-w64-x86_64-* spelling) would install green
+        # into a tree no script looks in (jc-62 review). -Extra is for this environment's packages
+        # only; an MSYS (usr) package such as make is not one.
+        if ($one.StartsWith("mingw-w64-")) {
+            if (-not $one.StartsWith("$($MsysEnv.Prefix)-")) {
+                throw "-Extra $one is not a $($MsysEnv.Name) package (docs\toolchain.lock): give the bare name, or a $($MsysEnv.Prefix)-* one"
+            }
+        } else {
+            $one = "$($MsysEnv.Prefix)-$one"
+        }
+        $packages += $one
     }
 }
 
@@ -132,7 +152,7 @@ if ($packages.Count -gt 0) {
 #
 # Note the ordering: this runs AFTER the extra packages, precisely so that a
 # dependency dragging gcc forward is caught rather than missed.
-$gcc = 'C:\msys64\mingw64\bin\gcc.exe'
+$gcc = Join-Path $MsysEnv.Bin 'gcc.exe'
 if (-not (Test-Path $gcc)) { throw "no gcc at $gcc after installing the toolchain" }
 
 $got = (& $gcc -dumpversion).Trim()

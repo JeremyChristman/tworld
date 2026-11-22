@@ -35,7 +35,8 @@ Three jobs, deliberately separated by cost:
 | `build-and-e2e` | windows-latest | gcc, cmake, ninja, Qt5, SDL2 | a build break, or a defect in how the parts fit together |
 
 **The e2e job builds the DYNAMIC Qt flavor, not the static one that ships.** The static build needs
-`mingw-w64-x86_64-qt5-static`, a large package, and produces a ~40 MB binary; the dynamic build runs
+the environment's `qt5-static` (UCRT64's since jc-62, pinned by file in `release.yml`), a large
+package, and produces a ~40 MB binary; the dynamic build runs
 the same code in a fraction of the time. What the static link changes is packaging, not behavior, and
 `package.ps1` is what verifies that.
 

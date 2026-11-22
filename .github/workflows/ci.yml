@@ -562,7 +562,7 @@ jobs:
       - name: Install the toolchain packages
         run: >
           powershell -ExecutionPolicy Bypass -File .github/install-toolchain.ps1
-          -Extra mingw-w64-x86_64-cmake,mingw-w64-x86_64-ninja,mingw-w64-x86_64-qt5,mingw-w64-x86_64-SDL2,mingw-w64-x86_64-pkgconf
+          -Extra cmake,ninja,qt5-base,SDL2,pkgconf
 
       - name: Build
         run: powershell -ExecutionPolicy Bypass -File build.ps1 -Flavor dynamic -Manifest dist/build-manifest.json

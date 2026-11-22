@@ -71,22 +71,14 @@ param(
 # terminating NativeCommandErrors even on success. Exit codes are checked explicitly.
 $ErrorActionPreference = "Continue"
 
-# Resolve the toolchain rather than assuming a path: the desktop has MSYS2 at
-# C:\msys64, and a machine that has gcc on PATH should not need it at all.
-function Resolve-Tool([string]$explicit, [string]$name) {
-    if ($explicit) {
-        if (-not (Test-Path $explicit)) { throw "compiler not found: $explicit" }
-        return $explicit
-    }
-    $onPath = Get-Command $name -ErrorAction SilentlyContinue
-    if ($onPath) { return $onPath.Source }
-    $msys = Join-Path "C:\msys64\mingw64\bin" "$name.exe"
-    if (Test-Path $msys) { return $msys }
-    throw "no $name found: put it on PATH, install MSYS2 at C:\msys64, or pass -Cc/-Cxx"
-}
+# Resolve the toolchain rather than assuming a path: msys-env.ps1's Resolve-MsysTool, the one
+# copy of the rule (the configured environment's compiler; PATH only when there is no MSYS2 at
+# all). jc-62: PATH used to come FIRST here, so another environment's bin on PATH -- MINGW64's,
+# left over from before the UCRT64 move -- would have tested with that compiler, silently.
+. (Join-Path $PSScriptRoot "..\msys-env.ps1")
 
-$Cc = Resolve-Tool $Cc "gcc"
-$Cxx = Resolve-Tool $Cxx "g++"
+$Cc = Resolve-MsysTool $Cc "gcc"
+$Cxx = Resolve-MsysTool $Cxx "g++"
 Write-Host "C compiler  : $Cc"
 Write-Host "C++ compiler: $Cxx"
 
@@ -99,8 +91,7 @@ Write-Host "C++ compiler: $Cxx"
 # pattern to -like and would silently fail to match, skipping the prepend and
 # reintroducing the very silent failure this exists to prevent.
 foreach ($dir in @((Split-Path -Parent $Cc), (Split-Path -Parent $Cxx))) {
-    $segments = $env:Path -split ';'
-    if ($segments -notcontains $dir) { $env:Path = "$dir;$env:Path" }
+    Set-PathFirst $dir   # msys-env.ps1: exact, and moves an existing copy to the front
 }
 
 # Turns on the TWCASE/TWSUMMARY marker lines in tw_test.h. Always set here, so the

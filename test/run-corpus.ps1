@@ -378,10 +378,10 @@ if (-not $Out) { throw "give -Out a directory to record this run into" }
 $outDir = Resolve-Out $Out
 
 # A dynamic build needs Qt's DLLs; harmless for a static one.
-$mingwBin = "C:\msys64\mingw64\bin"
+. (Join-Path $PSScriptRoot "..\msys-env.ps1")   # the environment, from docs\toolchain.lock
+$mingwBin = $MsysEnv.Bin
 if (Test-Path $mingwBin) {
-    $segments = $env:Path -split ';'
-    if ($segments -notcontains $mingwBin) { $env:Path = "$mingwBin;$env:Path" }
+    Set-PathFirst $mingwBin   # msys-env.ps1: exact, and moves an existing copy to the front (jc-62)
 }
 
 if ($ScratchCorpus) {

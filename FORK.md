@@ -2150,6 +2150,64 @@ exactly what's mine:
    `package.ps1`, so the corrected release is jc-61 and jc-60's draft release was deleted
    unpublished -- the jc-55 precedent.
 
+52. **jc-62: the toolchain moves from MSYS2's MINGW64 environment to UCRT64** (`docs/toolchain.lock`,
+   new `msys-env.ps1`, `.github/install-toolchain.ps1`, both workflows, `build.ps1`, `package.ps1`,
+   `coverage.ps1`, `mutate.ps1`, every `test\run-*.ps1` that finds the toolchain, `test/run-nofix.sh`).
+
+   **Why.** MSYS2 is retiring MINGW64 ("dropping MINGW64 builds from leaf packages"). On 2026-11-21
+   it removed `mingw-w64-x86_64-qt5-static` from the database six minutes before jc-61's release run,
+   which got out on a file pinned by URL and SHA-256. More would follow. UCRT64 is the environment
+   MSYS2 recommends, and it has the same gcc 16.2.0-3 the lock pins and the same Qt 5.15.19-1.
+
+   **What changes in the exe.** Only the C runtime: Windows' Universal C Runtime (`api-ms-win-crt-*`,
+   twelve API-set imports, part of Windows 10 and 11; Windows 7 and 8.1 need Microsoft's update)
+   in place of `msvcrt.dll`. The DLLs that ship are still `libz-1.dll` and `libzstd.dll`, read from
+   the import table (item 51). **Measured: the corpus differential against jc-61's PUBLISHED
+   download, 0 of 334 per-set outputs differ** -- 19,363 valid, 1,204 invalid, and every set's
+   warnings identical. The six local layers are green on it, including the golden master, whose
+   1,806 digests were recorded with MINGW64, and the 18 `NO_FIX_*` witnesses with the 10 unit
+   guards. The engine is integer logic over its own RNG, so a runtime change had little to move;
+   the corpus is what says so.
+
+   **One line names the environment.** The move found `C:\msys64\mingw64` written by hand in thirteen
+   scripts and two workflows. A script missed in such a move does not fail -- while the old tree is
+   installed it keeps finding the old compiler, and builds or tests with it beside everything else.
+   So `docs/toolchain.lock` gained `msys_env=ucrt64`; `msys-env.ps1` reads it (failing loudly on a
+   missing lock, a missing line, or an environment it does not know) and gives every script the
+   bin, the tree and the package prefix; `.github/install-toolchain.ps1` reads it too, and prefixes
+   bare package names, so the workflows say `-Extra cmake,ninja,SDL2` and name no environment.
+
+   **Review round one (`/code-review high`, 10 items) found the first version still let the old
+   compiler win, two ways, and both are fixed.** (1) Six scripts prepended the environment's bin
+   only when it was absent from `PATH`, so with MINGW64's bin ahead of it, the gcc driver and a
+   dynamic build's Qt loaded MINGW64's DLLs; `msys-env.ps1`'s `Set-PathFirst` now moves it to the
+   front. (2) The compiler finders, three pasted copies that tried `PATH` first, became one,
+   `Resolve-MsysTool`, which takes the environment's tool and THROWS when MSYS2 is installed but
+   that environment is not -- the laptop's state -- rather than falling back to whatever gcc is on
+   `PATH`; `run-golden.ps1` and `run-nofix.ps1` use it too. Also taken: the helper reads only the
+   calling script's own `-MsysRoot` (`-Scope 0`), lower-cases the environment name (an upper-case
+   one made a URL the case-sensitive mirror 404s), `install-toolchain.ps1` refuses another
+   environment's full package name, `run-nofix.sh` parses the lock as leniently as the helper and
+   exits on Windows when it cannot, `run-e2e.ps1` dot-sources once, and CI installs `qt5-base`
+   (what the tests need, and what the docs say) instead of the whole Qt 5 group. Each behavior was
+   exercised by hand: PATH order, the throw, the scope, the case, an unknown environment.
+
+   **Static Qt stays pinned by file**, now UCRT64's (`release.yml`, SHA-256 taken from repo.msys2.org
+   on 2026-11-21). UCRT64's database still lists it, but Qt 5 is past its end of life, and a pin also
+   keeps a silent repackaging from changing the shipped bytes. The step refuses a pinned file that
+   is not the configured environment's. A consequence, recorded: the workflow runs main's copy over
+   the tag's tree, so a tag older than jc-62 (no `msys-env.ps1`) can no longer be released by it.
+   `corpus.yml` runs on a SELF-HOSTED runner by default (the machine with the collection), and its
+   build steps install only the pinned compiler, relying on that machine's own cmake, ninja and
+   static Qt. A `baseline_ref` older than jc-62 builds with its own `build.ps1`, so in MINGW64 while
+   HEAD builds in UCRT64; the workflow now says so beside that step (review). jc-62's corpus run is
+   the evidence the two agree; the caveat ends once the baseline is jc-62 or later.
+
+   **Machines.** The desktop got the UCRT64 toolchain through `.github\install-toolchain.ps1`, the
+   script CI runs, so it now builds with exactly CI's pinned compiler (it had been on MINGW64's gcc
+   16.1.0, `docs/toolchain.lock`'s note). ⚠ The laptop has only MINGW64 and must run the same script
+   before it builds; that was not done or verified here.
+
 
 ## Testing
 
@@ -2214,21 +2272,25 @@ exactly the reported symptoms (`hold Left, press Right` → `W`; sub-cycle tap �
 
 ## Building (Windows, MSYS2)
 
-The deployed flavor is a single self-contained exe via **static Qt**. From the MSYS2 MINGW64 shell:
+The deployed flavor is a single self-contained exe via **static Qt**. `build.ps1` does all of the
+below; by hand, from the MSYS2 UCRT64 shell (the environment is `msys_env` in `docs/toolchain.lock`,
+UCRT64 since jc-62, item 52):
 
 ```sh
-export PATH=/mingw64/bin:$PATH
+export PATH=/ucrt64/bin:$PATH
 unset NoDefaultCurrentDirectoryInExePath      # else the comptime.bat step fails
 cmake -S . -B build-static -G Ninja -DCMAKE_BUILD_TYPE=Release -DOSHW=qt \
-      -DCMAKE_PREFIX_PATH=/mingw64/qt5-static
+      -DCMAKE_PREFIX_PATH=/ucrt64/qt5-static
 cmake --build build-static
 strip build-static/tworld2.exe                # -> rename to "Tile World.exe"
 ```
 
-Ship the DLLs the exe imports from `/mingw64/bin` beside it -- `package.ps1` reads them from the exe
-since jc-61 (today `libzstd.dll` and `zlib1.dll`, or `libz-1.dll` on a newer MSYS2; Qt's static
-CMake config pins zlib and zstd as dynamic imports; SDL2 and the qwindows platform plugin are baked in). Packages needed:
-`mingw-w64-x86_64-{gcc,cmake,ninja,qt5-static,SDL2}`. **Never build inside a Dropbox/synced folder**
+Ship the DLLs the exe imports from `/ucrt64/bin` beside it -- `package.ps1` reads them from the exe
+since jc-61 (today `libzstd.dll` and `libz-1.dll`; Qt's static CMake config pins zlib and zstd as
+dynamic imports; SDL2 and the qwindows platform plugin are baked in; the C runtime is Windows' own,
+`api-ms-win-crt-*`). Install the packages with `.github\install-toolchain.ps1 -Extra
+cmake,ninja,SDL2,pkgconf,qt5-base` (CI's pinned compiler) plus the static Qt file `release.yml`
+pins. **Never build inside a Dropbox/synced folder**
 (sync fights the compiler); copy the source to a local scratch dir first.
 
 To build the instrumented tracer instead, add `-DCMAKE_C_FLAGS=-DTRACE_DESYNC` at configure time and

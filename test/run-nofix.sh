@@ -35,7 +35,19 @@ cd "$root" || exit 2
 # on PATH by default. Prepending it is a no-op on the Linux CI runner, which has
 # no such directory. It must go FIRST: the gcc driver cannot spawn cc1 unless its
 # own directory is on PATH, and when it cannot it fails with no diagnostic at all.
-[ -d /c/msys64/mingw64/bin ] && PATH="/c/msys64/mingw64/bin:$PATH"
+# Which environment's bin: docs/toolchain.lock's msys_env (ucrt64), as every PowerShell script
+# reads it through msys-env.ps1 (jc-62: this said mingw64, by hand).
+# Parsed as leniently as msys-env.ps1 (spaces around '=', any case), and LOUD on a Windows box with
+# MSYS2: a line it cannot read, or an environment with no bin, would otherwise leave gcc to PATH --
+# another environment's, or none (jc-62 review). On Linux there is no /c/msys64 and nothing to do.
+msys_env="$(sed -n 's/^[[:space:]]*msys_env[[:space:]]*=[[:space:]]*\([A-Za-z0-9]*\)[[:space:]]*$/\1/p' docs/toolchain.lock | tr 'A-Z' 'a-z')"
+if [ -d /c/msys64 ]; then
+  if [ -z "$msys_env" ] || [ ! -x "/c/msys64/$msys_env/bin/gcc.exe" ]; then
+    echo "run-nofix.sh: MSYS2 is at /c/msys64 but docs/toolchain.lock's environment ('$msys_env') has no gcc -- run .github/install-toolchain.ps1" >&2
+    exit 2
+  fi
+  PATH="/c/msys64/$msys_env/bin:$PATH"
+fi
 export PATH
 
 matrix="test/nofix/nofix-matrix.tsv"

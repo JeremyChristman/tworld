@@ -69,8 +69,11 @@ try {
     # MSYS2's bin must be FIRST on PATH: the gcc driver cannot spawn cc1 unless
     # its own directory is on PATH, and when it cannot it fails with a nonzero
     # exit and no diagnostic at all. Same reason build.ps1 does this.
-    $mingw = "C:\msys64\mingw64\bin"
-    if (Test-Path $mingw) { $env:PATH = "$mingw;$env:PATH" }
+    . (Join-Path $PSScriptRoot "..\msys-env.ps1")   # the environment, from docs\toolchain.lock
+    # Resolved, not assumed (jc-62 review): with MSYS2 installed but this environment's gcc
+    # missing, Resolve-MsysTool throws, where a bare `gcc` would have run another environment's.
+    $mingw = Split-Path -Parent (Resolve-MsysTool $null "gcc")
+    Set-PathFirst $mingw
 
     $out = Join-Path $env:TEMP "tw-golden.exe"
     $src = @(

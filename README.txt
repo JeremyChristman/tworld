@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-61
+  Tile World  --  Jeremy Christman's fork                    build jc-62
 ==============================================================================
 
   1. What this is
@@ -53,7 +53,13 @@ The engine fixes are ALL ON BY DEFAULT and each has a compile-time escape hatch
 2. WHAT YOU NEED TO RUN IT
 ------------------------------------------------------------------------------
 
-A 64-bit version of Windows. That is the whole list.
+A 64-bit version of Windows 10 or 11. That is the whole list.
+
+(Windows 7 or 8.1 works too if it has Microsoft's "Update for Universal C
+Runtime", which Windows Update installs and many programs bring with them.
+Without it the program will not start and Windows names a missing
+api-ms-win-crt-....dll file. Since jc-62 this build uses that runtime, which is
+part of Windows 10 and 11 itself.)
 
 This is a portable build: no installer, no registry entries, no dependencies to
 download. Qt and SDL are linked into the executable, which is why it is large
@@ -70,9 +76,8 @@ There is nothing to uninstall -- delete the folder and it is gone.
     tw_settings.ini     Its settings file, with stock defaults.
     *.dll               Required. Keep every .dll from the zip next to the
                         exe. Today they are libzstd.dll and zlib's DLL,
-                        named zlib1.dll or libz-1.dll depending on the
-                        build -- the zip holds exactly the ones this exe
-                        needs.
+                        libz-1.dll (zlib1.dll in builds before jc-60) --
+                        the zip holds exactly the ones this exe needs.
     README.txt          This file.
     COPYING             The GNU General Public License, version 2.
     res\sounds\How to make a sound pack.txt
@@ -524,6 +529,29 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-62  --  Built with Windows' own C runtime
+--------------------------------------------
+
+  * NOTHING YOU PLAY CHANGES. This build is the same program as jc-61, built
+    with a different toolset: all 19,363 solutions in the maintainer's
+    collection that replayed in jc-61 still replay, the 1,204 that did not
+    still do not, across 334 level sets -- not one result moved.
+
+  * WHY IT WAS REBUILT. The tools this fork is built with (MSYS2) are
+    retiring the variant it used, and on 2026-11-21 removed a library the
+    release needs, six minutes before jc-61 was built. jc-61 got out on a
+    pinned copy; jc-62 moves to the variant MSYS2 recommends (UCRT64), so the
+    next release does not depend on the old one at all.
+
+  * WHAT THAT MEANS FOR YOU. The program now uses the C runtime that is part
+    of Windows 10 and 11 (the "Universal C Runtime") instead of the old
+    msvcrt.dll. On Windows 10 or 11 there is nothing to do. On Windows 7 or
+    8.1 it needs Microsoft's "Update for Universal C Runtime" -- see section
+    2.
+
+  * The two DLLs beside the exe are libzstd.dll and libz-1.dll, as in jc-61.
 
 
 jc-61  --  Clone machines follow the MS rule for a monster in the way

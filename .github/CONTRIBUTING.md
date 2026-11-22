@@ -5,14 +5,19 @@ the traps, and several of them will let you ship a change that appears to work a
 
 ## Setup
 
-Windows, and **MSYS2 at `C:\msys64`**:
+Windows, and **MSYS2 at `C:\msys64`**, with its **UCRT64** environment (since jc-62; MSYS2 is
+retiring MINGW64). The compiler is pinned, so install it the way CI does:
 
-```sh
-pacman -S mingw-w64-x86_64-{gcc,cmake,ninja,SDL2,qt5}
-pacman -S mingw-w64-x86_64-qt5-static     # only needed to build the release flavor
+```powershell
+powershell -ExecutionPolicy Bypass -File .github\install-toolchain.ps1 -Extra cmake,ninja,SDL2,pkgconf,qt5-base
 ```
 
-That is the whole setup. There is no package manager for the project itself, no dependency manifest,
+and, only to build the release flavor, the static Qt the release pins (its file name and SHA-256
+are in `.github/workflows/release.yml`), installed with `pacman -U` on the downloaded file:
+`mingw-w64-ucrt-x86_64-qt5-static-5.15.19-1-any.pkg.tar.zst`.
+
+The environment is one line, `msys_env` in `docs/toolchain.lock`; every script reads it through
+`msys-env.ps1`, so nothing else names it. That is the whole setup. There is no package manager for the project itself, no dependency manifest,
 and nothing to vendor.
 
 ## The loop
@@ -23,7 +28,7 @@ powershell -ExecutionPolicy Bypass -File run-tests.ps1               # unit + en
 ```
 
 `build.ps1 -Flavor dynamic` is the one to use while working: it builds in a fraction of the time of
-the static release flavor and runs the same code. The executable needs `C:\msys64\mingw64\bin` on
+the static release flavor and runs the same code. The executable needs `C:\msys64\ucrt64\bin` on
 `PATH` to find Qt's DLLs.
 
 Use `-Flavor static` (the default) only when you are about to package.

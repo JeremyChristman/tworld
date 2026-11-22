@@ -211,27 +211,17 @@ $utf8NoBom = New-Object Text.UTF8Encoding $false
 # Toolchain
 # ---------------------------------------------------------------------------
 
-# Same shape as run-tests.ps1 and coverage.ps1: resolve rather than assume, so a
-# machine with gcc already on PATH does not need MSYS2 at a particular place.
-function Resolve-Tool([string]$explicit, [string]$name) {
-    if ($explicit) {
-        if (-not (Test-Path $explicit)) { throw "compiler not found: $explicit" }
-        return $explicit
-    }
-    $onPath = Get-Command $name -ErrorAction SilentlyContinue
-    if ($onPath) { return $onPath.Source }
-    $msys = Join-Path "C:\msys64\mingw64\bin" "$name.exe"
-    if (Test-Path $msys) { return $msys }
-    throw "no $name found: put it on PATH, install MSYS2 at C:\msys64, or pass -Cc/-Cxx"
-}
-$Cc = Resolve-Tool $Cc "gcc"
-$Cxx = Resolve-Tool $Cxx "g++"
+# As run-tests.ps1 and coverage.ps1: msys-env.ps1's Resolve-MsysTool, the one copy of the rule
+# (the configured environment's compiler; PATH only with no MSYS2 at all; jc-62).
+. (Join-Path $PSScriptRoot "msys-env.ps1")
+$Cc = Resolve-MsysTool $Cc "gcc"
+$Cxx = Resolve-MsysTool $Cxx "g++"
 
 # The MSYS2 driver cannot spawn cc1 unless its own directory is on PATH, and it
 # fails SILENTLY when it cannot -- nonzero exit, not one word of diagnostic.
 # run-tests.ps1 documents this at length; we need it too, for the `gcc -E` pass.
 $ccDir = Split-Path -Parent $Cc
-if ($env:PATH -notlike "*$ccDir*") { $env:PATH = "$ccDir;$env:PATH" }
+Set-PathFirst $ccDir   # msys-env.ps1 (jc-62: this was -notlike, a wildcard match, and skipped a dir already present further down)
 
 # ---------------------------------------------------------------------------
 # The scratch tree
