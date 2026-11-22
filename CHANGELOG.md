@@ -23,6 +23,52 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+- 🔴 **The corpus gate had never verified `Cybersmack I`.** `test\run-corpus.ps1` passed its set
+  name to `Start-Process` unquoted, and Windows PowerShell 5.1 quotes nothing, so the program got
+  "Cybersmack" plus a stray argument ("no such data file"), gave no verdict, and the run counted that
+  as fine. Every path and set name is quoted now. With it, the corpus is **19,462 valid and 1,205
+  invalid** over 321 sets that give a verdict (it read 19,363 and 1,204 before: Cybersmack I is 99
+  valid, and its one invalid, #88, is a level documented as impossible). The 13 sets that still give
+  no verdict (no data file, and so on) are now listed by name in every run, because a set silent in
+  both builds compares IDENTICAL. A set name with `[` or `]` is handled too: `Start-Process` reads its
+  redirect paths as wildcards, so the recording's file names replace them, and an `-Out` or scratch
+  folder containing them is refused before anything is copied.
+- **`test\run-corpus.ps1` no longer passes a run that checked nothing.** With the corpus on a drive
+  that does not exist, `Join-Path` errored, `Continue` carried on, nothing was copied, and the run
+  printed "0 set(s) verified" and exited 0. A corpus is now tested up front (a folder, then `sets\`,
+  `data\` and a `save\` holding a `.tws`, each with `-LiteralPath`). A copy that fails partway stops
+  the run, rather than skipping every set it missed. And a run in which NO set gave a verdict fails,
+  whatever the reason: an executable that cannot start, or a `-Filter` that matches nothing. Two sets
+  whose recording names would collide are refused before `-Out` is cleared. A relative `-Corpus` or
+  `-ScratchCorpus` is made absolute first (it is the child's working directory too, and in a current
+  folder whose name has `[` PowerShell 5.1 resolves a relative `-LiteralPath` with the bracket
+  escaped). The summary says "replayed" for sets launched and "verified" only for sets that gave a
+  verdict. `test\run-playtest.ps1`, which reads the same collection, had the same fail-open copy
+  (`-ErrorAction SilentlyContinue`) and wildcard `Test-Path`: each folder's copy now fails loudly.
+- **`test\run-corpus.ps1` finds the corpus on either PC.** Its default was a literal
+  `C:\Users\Jeremy\...`, and the laptop's profile is `C:\Users\jerem`, so on the laptop the release
+  gate stopped at "-Corpus has no sets\ directory" unless the path was typed by hand. The default is
+  now `$env:TWORLD_CORPUS`, then the conventional folder under the current user's profile, and
+  `-ShowCorpus` prints it. That rule and the corpus test live in the new `test\corpus-folder.ps1`,
+  dot-sourced by `run-corpus.ps1`, by `run-playtest.ps1` (which had its own copy of the profile rule)
+  and by `corpus.yml`'s probe, which used to regex a literal out of the script. In process, so a
+  non-ASCII path never passes through a console code page. An explicitly EMPTY `-Corpus` is refused
+  instead of quietly replaying the default collection. A self-hosted runner installed as a service has
+  no Dropbox in its profile: set `TWORLD_CORPUS` there.
+- **`corpus.yml` takes its inputs through `env:`** rather than pasting them into the script
+  (`release.yml`'s rule; a quote or `$( )` in `corpus_path` or `baseline_ref` ran as code). The probe
+  refuses a `corpus_path` with a line break (it could add keys to `GITHUB_OUTPUT`) and drops a
+  trailing separator but keeps a drive root (PowerShell 5.1 passes `"D:\CC Corpus\"` on with its
+  closing quote escaped); the baseline step refuses a ref git would read as an option; both
+  recording steps run `-NoProfile`; and a failed head run no longer always claims a changed verdict.
+- **The laptop is on the pinned toolchain.** jc-62's notes said it had only MINGW64; it had no MSYS2
+  at all, and no clone. On 2026-11-22 it got MSYS2 (the signed 2026-11-20 base archive, checksum
+  verified), then `.github\install-toolchain.ps1 -Extra cmake,ninja,SDL2,pkgconf,qt5-base` and the
+  pinned static Qt: gcc 16.2.0, `run-tests.ps1 -Build` green on all six layers, and the laptop's static
+  build replays the corpus exactly as the published jc-62 does (0 of 334 outputs differ, warnings
+  identical; recorded both before and after the fixes above). `run-playtest.ps1` on the published
+  jc-62 zip passes there (18 checks, `-NoGui`).
+
 ## jc-62 — 2026-11-22
 
 The toolchain moves from MSYS2's MINGW64 environment to UCRT64. No engine change: the same source,
@@ -47,7 +93,7 @@ the same gcc 16.2.0 and the same Qt 5.15.19, with Windows' Universal C Runtime i
 - **One compiler finder and one PATH rule, in `msys-env.ps1`.** `Resolve-MsysTool` (used by
   `test\run-tests.ps1`, `coverage.ps1`, `mutate.ps1`, `run-golden.ps1`, `run-nofix.ps1`) takes the
   configured environment's tool, and THROWS when MSYS2 is installed but that environment is not, so
-  a PC with only MINGW64 (the laptop, today) cannot test green with MINGW64's gcc from `PATH`; `PATH`
+  a PC with only MINGW64 cannot test green with MINGW64's gcc from `PATH`; `PATH`
   is used only with no MSYS2 at all. `Set-PathFirst` moves the environment's bin to the FRONT of
   `PATH` even when it is already further down, where six scripts used to skip the prepend and leave
   another environment's DLLs first. `run-nofix.sh` parses the lock as leniently and fails as
@@ -57,8 +103,9 @@ the same gcc 16.2.0 and the same Qt 5.15.19, with Windows' Universal C Runtime i
   went in for MINGW64 on 2026-11-21, when MSYS2 removed the package from that database six minutes
   before jc-61's release run; it stays because Qt 5 is past its end of life everywhere. A tag older
   than jc-62 can no longer be released by this workflow.
-- The desktop now builds with exactly CI's pinned compiler (it was on MINGW64's gcc 16.1.0); the
-  laptop must run `.github\install-toolchain.ps1` before it builds.
+- The desktop now builds with exactly CI's pinned compiler (it was on MINGW64's gcc 16.1.0). The
+  laptop, which this entry first said had only MINGW64, turned out to have no MSYS2 at all; it was
+  set up on 2026-11-22 (see Unreleased).
 
 ## jc-61 — 2026-11-21
 

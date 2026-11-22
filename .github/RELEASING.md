@@ -78,7 +78,8 @@ Two mechanical guards back this up:
 
    ⚠ **The solution replay needs a collection, and its absence is a FAILURE rather than a skip.**
    The script looks for one at `-Data`, then `$env:TWORLD_PLAYTEST_DATA`, then
-   `<your profile>\Dropbox\Games\Computer\Chip's Challenge`. If none exists it fails and says so.
+   `test\run-corpus.ps1`'s default (`$env:TWORLD_CORPUS`, then
+   `<your profile>\Dropbox\Games\Computer\Chip's Challenge`). If none exists it fails and says so.
    Passing `-NoSolutions` runs the gate deliberately reduced — everything except the replay, using
    the repository's own `data\` and `sets\` — which is what a contributor without the maintainer's
    `.tws` files should do. **A release must not be cut from a `-NoSolutions` run.**

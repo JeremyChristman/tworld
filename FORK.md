@@ -2183,7 +2183,7 @@ exactly what's mine:
    dynamic build's Qt loaded MINGW64's DLLs; `msys-env.ps1`'s `Set-PathFirst` now moves it to the
    front. (2) The compiler finders, three pasted copies that tried `PATH` first, became one,
    `Resolve-MsysTool`, which takes the environment's tool and THROWS when MSYS2 is installed but
-   that environment is not -- the laptop's state -- rather than falling back to whatever gcc is on
+   that environment is not -- a PC with only MINGW64 -- rather than falling back to whatever gcc is on
    `PATH`; `run-golden.ps1` and `run-nofix.ps1` use it too. Also taken: the helper reads only the
    calling script's own `-MsysRoot` (`-Scope 0`), lower-cases the environment name (an upper-case
    one made a URL the case-sensitive mirror 404s), `install-toolchain.ps1` refuses another
@@ -2205,8 +2205,10 @@ exactly what's mine:
 
    **Machines.** The desktop got the UCRT64 toolchain through `.github\install-toolchain.ps1`, the
    script CI runs, so it now builds with exactly CI's pinned compiler (it had been on MINGW64's gcc
-   16.1.0, `docs/toolchain.lock`'s note). ⚠ The laptop has only MINGW64 and must run the same script
-   before it builds; that was not done or verified here.
+   16.1.0, `docs/toolchain.lock`'s note). The laptop was not set up or checked here, and this item
+   first said it "has only MINGW64". When it was looked at, on 2026-11-22, it had no MSYS2 at all
+   and no clone. It got MSYS2, then the same script plus the static Qt file `release.yml` pins, and
+   tested green there (`CHANGELOG.md`, Unreleased).
 
 
 ## Testing

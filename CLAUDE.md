@@ -156,6 +156,14 @@ has that form, with both streams read asynchronously so a full pipe cannot deadl
 (From a POSIX shell such as Git Bash, ordinary redirection *does* work — which is exactly how this
 trap stays hidden until someone writes the PowerShell version.)
 
+🔴 **And `Start-Process` lies in two more ways, both measured 2026-11-22 in `test\run-corpus.ps1`.**
+(1) `-ArgumentList` is joined with spaces and **nothing is quoted**, so a set named
+`Cybersmack I.dat-ms.dac` arrived as `Cybersmack` plus a stray argument — no verdict, in every
+build alike, so the corpus gate compared it IDENTICAL and had never verified it. Quote every path
+and name yourself. (2) `-RedirectStandardOutput`, `-RedirectStandardError` and `-WorkingDirectory`
+are read as **wildcard** paths: a `[` or `]` in one throws, and under `Continue` the run goes on.
+A count of sets that gave a verdict is the oracle; a count of sets launched is not.
+
 ### 3.2 Batch verify's exit code is not a verdict
 
 `batchverify()` reaches `exit()` with the invalid count **only when `-q` is given**. Without it the

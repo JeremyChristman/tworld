@@ -66,25 +66,47 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 🔴 INPUTS REACH POWERSHELL THROUGH THE ENVIRONMENT, never through a ${{ }}
+      # expression in a run: block (release.yml's rule, applied here 2026-11-22 after
+      # a review). Actions pastes an expression in as raw text before PowerShell
+      # parses the line, so a quote or $( ) in a dispatched value ran as code.
       - name: Is the corpus actually here?
         id: probe
+        env:
+          CORPUS_PATH: ${{ inputs.corpus_path }}
         run: |
-          $p = "${{ inputs.corpus_path }}"
-          if (-not $p) {
-              # run-corpus.ps1 owns the default. Read it from the script rather
-              # than repeating it here: two copies of a path would disagree.
-              $line = Select-String -Path test\run-corpus.ps1 -Pattern '\[string\]\$Corpus\s*=\s*"([^"]+)"' | Select-Object -First 1
-              if ($line) { $p = $line.Matches[0].Groups[1].Value }
+          # The default corpus and what makes a folder one are run-corpus.ps1's
+          # rules, in test\corpus-folder.ps1. Dot-sourced, so there is ONE copy
+          # and nothing crosses a process boundary: this used to regex a literal
+          # out of run-corpus.ps1, and then to capture a child powershell.exe's
+          # stdout, which goes through the console code page (review).
+          . .\test\corpus-folder.ps1
+          $p = $env:CORPUS_PATH
+          if (-not $p) { $p = Resolve-DefaultCorpus }
+          # A line break would write extra keys into GITHUB_OUTPUT, so a later step
+          # could replay a different folder from the one checked here (review).
+          if ($p -match "[`r`n]") { throw "the corpus path contains a line break" }
+          # A trailing separator is dropped: PowerShell 5.1 passes "D:\CC Corpus\"
+          # to the next powershell.exe with its closing quote escaped, which then
+          # swallows every later argument (review, measured). A bare root stays.
+          if ($p -and $p.Length -gt 3) {
+              $p = $p.TrimEnd('\', '/')
+              # "D:\\" trims to "D:", which is D:'s CURRENT directory, not its root (review).
+              if ($p -match '^[A-Za-z]:$') { $p += '\' }
           }
           Write-Host "corpus path: $p"
-          $present = $p -and (Test-Path -LiteralPath $p)
+          # The very test run-corpus.ps1 applies, so "present" means it will not
+          # refuse this folder later, after two full builds (review).
+          $problem = Get-CorpusProblem $p
+          $present = -not $problem
+          if ($problem) { Write-Host "not usable: $problem" }
           "path=$p"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "present=$present" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if (-not $present) {
               $msg = @(
                 "## The corpus gate DID NOT RUN",
                 "",
-                "No solution collection at ``$p``, so nothing was verified here.",
+                "No usable solution collection at ``$p`` ($problem), so nothing was verified here.",
                 "",
                 "**This tick is not a pass.** It means the check was skipped. The corpus is the",
                 "only instrument that can see a recorded solution stop replaying -- the six local",
@@ -125,8 +147,14 @@ jobs:
       # is a caveat, not a known difference -- and it ends once the baseline is jc-62 or later.
       - name: Build the baseline revision
         if: steps.probe.outputs.present == 'True'
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
         run: |
-          $ref = "${{ inputs.baseline_ref }}"
+          $ref = $env:BASELINE_REF
+          # Through env: it can no longer run as code, but it is still a git
+          # ARGUMENT: a leading "-" is an option to git, and PowerShell 5.1 does not
+          # escape an embedded quote in a native argument (review). No ref needs either.
+          if (-not $ref -or $ref.StartsWith("-") -or $ref -match '[\s"'']') { throw "refusing baseline_ref '$ref'" }
           # --detach, because actions/checkout leaves local branch `main` checked
           # out here: a baseline_ref of plain "main" would otherwise die with
           # "fatal: 'main' is already used by worktree". Verified both ways.
@@ -145,19 +173,26 @@ jobs:
       # .err differences are advisory and do not fail it. See the script header.
       - name: Record the baseline
         if: steps.probe.outputs.present == 'True'
+        env:
+          CORPUS_PATH: ${{ steps.probe.outputs.path }}
         run: |
-          powershell -ExecutionPolicy Bypass -File test\run-corpus.ps1 `
-            -Exe baseline.exe -Corpus "${{ steps.probe.outputs.path }}" -Out corpus-baseline
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\run-corpus.ps1 `
+            -Exe baseline.exe -Corpus $env:CORPUS_PATH -Out corpus-baseline
           if ($LASTEXITCODE -ne 0) { throw "the baseline corpus run failed" }
 
       - name: Did any recorded solution stop replaying?
         if: steps.probe.outputs.present == 'True'
+        env:
+          CORPUS_PATH: ${{ steps.probe.outputs.path }}
+          BASELINE_REF: ${{ inputs.baseline_ref }}
         run: |
-          powershell -ExecutionPolicy Bypass -File test\run-corpus.ps1 `
-            -Exe head.exe -Corpus "${{ steps.probe.outputs.path }}" `
+          powershell -NoProfile -ExecutionPolicy Bypass -File test\run-corpus.ps1 `
+            -Exe head.exe -Corpus $env:CORPUS_PATH `
             -Out corpus-head -Against corpus-baseline
-          if ($LASTEXITCODE -ne 0) { throw "a recorded solution changed verdict against ${{ inputs.baseline_ref }}" }
-          "## The corpus gate ran and passed`n`nNo set's verdict differs from ``${{ inputs.baseline_ref }}``." |
+          # Not only a changed verdict exits nonzero: so do a failed corpus copy, a
+          # run in which no set gave a verdict, and a refused -Corpus. The log says which.
+          if ($LASTEXITCODE -ne 0) { throw "the corpus run of HEAD failed, or a recorded solution changed verdict against $env:BASELINE_REF -- see the log above" }
+          "## The corpus gate ran and passed`n`nNo set's verdict differs from ``$env:BASELINE_REF``." |
             Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       # The recordings are the evidence, and they are small: stdout and stderr

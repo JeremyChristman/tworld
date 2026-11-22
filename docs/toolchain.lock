@@ -62,8 +62,17 @@ gcc_version=16.2.0
 # --------------------------------------------------------------------------
 # NOTE: THE DESKTOP IS ON THIS PIN since 2026-11-21: the UCRT64 toolchain went on
 # it through .github\install-toolchain.ps1, the script CI runs, so it builds with
-# exactly CI's compiler. ⚠ The LAPTOP must run the same script before it builds
-# (it has only the MINGW64 tree, and every script now looks in ucrt64\bin).
+# exactly CI's compiler. THE LAPTOP IS ON IT TOO since 2026-11-22. It had no
+# MSYS2 at all (not "only MINGW64", as this note first said), so it got MSYS2 at
+# C:\msys64 first, then the same script, plus the static Qt file release.yml pins.
+# A NEW PC does the same: MSYS2, then
+#   .github\install-toolchain.ps1 -Extra cmake,ninja,SDL2,pkgconf,qt5-base
+# and then the static Qt file release.yml pins (URL + SHA-256, pacman -U), which
+# build.ps1's default static flavor needs. Without it only -Flavor dynamic builds.
+# qt5-base is for the dynamic flavor and the Qt test layer. Both Qts side by side
+# is how both PCs build; the laptop's static build, made that way, replays the
+# corpus identically to CI's jc-62 asset. release.yml keeps qt5-base out of the
+# job that builds the release, its own choice (see the comment there).
 #
 # History, kept because the evidence still holds: until then the desktop built
 # with MINGW64's gcc 16.1.0 while CI pinned 16.2.0, and that divergence was not a

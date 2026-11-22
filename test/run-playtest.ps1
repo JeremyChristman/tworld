@@ -43,7 +43,8 @@ Where from, first hit wins:
 
     1. -Data <path>
     2. $env:TWORLD_PLAYTEST_DATA
-    3. <your profile>\Dropbox\Games\Computer\Chip's Challenge
+    3. $env:TWORLD_CORPUS, then <your profile>\Dropbox\Games\Computer\Chip's
+       Challenge -- run-corpus.ps1's default, from test\corpus-folder.ps1
 
 🔴 IF NONE OF THOSE EXISTS, THE RUN FAILS. It does not skip. Replaying real
 solutions through the shipped binary is the most valuable thing here, and a
@@ -111,17 +112,21 @@ Push-Location $root
 #   1. -Data, if given.
 #   2. $env:TWORLD_PLAYTEST_DATA, so a contributor can point at their own
 #      installation once instead of on every invocation.
-#   3. The conventional location under this user's profile.
+#   3. run-corpus.ps1's default: $env:TWORLD_CORPUS, then the conventional
+#      location under this user's profile. ONE copy of that rule, in
+#      test\corpus-folder.ps1 -- this script used to carry its own, which is how
+#      the two would have drifted apart (review, 2026-11-22).
 if (-not $Data) {
     if ($env:TWORLD_PLAYTEST_DATA) {
         $Data = $env:TWORLD_PLAYTEST_DATA
     } else {
-        $profileDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
-        if ($profileDir) {
-            $Data = Join-Path $profileDir "Dropbox/Games/Computer/Chip's Challenge"
-        }
+        . (Join-Path $PSScriptRoot "corpus-folder.ps1")
+        $Data = Resolve-DefaultCorpus
     }
 }
+# Asked once, literally: [ and ] in a folder name are otherwise wildcards, and
+# under "Stop" a plain Test-Path on a $null $Data (no profile) would throw.
+$haveData = [bool]$Data -and (Test-Path -LiteralPath $Data -PathType Container)
 
 $checks = 0
 $failures = @()
@@ -298,11 +303,21 @@ try {
     # contributor with no personal collection still gets the GUI half, the
     # command-line half and the jc-52 regression; only the solution replay needs
     # something this repository cannot ship.
-    $dataSource = if (Test-Path $Data) { $Data } else { $root }
+    $dataSource = if ($haveData) { $Data } else { $root }
+    # ⚠ A COPY THAT FAILS PARTWAY IS A FAILURE (review, 2026-11-22). This was
+    # -ErrorAction SilentlyContinue, so a locked or online-only file was skipped
+    # and the replay then checked fewer solutions than the collection holds while
+    # reporting a pass -- the defect run-corpus.ps1 had, on the same collection.
+    # One try per folder, so a failure in sets\ does not also lose data\ and
+    # save\ and bury the real cause under failures that follow from it (review).
     foreach ($sub in @("sets", "data", "res", "save")) {
         $src = Join-Path $dataSource $sub
-        if (Test-Path $src) {
-            Copy-Item -Path $src -Destination $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $src) {
+            try {
+                Copy-Item -LiteralPath $src -Destination $scratch -Recurse -Force -ErrorAction Stop
+            } catch {
+                Check ("the collection's {0}\ was copied into the scratch install" -f $sub) $false $_.Exception.Message
+            }
         }
     }
     if (-not (Test-Path (Join-Path $scratch "save"))) {
@@ -318,7 +333,7 @@ try {
         # Somebody typed -NoSolutions, so they know the release gate is running
         # reduced and said so on the command line.
         Write-Host "  --    SKIPPED: solution replay (-NoSolutions)" -ForegroundColor Yellow
-    } elseif (-not (Test-Path $Data)) {
+    } elseif (-not $haveData) {
         # 🔴 NOT A SKIP. A FAILURE.
         #
         # This branch used to print a yellow line and let the run exit 0 -- the
@@ -331,7 +346,7 @@ try {
         #
         # Passing -NoSolutions is how you say you meant it.
         Check "a collection to replay solutions from" $false `
-              ("no installation at {0}. Point -Data at one, set TWORLD_PLAYTEST_DATA," -f $Data +
+              ("no installation at {0}. Point -Data at one, set TWORLD_PLAYTEST_DATA or TWORLD_CORPUS," -f $Data +
                " or pass -NoSolutions to run the gate reduced and on purpose.")
     } else {
         # The collection was copied into the scratch install above.
@@ -610,8 +625,8 @@ public class TWPT {
     }
 
     # ---- the collection must be untouched ------------------------------------
-    if (-not $NoSolutions -and (Test-Path $Data)) {
-        $stray = Get-ChildItem -Path $Data -Filter "*.tws" -Recurse -ErrorAction SilentlyContinue |
+    if (-not $NoSolutions -and $haveData) {
+        $stray = Get-ChildItem -LiteralPath $Data -Filter "*.tws" -Recurse -ErrorAction SilentlyContinue |
                  Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-10) }
         Check "the collection's .tws files were not written" (-not $stray) `
               ("recently modified: " + (($stray | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ", "))
