@@ -34,7 +34,7 @@ Everything since (jc-30 onward) is quality-of-life: settings, a background color
 level-navigation wrapping, a tileset picker, keyboard fixes, sound packs.
 
 That history is why the engine is treated the way it is here. **`mslogic.c` carries more than eighty
-`MOD (Jeremy)` edits and thirty-three `NO_FIX_*` behavior toggles.** A change to it does not just risk
+`MOD (Jeremy)` edits and thirty-five `NO_FIX_*` behavior toggles.** A change to it does not just risk
 a bug; it risks silently invalidating solutions that took people years to record.
 
 ---
@@ -274,13 +274,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,910 checks; 13 end-to-end cases, 38 checks; 4 Qt runs, 245 checks;
+Current state: **19 unit runs, 23,952 checks; 13 end-to-end cases, 38 checks; 4 Qt runs, 245 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,910 AS A MEASURE OF REACH. Three files are 93% of it.**
+🔴 **DO NOT READ 23,952 AS A MEASURE OF REACH. Three files are 93% of it.**
 `random_test.c` alone is **15,534** — 65%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,460. That leaves about
-**1,705 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+**1,747 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -309,7 +309,7 @@ layers that can see an engine behavior change**, so run them after any edit to `
   entire automated replay gate was one end-to-end case with a single valid and a single invalid
   solution, and a push that altered engine behavior went green everywhere.
 
-  ⚠ **Know its reach before quoting it: 2 of 33 `NO_FIX_*` toggles, measured** (jc-60's did not move a digest) — and neither more
+  ⚠ **Know its reach before quoting it: 2 of 35 `NO_FIX_*` toggles, measured** (jc-60's did not move a digest, nor did jc-63's two) — and neither more
   ticks nor more walks helps. It catches gross change (a mutation to Chip's idle timer moved 577 of
   1,806 rows). It is a smoke alarm, not an audit, and **`run-corpus.ps1` still decides a release.**
   It now has a CI job of its own — [`.github/workflows/corpus.yml`](.github/workflows/corpus.yml),
@@ -320,7 +320,7 @@ layers that can see an engine behavior change**, so run them after any edit to `
   baseline and is a deliberate act, not a way to make a red run go green.
 
 - **`test\run-nofix.ps1`** — the **`NO_FIX_*` differential matrix** (the `nofix` job). For each of
-  the 33 engine toggles it asks whether any input tells a fix-on build apart from a fix-off one.
+  the 35 engine toggles it asks whether any input tells a fix-on build apart from a fix-off one.
   **18 have such a witness**, committed in `test/nofix/nofix-matrix.tsv` and replayed on every push;
   the check asserts both digests are unchanged *and that the two still differ*. (This sentence said
   13 for five builds after the search was widened to 18, while three other places in this same file
@@ -331,8 +331,10 @@ layers that can see an engine behavior change**, so run them after any edit to `
   of not compiling. `-Search` rediscovers witnesses and takes about half an hour; the check is
   seconds. See [`docs/adr/0012`](docs/adr/0012-engine-toggles-need-a-differential-witness.md).
 
-  **The 15 without a witness get a second oracle**: the runner rebuilds `mslogic_test.c` against each
-  one and requires it to FAIL, so a named unit case counts as a guard. **10 of 15 are guarded**; the
+  **The 17 without a witness get a second oracle**: the runner rebuilds `mslogic_test.c` against each
+  one and requires it to FAIL, so a named unit case counts as a guard (⚠ for
+  `NO_FIX_CLONER_CHIP_TILES` the failure is the committed reproducer killing the binary on the engine
+  assert, so the named cases never run in that build; `FORK.md` item 53). **12 of 17 are guarded**; the
   five that are not are each recorded in `nofix-matrix.tsv` with the measurement that withdrew them,
   and all five are INTRA-TICK — the fix changes when inside a tick something resolves, and the
   observable state converges before any assertion can run. ⚠ Two of the blockers written there turned
@@ -385,6 +387,13 @@ Two more layers do not run from `run-tests.ps1`, because neither can run on Wind
   every fuzz find this fork has shipped landed right at that ceiling: jc-47 within seconds, jc-50 at
   one second, jc-51 at forty-three. A budget that keeps finding defects at its own edge is telling
   you where to look.
+
+  ⭐ **And the soak found a defect past that edge — three times before anyone fixed it**: a red
+  button cloning a Swimming Chip as a monster (jc-63), about six, ten and three and a half minutes
+  into `fuzz_mslogic` on 2026-09-20, 2026-11-15 and 2026-11-22 (`FORK.md` item 53).
+  🔴 **The first two red runs were not acted on for nine weeks.** A scheduled failure nobody acts on is a
+  finding that does not exist: before engine work, run `gh run list --workflow soak.yml --limit 3`
+  and read any failure.
 
   ⚠ The cached corpus is **not** `test/fuzz/corpus/`, which stays curated: an input earns a place
   there by being attached to a fixed defect and a test case
@@ -468,8 +477,8 @@ Some modules are not warning-clean, and their tests suppress specifically:
 | Module | Warning | Why it is suppressed rather than fixed |
 |---|---|---|
 | `solution.c:474` | `-Wuse-after-free` | GCC false positive. A failed `realloc` leaves the original pointer valid, which is the guarded branch |
-| `mslogic.c:356` | `-Wunused-value` | The `_assert` macro's comma expression, at four call sites |
-| `mslogic.c:2748` | `-Wunused-variable` | `value` in `resetdata()` |
+| `mslogic.c:411` | `-Wunused-value` | The `_assert` macro's comma expression, at four call sites |
+| `mslogic.c:2833` | `-Wunused-variable` | `value` in `resetdata()` |
 
 All are pre-existing and none is a defect. They are suppressed per-test rather than fixed in the
 source because **this is a fork tracking upstream and every cosmetic edit is a diff to carry
@@ -518,7 +527,7 @@ misreading in the parser is faithfully reproduced and never caught.
   was the parser with the bugs** (§8, jc-48); this is the last parser in the C core with none.
   `err.c` and `messages.cpp` are the error and message surfaces every test already stubs;
   `generic/timer.c` is wall-clock and `help.c` is static text, which is why they rank below it.
-- 🔴 **15 of the 33 `NO_FIX_*` toggles have no differential witness — down from 30 of 32, and every number
+- 🔴 **17 of the 35 `NO_FIX_*` toggles have no differential witness — down from 30 of 32, and every number
   here is measured.** `test/nofix/` searches for an input whose result differs between a fix-on and a
   fix-off build; such an input is a **witness** that the fix is live and reachable, and the 18 found
   so far are committed in `test/nofix/nofix-matrix.tsv` and re-checked by CI on every push. See
@@ -541,13 +550,13 @@ misreading in the parser is faithfully reproduced and never caught.
   random. That alone found five more, including `NO_FIX_TANK_ON_CLONER`, which had resisted every
   earlier attempt.
 
-  ⚠ **A blank row is a statement about the SEARCH, not about the fix.** All 33 were separately
+  ⚠ **A blank row is a statement about the SEARCH, not about the fix.** All 35 were separately
   confirmed to change the preprocessed source, so none is dead code, and a blank is never grounds for
   deleting a fix. `nofix -stats` reports what arrangements the generator is producing, which is how
   to tell "never built it" from "built it and nothing changed" before drawing any conclusion.
 
   ⭐ The sweep paid for itself twice over. **Two toggles turned out not to compile at all**
-  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`) — see §8; all 33 build now. And **three**
+  (`NO_FIX_RFF_DRAW_ONCE`, `NO_FIX_TELEPORT_STALE_FG`) — see §8; all 35 build now. And **three**
   *pairs* share a witness seed with byte-identical fix-on and fix-off digests:
 
   | pair | seed |
@@ -644,7 +653,7 @@ misreading in the parser is faithfully reproduced and never caught.
   immediately: **jc-50** (one second into the first run) and **jc-51** (43 s into the next). jc-45 was
   the same shape and had to be found by hand.
   ⚠ **What is still uncovered is the other ruleset's depth.** Both targets exist, but `mslogic.c` has
-  thirty-three `NO_FIX_*` branches largely unexercised (its current figure is in
+  thirty-five `NO_FIX_*` branches largely unexercised (its current figure is in
   `docs/coverage-baseline.tsv`, not here); the fuzzer reaches what a short random move plan reaches. The `NO_FIX_*` differential matrix below is still the cheapest way
   to move it.
 
@@ -689,7 +698,7 @@ functions.
 useful number the tool prints.
 
 ⭐ **`lxlogic.c` went from 0% to briefly the best-covered engine in the tree**, ahead of `mslogic.c`
-despite fewer cases — its core movement paths are dense rather than spread across thirty-three
+despite fewer cases — its core movement paths are dense rather than spread across thirty-five
 `NO_FIX_*` branches. ⚠ **That ranking has since reversed**: the 2026-09 gameplay and toggle-guard
 cases put `mslogic.c` ahead, and this paragraph quoted percentages that went stale without anything
 failing. The lesson stands; the figures are in `docs/coverage-baseline.tsv`.
@@ -967,7 +976,7 @@ Check [`docs/adr/`](docs/adr/) before changing anything that looks wrong.
 1. **Two perpendicular arrow keys produce a diagonal.** That diagonal is a **block slap**, and CCLP3
    #16, CCLP5 #84 and several Lynx-only CCLXP2 levels are unsolvable without it.
    [ADR 0008](docs/adr/0008-accidental-diagonals-are-load-bearing.md).
-2. **Thirty-three `NO_FIX_*` macros with dead-looking `#ifdef` scaffolding.** Each isolates one engine
+2. **Thirty-five `NO_FIX_*` macros with dead-looking `#ifdef` scaffolding.** Each isolates one engine
    fix for differential measurement. Deleting one changes no shipped behavior, so nothing fails —
    until the next desync investigation needs the switch that is gone.
    [ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md).
@@ -1016,13 +1025,14 @@ story here, add it to `FORK.md` instead and put the lesson here, once.
 | jc-47 | A 64-byte leak on every failed playback | `FORK.md` item 19 |
 | jc-48 | A `.dac` could name a file outside the data directory, including a Windows device name; and 22 ctype casts on a signed `char` | `FORK.md` item 20 |
 | jc-50 | **This fork's own.** `movelaws[]` indexed by a cell's bottom layer, which can hold a creature — up to 47 entries past a 64-entry array, on 18% of real levels | `FORK.md` item 21 |
-| jc-51 | `chipsneeded` is a signed `short` filled from an unsigned file word, so a level demanding ≥ 0x8000 chips opened the socket and then killed the program | `FORK.md` item 22 |
+| jc-51 | `chipsneeded` is a signed `short` filled from an unsigned file word, so a level demanding ≥ 0x8000 chips opened the socket without its chips (a debug build then died on an assert; the shipped Release build compiles it away) | `FORK.md` item 22 |
 | jc-52 | `TWTextCoder::encode()` shifted one byte for eleven characters; two more unguarded `movelaws[]` indexes; an uninitialized pointer on a path-qualified command line | `FORK.md` items 23–25 |
 | jc-54 | `tw_settings.ini` was rewritten by truncating it in place, so an interrupted write destroyed it; and a value ending in a carriage return did not survive its own round trip | `FORK.md` items 26–27 |
 | jc-56 | Not shipped defects — a feature, and five quiet failures found by building its guards: an unchecked third copy of the stock settings file, a documented count four out, a `foreach` variable that had been eating a script parameter since the file was written, a **flaky wall-clock test that burned the jc-55 tag**, and `package.ps1` deleting the build manifest RELEASING.md tells you to write one command earlier | `FORK.md` items 28–32 |
 | jc-58 | The main window indexed the `.ccx` table with an unchecked level number — one past the end on a stock `cc-fixlynx.dac`, much further on a crafted `.dat`. Plus two audits' worth of test and gate work: sixteen one-byte-loosenable guards, fail-open scripts, no timeouts, a floor ratchet across commits | `FORK.md` items 41–42 |
 | jc-57 | **An adversarial audit's findings.** A release gate that reported replaying solutions it had skipped; eleven of twelve engine bound-mutations surviving every local layer, jc-50 revertible wholesale among them; `encoding.c`'s run-length bound unREACHED rather than undetected; `verify-docs.ps1` failing open; and two latent `generic/tile.c` defects | `FORK.md` items 33–38 |
 | jc-59 | A feature (sound packs), and its review found the audio loader had never met a hostile file: a 1 Hz WAV that crashed the game inside SDL, an empty one that froze it as a looping sound, and a 144-byte one that made SDL commit 4 GB. Plus a latent upstream bug: a sound slot nothing loaded for kept its previous sound. The unsolvable-list hash fix and audits #5–#6 ride along | `FORK.md` items 43–49 |
+| jc-63 | A red button wired to a cell holding a Swimming Chip woke it as a MONSTER — `iscreature()` admits every form of Chip, and the clone guard excluded only plain Chip — so its first move hit an engine `_assert`. Five real levels wire a button that way, and every one of those clones was refused, so no phantom ever appeared; Chip swimming in water a button points at was the other route. Found by the weekly soak three times (2026-09-20, 11-15, 11-22); the first two red runs were not acted on | `FORK.md` item 53 |
 
 Every one of those is replay-neutral where it touches the engine, and the evidence is in `FORK.md`
 with the release that carries it.
@@ -1075,7 +1085,7 @@ the type before you go looking for an exotic control-flow path.**
 jc-52's `TWTextCoder::encode()` was fixed by **deleting** its switch rather than correcting eleven
 constants: `encode()` now reverse-looks-up the same table `decode()` uses, so the two are inverse *by
 construction*. Correcting the constants would have fixed that instance and left the next edit free to
-reintroduce it. Prefer removing the second source over synchronising it — the same reasoning retired
+reintroduce it. Prefer removing the second source over synchronizing it — the same reasoning retired
 the coverage table in §5 and produced `verify-docs.ps1`.
 
 **⚠ `#ifdef` scaffolding is untested code, and untested code rots.** Two `NO_FIX_*` toggles had
@@ -1084,7 +1094,7 @@ toggle and used under another. Nothing in the repository would have said so, bec
 changes no shipped behavior: not the unit suite, not the fuzzers, not CI. This is exactly the rot
 [ADR 0002](docs/adr/0002-engine-fixes-are-opt-out-macros.md) exists to prevent, and it had already
 set in. **If you add a `NO_FIX_*`, build with it defined at least once before committing.** The
-`nofix` job now builds all 33.
+`nofix` job now builds all 35.
 
 **⚠ Do not "finish a sweep" without building what you touch.** Three ctype instances remain in
 `oshw-sdl` (`sdlout.c:812`, `sdltext.c:110`, `:336`), deliberately left: those three files are not
@@ -1104,7 +1114,10 @@ called, three paragraphs up, "the single most reusable idea in the file". An aud
 used on **exactly one** of at least four analogous guards, and the other three were all revertible
 with the whole suite green — including jc-50, this fork's own headline defect. When you solve a
 class of problem, **grep for the rest of the class in the same sitting.** The lesson costs nothing
-to write and everything to leave unapplied.
+to write and everything to leave unapplied. jc-63 is the same lesson in the engine: jc-11's
+`FIX_MONSTERLIST_CHIP_TILES` fixed "`iscreature()` admits every form of Chip" for the level's
+monster list and left the same narrow guard on the clone path, where the fuzz soak found it months
+later.
 
 **🔴 "NOT DETECTED" AND "NOT EXERCISED" ARE DIFFERENT DIAGNOSES AND NEED DIFFERENT FIXES.** Separate
 them before reaching for a tool. `encoding.c`'s run-length bound was not undetected — no input in

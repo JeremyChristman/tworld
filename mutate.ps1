@@ -67,7 +67,7 @@ HOW IT AVOIDS LYING
  2. It only mutates lines that SURVIVE PREPROCESSING. mslogic.c is 4,993 lines (jc-60),
     of which 2,181 reached the compiler when last counted (jc-59; jc-60 swapped one compiled
     line for another); the rest are comments, blanks, directives
-    and the inactive arms of 33 NO_FIX_* toggles. A mutant in an inactive #else
+    and the inactive arms of 35 NO_FIX_* toggles. A mutant in an inactive #else
     arm cannot fail a test, so counting it as a survivor invents a test gap in
     this fork's most important file. The line set comes from `gcc -E`, not from a
     table.

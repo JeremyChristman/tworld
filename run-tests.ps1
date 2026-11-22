@@ -38,7 +38,7 @@ WHAT EACH LAYER IS FOR, so that a failure points somewhere:
   golden  AN ENGINE BEHAVIOR CHANGE. All 903 committed levels through both
           engines, gamestate hashed every tick, compared against a committed
           baseline. Nothing else here can see this class at all.
-  nofix   THE DESYNC MACHINERY. For each of the 33 NO_FIX_* toggles that has a
+  nofix   THE DESYNC MACHINERY. For each of the 35 NO_FIX_* toggles that has a
           recorded witness, proves a fix-on build and a fix-off build still
           disagree on it. These are opt-out macros, so a broken one changes no
           shipped behavior and nothing else goes red.

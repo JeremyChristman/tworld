@@ -167,7 +167,7 @@ is what the maintainer runs and what CI uses.
 ## Before you "fix" something odd
 
 Check [`CLAUDE.md`](../CLAUDE.md) §7 and [`docs/adr/`](../docs/adr/). A dozen things here look like
-bugs and are deliberate: the diagonal that two arrow keys produce, thirty-three dead-looking `NO_FIX_*`
+bugs and are deliberate: the diagonal that two arrow keys produce, thirty-five dead-looking `NO_FIX_*`
 macros, an off-by-default build tag, hand-built zip entry names, a separate wrapped-navigation
 function, and a deliberately over-tall row on the score screen. In this repository the surprising
 choice is usually the considered one.

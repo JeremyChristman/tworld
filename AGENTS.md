@@ -77,7 +77,7 @@ not print `all green` over one. The Qt layer is the only thing that reaches the 
    supposed to be there — do not "clean them up". See `docs/adr/0005`.
 
 6. **Check `CLAUDE.md` §7 and `docs/adr/` before "fixing" anything that looks wrong.** A dozen things
-   here look like bugs and are load-bearing: thirty-three dead-looking `NO_FIX_*` macros, an
+   here look like bugs and are load-bearing: thirty-five dead-looking `NO_FIX_*` macros, an
    off-by-default build tag, hand-built zip entry names, a separate wrapped-navigation function, and
    a deliberately over-tall row on the score screen.
 
@@ -110,7 +110,7 @@ that is no longer true**: jc-57's direct cases for `movelaw_block()` and `movela
 fail the plain pass with real assertions. Escalating the whole 2026-09-11 census through `-Sanitize`
 found it catches **7 of 949 plain-pass survivors, 0.7%** — small, and not a reason to skip it.
 
-⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 93% of the 23,910.
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 93% of the 23,952.
 Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
 than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
 The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.
@@ -121,9 +121,9 @@ new case). See `CLAUDE.md` §5 and
 [`docs/adr/0013`](docs/adr/0013-the-kill-rate-is-measured-by-a-committed-harness.md).
 
 `CLAUDE.md` §5 lists what is deliberately **not** covered — anything the GUI **draws** (its
-*decisions* are tested under Qt's offscreen platform; its pixels are not), and **five of the 33
+*decisions* are tested under Qt's offscreen platform; its pixels are not), and **five of the 35
 `NO_FIX_*` toggles**. Both are measured rather than impressions: the differential matrix
-(`test/run-nofix.ps1`) holds a witness for 18 of the 33, a named unit case guards 10 of the other 15,
+(`test/run-nofix.ps1`) holds a witness for 18 of the 35, a named unit case guards 12 of the other 17,
 and the golden master alone distinguishes only 2. The remaining five are intra-tick, recorded with
 the measurement that withdrew each. The matrix declares both counts on its `#!EXPECT` line and the
 runner requires them **exactly**, so losing a witness or a guard fails the run instead of quietly

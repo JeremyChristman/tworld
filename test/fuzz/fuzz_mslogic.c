@@ -34,9 +34,11 @@
  * reproducer would not reproduce.
  *
  * ⚠ AN _assert FAILURE IS A FINDING, NOT NOISE. mslogic.c's _assert calls
- * die(), which in the shipped program exits. If a file somebody downloaded can
- * violate an engine invariant, the game dies on it -- so the stub below aborts
- * and lets libFuzzer save the input. Triage it as a real report.
+ * die() in a debug build. The shipped Release build defines NDEBUG, which
+ * compiles _assert away, so there the engine runs on past the broken invariant
+ * instead (jc-63's phantom creature is what that looked like in the MS engine).
+ * Either way a file somebody downloaded broke the engine, so the stub below
+ * aborts and lets libFuzzer save the input. Triage it as a real report.
  */
 
 #include <stdint.h>

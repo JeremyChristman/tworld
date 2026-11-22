@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-62
+  Tile World  --  Jeremy Christman's fork                    build jc-63
 ==============================================================================
 
   1. What this is
@@ -531,6 +531,41 @@ nothing for a solution corpus to measure. What was done instead is described in
 that entry.
 
 
+jc-63  --  A red button no longer copies Chip
+---------------------------------------------
+
+  * WHEN A RED BUTTON IS WIRED TO A SQUARE WHERE CHIP IS SWIMMING, pressing
+    it now does nothing, which is what SuperCC does: a clone machine copies
+    monsters and blocks, never Chip. Until now Tile World
+    copied the swimming Chip as though he were a monster. That "monster"
+    could never move, and in a test build of the program it stopped the
+    game with an internal error.
+
+  * WHERE IT COULD HAVE SHOWN UP. Five levels in circulation wire a red
+    button to a swimming-Chip tile on a clone machine: Jacques #105 and
+    #285, JacquesOld #53, JacquesS1 #230 and Jacques_Medium #82. A Bug (the
+    monster) presses each of those buttons every few moves, but the swimming
+    Chip there faces an invisible wall, so even the old build never managed
+    the copy. And a button wired to water would copy Chip himself if a
+    monster or a sliding block pressed it while he swam there. No recorded
+    solution in the maintainer's collection ever made the bad copy.
+
+  * NO SOLUTION IN THE COLLECTION CHANGES. All 22,953 solutions that
+    replayed in jc-62 still replay, and the 1,243 that did not still do not,
+    across the 328 level sets that have solutions to check. (Earlier entries
+    say 19,363 and 1,204: the checking script had been skipping eight sets,
+    CC1 among them. It counts them all now.)
+
+  * The same rule now covers the "row 32" clone machine glitch. A
+    swimming-Chip tile there was never copied, but one facing north still
+    set off the glitch's side effects, which can move Chip or change a
+    square in the top row. Now it is turned away first, as SuperCC does.
+
+  * Found by the fork's weekly automated stress test (fuzzing). It had
+    flagged the same problem twice before, on 2026-09-20 and 2026-11-15,
+    and those two reports were not acted on until this one.
+
+
 jc-62  --  Built with Windows' own C runtime
 --------------------------------------------
 
@@ -830,6 +865,11 @@ jc-52  --  A startup crash, and accented text written back wrongly
 
 jc-51  --  A damaged level could shut the game down outright
 --------------------------------------------------------------
+
+  * CORRECTION (jc-63): the shutdown described below happened only in a
+    test build. The released game is built with that internal check
+    switched off, so it never exited on such a level; the socket simply
+    let Chip through without the chips. The fix below still stands.
 
   * THE GAME COULD EXIT WITH "INTERNAL ERROR" ON A BAD LEVEL FILE. Every
     level says how many chips Chip has to collect before the socket will

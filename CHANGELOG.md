@@ -23,6 +23,45 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+## jc-63 — 2026-11-22
+
+A red button no longer clones any form of Chip. Found by the weekly fuzz soak on its third report:
+two earlier red runs (2026-09-20, 2026-11-15) caught the same defect and were not acted on. The corpus
+gate's own fixes, made the same day, ride along.
+
+### Fixed
+- **A clone machine copies only a block or a monster, as SuperCC does** (`FIX_CLONER_CHIP_TILES`).
+  `activatecloner()` and `awakencreature()` refused a template with upstream's
+  `!iscreature(id) || creatureid(id) == Chip`, and `iscreature()` admits every form of Chip, so a
+  red button wired to a cell holding a **Swimming Chip** woke it as a monster. Its first move hit
+  `_assert(!"Unknown creature trying to move")` in `choosecreaturemove()`, which exits a debug
+  build; the shipped Release build compiles the assert away and kept a phantom in the creature
+  list. The new `isclonetemplate()` is SuperCC's `Tile.isCreature()`: Block through Paramecium, in
+  every facing. Five real levels wire a red button to a Swimming Chip on a clone machine (Jacques
+  #105 and #285, JacquesOld #53, JacquesS1 #230, Jacques_Medium #82). A Bug presses each one every
+  few moves, but the Swimming Chip faces an invisible wall, so jc-62's `canmakemove()` refused
+  those clones too. And since `updatecreature()` draws Chip as `Swimming_Chip` in water, a button
+  wired to water would clone Chip himself if a creature pressed it while he swam there. **Corpus
+  against jc-62's published download: IDENTICAL, 0 of 334 per-set outputs differ** (22,953 valid /
+  1,243 invalid, warnings identical). The Jacques solutions do reach the new guard, and are refused
+  one step earlier with the same result, so that zero shows nothing was harmed and cannot show the
+  fix works; six `mslogic_test.c` cases do (below).
+- **The row-32 cloner applies the same rule, before the variable spill**
+  (`FIX_ROW32_CLONER_CHIP_TILES`). `activaterow32cloner()` read its template from row 0's bottom
+  layer with the same narrow guard, so a north-facing Swimming Chip there ran `resetdata()` and
+  warned, where SuperCC returns before either. A toggle of its own because that code exists only
+  under `FIX_ROW32_CLONER`, and so that the `NO_FIX_*` matrix measures its guard separately.
+
+### Changed (tests and tooling)
+- **Six `mslogic_test.c` cases**: a red button wired to a Swimming Chip tile (the fuzz finding);
+  a ball pressing a button wired to the water Chip is swimming in; the rule's other edges (Chip-east
+  refused, Block-north and Paramecium-east cloned); `awakencreature()` asked directly; and a
+  row-32 cloner with a Swimming Chip template, with a control that proves the button fires. With
+  either toggle off and the reproducer moved aside, its own cases fail and nothing else does (with
+  it in place, `NO_FIX_CLONER_CHIP_TILES` dies on the engine assert first); each bound of `isclonetemplate()`
+  moved by one fails a case. The fuzz reproducer is committed as
+  `test/fuzz/corpus/mslogic/redbutton-swimming-chip-template`. `NO_FIX_*` toggles 33 → 35, unit
+  guards 10 → 12; the golden master's 1,806 digests did not move.
 - 🔴 **The corpus totals had never counted the two biggest sets.** `tworld.c` prints
   `"  Valid solutions:%4d"`, so the space after the colon is padding, and a count of 1,000 or more
   has none: `  Valid solutions:1325`. `test\run-corpus.ps1` required a space, so **Joshie (1,325
@@ -1346,8 +1385,9 @@ alarm, not an audit. `run-corpus.ps1` still decides whether a release ships.
   (`mslogic.c:1846`, `lxlogic.c:790`) — false for a negative count, so **the socket opens for a level
   whose requirement was never met**. Moments later `endmovement()`'s `Socket` case asserts
   `chipsneeded() == 0` (`mslogic.c:3264`, and `lxlogic.c:1399`/`:1475`) — also false, so `_assert`
-  calls `die()` and **the shipped game exits** with *"internal error: failed sanity check"*. Not a
-  wrong result on screen: the process terminates.
+  calls `die()` and a debug build exits with *"internal error: failed sanity check"*. ⚠ *Corrected
+  in jc-63:* this entry said **the shipped game** exits. It does not: the Release build defines
+  `NDEBUG`, which compiles `_assert` away in both engines, so there the socket simply opened.
 
   Both gates now ask **`chipsneeded() != 0`**, which agrees with the assert. The socket stays locked,
   which is the defensible answer for a level demanding an unreachable number of chips.
@@ -1428,9 +1468,10 @@ found it; it took a person reading the code and hand-building a level.
 - ⚠ **Every execution is independent, deliberately.** Both engines keep file-scope state, so
   `shutdown()` is called on every path out and the PRNG is reseeded to a fixed value each run.
   Without both, a crash would depend on the inputs before it and the reproducer would not reproduce.
-- ⚠ **An `_assert` failure counts as a finding.** The engines' `_assert` calls `die()`, which in the
-  shipped program exits — so a downloaded file that can violate an engine invariant kills the game.
-  The targets abort on it and let libFuzzer save the input.
+- ⚠ **An `_assert` failure counts as a finding.** The engines' `_assert` calls `die()` in a debug
+  build; the shipped Release build compiles it away, so there the engine runs on past the broken
+  invariant (*corrected in jc-63*; this said the shipped program exits). Either way a downloaded
+  file broke the engine, so the targets abort on it and let libFuzzer save the input.
 
 Verified locally before CI by driving both targets over their corpora under
 `-fsanitize=undefined -fsanitize-undefined-trap-on-error`, which needs no libFuzzer.

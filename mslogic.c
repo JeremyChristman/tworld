@@ -363,6 +363,44 @@
 #define	FIX_CLONE_IDENTITY	1
 #endif
 
+/* MOD (Jeremy, jc-63): a red button clones only a BLOCK or a MONSTER -- never any form of Chip --
+ * ON by default. activatecloner() and awakencreature() asked upstream's
+ * `!iscreature(id) || creatureid(id) == Chip`, and iscreature() also admits Swimming_Chip (and,
+ * never in the MS engine, Pushing_Chip and two reserved ids). So a red button wired to a cell
+ * holding a Swimming Chip woke it as a MONSTER, and on its first move choosecreaturemove() hit
+ * `_assert(!"Unknown creature trying to move")`, which exits a debug build; the shipped Release
+ * build compiles the assert away and kept a phantom in the creature list. SuperCC clones what
+ * Tile.isCreature() admits -- isMonster() || isCloneBlock(), Bug through Paramecium plus the
+ * four cloning blocks (MSCreatureList.addClone; its one other case, an ICE_BLOCK over a cloning
+ * block, is a tile Tile World loads as a hidden wall) -- so there the button does nothing.
+ * Found by the weekly fuzz soak; the reproducer is test/fuzz/corpus/mslogic/
+ * redbutton-swimming-chip-template. Real levels reach it two ways: five wire a red button to a
+ * Swimming Chip on a clone machine (Jacques #105 and #285, JacquesOld #53, JacquesS1 #230,
+ * Jacques_Medium #82). A Bug presses each of those every few moves, but the Swimming Chip faces
+ * an invisible wall, so canmakemove() refused the clone there even before this fix. And
+ * updatecreature() draws Chip as Swimming_Chip whenever he is in water, so a button wired to
+ * water would clone Chip himself if a creature pressed it while he swam there.
+ * Build with -DNO_FIX_CLONER_CHIP_TILES to restore the old behavior.
+ */
+#if !defined(NO_FIX_CLONER_CHIP_TILES) && !defined(FIX_CLONER_CHIP_TILES)
+#define	FIX_CLONER_CHIP_TILES	1
+#endif
+
+/* MOD (Jeremy, jc-63): the same rule for a ROW-32 cloner's template, ON by default, and a
+ * separate toggle because that code exists only under FIX_ROW32_CLONER. activaterow32cloner()
+ * reads its template from row 0's BOTTOM layer with the same narrow guard. A non-block template
+ * there never becomes a creature -- it warns and stops -- but a NORTH-facing one first runs
+ * resetdata(), the MSCC variable spill, which rewrites that row-0 cell and, depending on the
+ * column, can move Chip, end his slide or bring him back to life. SuperCC tests
+ * isCreature() BEFORE the spill (MSCreatureList.addClone, row-32 branch), so a Swimming Chip
+ * there does nothing at all, and now does nothing here. Reachable without a crafted file: the
+ * spill itself can write file codes 0x3C-0x3F (Swimming Chip) into row 0.
+ * Build with -DNO_FIX_ROW32_CLONER_CHIP_TILES to restore the old behavior.
+ */
+#if !defined(NO_FIX_ROW32_CLONER_CHIP_TILES) && !defined(FIX_ROW32_CLONER_CHIP_TILES)
+#define	FIX_ROW32_CLONER_CHIP_TILES	1
+#endif
+
 /* MOD (Jeremy, jc-34): a failed sanity check sends the user to THIS fork's tracker, not upstream's.
  * Of all the places to inherit an upstream URL, this was the worst one: nearly every engine change
  * in this fork is in this file, so the crash most likely to fire this assert is one of ours -- and
@@ -1039,6 +1077,20 @@ static void addcreaturetomap(creature const* cr) {
     updatecreature(cr);
 }
 
+#if defined(FIX_CLONER_CHIP_TILES) || (defined(FIX_ROW32_CLONER) && defined(FIX_ROW32_CLONER_CHIP_TILES))
+/* MOD (Jeremy, jc-63): what a cloner may copy -- SuperCC's Tile.isCreature(). Block through
+ * Paramecium in every facing: the four cloning blocks and the monsters, and no form of Chip.
+ * Both bounds sit on a four-id boundary, so no creatureid() is needed; the asserts pin the enum
+ * layout that makes this one range. A function rather than a macro so that mutate.ps1, which
+ * mutates only lines that survive preprocessing, can see the comparisons.
+ * See the FIX_CLONER_CHIP_TILES block at the top of this file. */
+_Static_assert(Block == Chip + 4 && Tank == Block + 4 && Paramecium + 4 == Swimming_Chip,
+               "isclonetemplate() assumes Chip, Block, the monsters, then Swimming_Chip");
+static int isclonetemplate(int id) {
+    return id >= Block && id < Swimming_Chip;
+}
+#endif
+
 /* Enervate an inert creature.
  */
 static creature* awakencreature(int pos) {
@@ -1046,8 +1098,14 @@ static creature* awakencreature(int pos) {
     int tileid;
 
     tileid = cellat(pos)->top.id;
+#ifdef FIX_CLONER_CHIP_TILES
+    /* MOD (Jeremy, jc-63): never wake any form of Chip -- see FIX_CLONER_CHIP_TILES. */
+    if (!isclonetemplate(tileid))
+        return NULL;
+#else
     if (!iscreature(tileid) || creatureid(tileid) == Chip)
         return NULL;
+#endif
     new = allocatecreature();
     new->id = creatureid(tileid);
     new->dir = creaturedirid(tileid);
@@ -1862,9 +1920,10 @@ static int canmakemove(creature const* cr, int dir, int flags) {
          *
          * The two tests then disagreed. This gate asked `> 0` and let Chip
          * through; endmovement()'s Socket case asserts `chipsneeded() == 0` and
-         * called die() -- which in the shipped program EXITS THE GAME with
-         * "internal error: failed sanity check". A downloaded level could kill
-         * Tile World by putting Chip on a socket.
+         * called die() in a debug build, which exits with "internal error:
+         * failed sanity check". (Until jc-63 this said the SHIPPED program
+         * exits. It does not: the Release build defines NDEBUG, which compiles
+         * _assert away, so there the socket simply opened without its chips.)
          *
          * For every non-negative count `> 0` and `!= 0` are the same test, so
          * no sane level changes behavior at all. A malformed one now finds the
@@ -2812,7 +2871,7 @@ static void resetdata(int x) {
         case 9:
             writevar_always(chippos() % CXGRID);
             /* MSCC clears the variable it just read out. Chip's tile stays
-             * where it was on the map -- that desynchronisation is the glitch,
+             * where it was on the map -- that desynchronization is the glitch,
              * not an oversight. */
             chip->pos = (chippos() / CXGRID) * CXGRID;
             break;
@@ -2921,8 +2980,15 @@ static void activaterow32cloner(int pos) {
      * that is the memory MSCC is really reading. It has to be read before
      * resetdata() runs, because resetdata() overwrites exactly that cell. */
     tileid = cellat(x)->bot.id;
+#ifdef FIX_ROW32_CLONER_CHIP_TILES
+    /* MOD (Jeremy, jc-63): SuperCC's isCreature() gate, BEFORE the variable spill below -- see
+     * FIX_ROW32_CLONER_CHIP_TILES. */
+    if (!isclonetemplate(tileid))
+        return;
+#else
     if (!iscreature(tileid) || creatureid(tileid) == Chip)
         return;
+#endif
     dir = creaturedirid(tileid);
 
     memset(&dummy, 0, sizeof dummy);
@@ -3000,8 +3066,15 @@ static void activatecloner(int buttonpos) {
         return;
     }
     tileid = cellat(pos)->top.id;
+#ifdef FIX_CLONER_CHIP_TILES
+    /* MOD (Jeremy, jc-63): a block or a monster, never any form of Chip -- see
+     * FIX_CLONER_CHIP_TILES at the top of this file. */
+    if (!isclonetemplate(tileid))
+        return;
+#else
     if (!iscreature(tileid) || creatureid(tileid) == Chip)
         return;
+#endif
     if (creatureid(tileid) == Block) {
         cr = lookupblock(pos);
 #ifdef FIX_CLONER_TEMPLATE_ON_DEATH

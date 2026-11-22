@@ -38,11 +38,11 @@
  * ⚠ BOTH -Wno FLAGS ARE FOR mslogic.c's OWN WARNINGS, NOT FOR THIS TEST. The
  * suite compiles with -Werror, and mslogic.c does not build warning-clean:
  *
- *   -Wunused-value    the _assert macro (mslogic.c:356) expands to
+ *   -Wunused-value    the _assert macro (mslogic.c:411) expands to
  *                     `((test) || (die(...), 0))`, and GCC objects to the comma
  *                     expression's right operand at four call sites.
  *   -Wunused-variable `value` is declared but unused in resetdata()
- *                     (mslogic.c:2648).
+ *                     (mslogic.c:2833).
  *
  * Five warnings, all pre-existing and none of them a defect. They are suppressed
  * here rather than fixed in the shipped source because this is a fork tracking
@@ -326,7 +326,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(322);
+    tw_expect_atleast(364);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -2119,6 +2119,274 @@ int main(void)
 		      "a ball clone was let past a turning TANK because both face east"
 		      " -- the direction-only identity test is back");
 	}
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a red button wired to a SWIMMING CHIP tile clones nothing -- the fuzz finding");
+    {
+	/* FIX_CLONER_CHIP_TILES (jc-63). Found by the weekly fuzz soak: a red
+	 * button wired to a cell whose top tile is a Swimming Chip. Upstream's
+	 * guard in activatecloner() and awakencreature() is
+	 *     if (!iscreature(tileid) || creatureid(tileid) == Chip) return;
+	 * and iscreature() admits every form of Chip, so a Swimming Chip got
+	 * through, was woken as a monster, and the next monster tick reached
+	 * choosecreaturemove()'s `_assert(!"Unknown creature trying to move")`.
+	 * SuperCC clones only what Tile.isCreature() says -- a monster or a
+	 * cloning block -- so there the button does nothing.
+	 *
+	 * The template is Swimming Chip facing NORTH (file 0x3C, internal 0x6C):
+	 * the first id past Paramecium-east, i.e. exactly the boundary of the
+	 * rule. Its facing neighbor (10,9) is open floor, or canmakemove()
+	 * would refuse the clone in the old build too.
+	 *
+	 * ⚠ STOP ON THE PRESS TICK. With the fix off, the phantom is in the list
+	 * once Chip lands on the button, and asks for its first move within four
+	 * ticks (CS_CLONING clears, then the every-other-tick gate) -- which would
+	 * kill this whole binary inside the engine instead of failing one CHECK. */
+	int	target, t;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 4, 5, FIX_CHIP_EAST);
+	fix_settop(&lv, 5, 5, FIX_BUTTON_RED);
+	fix_settop(&lv, 10, 10, 0x3C);			/* Swimming Chip, facing north */
+	fix_addcloner(&lv, 5, 5, 10, 10);		/* NOT a clone machine */
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	target = 10 + CXGRID * 10;
+	CHECK_MSG(teststate.clonercount == 1,
+		  "the wiring was dropped, so this case cannot distinguish anything;"
+		  " got %d", teststate.clonercount);
+	CHECK_INT(cellat(target)->top.id, crtile(Swimming_Chip, NORTH));
+	CHECK_INT(creaturecount, 1);
+
+	for (t = 0 ; t < 4 && chipx() != 5 ; ++t)
+	    tick(CmdEast);				/* onto the button, and no further */
+	CHECK_MSG(chipx() == 5, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(creaturecount == 1,
+		  "the red button woke the Swimming Chip tile as a monster: %d"
+		  " creatures. The clone guard lets a Chip form through",
+		  creaturecount);
+	CHECK_INT(cellat(target)->top.id, crtile(Swimming_Chip, NORTH));
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a monster pressing a red button wired to WATER does not clone the swimming Chip");
+    {
+	/* The same hole, reached in ordinary play rather than from a crafted
+	 * file: updatecreature() draws Chip as Swimming_Chip whenever he is in
+	 * water, so a red button wired to a water cell, pressed by a monster
+	 * while Chip swims there, would clone Chip as a monster. Chip picks up
+	 * flippers first (without them he drowns), then waits in the water; a
+	 * pink ball walks east onto the button well after he is in. At level
+	 * start his tile is plain Chip -- only updatecreature() writes
+	 * Swimming_Chip -- so the case asserts the tile before the press, and
+	 * stops on the press tick for the reason given in the case above.
+	 * ⚠ By the press his idle timer has turned him to face SOUTH (the tile
+	 * reads 6E), so (6,6) must stay open floor: the clone would step there,
+	 * and if it could not, canmakemove() would refuse it in the old build
+	 * too and the case would pass in both. */
+	int	water, button, t;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 4, 5, FIX_CHIP_EAST);
+	fix_settop(&lv, 5, 5, 0x68);			/* flippers */
+	fix_settop(&lv, 6, 5, FIX_WATER);
+	fix_settop(&lv, 10, 10, 0x4B);			/* a pink ball, facing east */
+	fix_addcreature(&lv, 10, 10);
+	fix_settop(&lv, 16, 10, FIX_BUTTON_RED);
+	fix_addcloner(&lv, 16, 10, 6, 5);		/* button -> the water */
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	water = 6 + CXGRID * 5;
+	button = 16 + CXGRID * 10;
+	CHECK_INT(teststate.clonercount, 1);
+	CHECK_INT(creaturecount, 2);
+
+	runticks(4, CmdEast);				/* the flippers */
+	runticks(4, CmdEast);				/* into the water */
+	CHECK_MSG(chipx() == 6, "Chip did not reach the water: x=%d", chipx());
+	CHECK_MSG(creatureid(cellat(water)->top.id) == Swimming_Chip,
+		  "Chip is not drawn as swimming (%02X), so the button would not"
+		  " see a Swimming Chip and nothing below distinguishes the builds",
+		  cellat(water)->top.id);
+	CHECK_MSG(creatureid(cellat(button)->top.id) != Ball,
+		  "the ball reached the button before Chip was in the water");
+
+	/* Tick until the ball stands on the button, and no further. */
+	for (t = 0 ; t < 40 && creatureid(cellat(button)->top.id) != Ball ; ++t)
+	    tick(NIL);
+	CHECK_MSG(creatureid(cellat(button)->top.id) == Ball,
+		  "the ball never reached the button in %d ticks", t);
+	CHECK_MSG(chipx() == 6, "Chip left the water: x=%d", chipx());
+	CHECK_MSG(creaturecount == 2,
+		  "the ball's press cloned the swimming Chip as a monster: %d"
+		  " creatures where there should be Chip and the ball",
+		  creaturecount);
+    }
+
+    /* ================================================================== */
+    tw_case("a red button wired to a plain CHIP tile clones nothing -- the rule's lower edge");
+    {
+	/* Upstream already refused this one, so it passes with the toggle off
+	 * too: it guards the RULE against mutation, not the toggle. It pins the
+	 * rule's LOWER boundary: Chip facing east is
+	 * internal 0x43, one below Block-north. A rule loosened by one there
+	 * would wake a Chip tile as a monster.
+	 *
+	 * ⚠ The decoy must sit EARLIER in the map than the real Chip: the
+	 * loader takes Chip's start from the LAST Chip tile in the foreground
+	 * (FIX_CHIP_START_FOREGROUND, matching SuperCC's backwards scan). */
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 10, 3, FIX_CHIP_EAST);		/* the decoy, internal 0x43 */
+	fix_setbot(&lv, 10, 3, FIX_CLONEMACHINE);
+	fix_settop(&lv, 4, 15, FIX_CHIP_EAST);		/* the real Chip */
+	fix_settop(&lv, 5, 15, FIX_BUTTON_RED);
+	fix_addcloner(&lv, 5, 15, 10, 3);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(chipx() == 4 && chipy() == 15,
+		  "Chip started at (%d,%d), on the decoy, so this case tests nothing",
+		  chipx(), chipy());
+	CHECK_INT(creaturecount, 1);
+
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 5, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(creaturecount == 1,
+		  "a Chip tile on a clone machine was cloned as a monster: %d"
+		  " creatures", creaturecount);
+    }
+
+    /* ================================================================== */
+    tw_case("a cloning BLOCK facing north and a PARAMECIUM facing east still clone -- the rule's accepting edges");
+    {
+	/* The other side of the rule: a guard needs a case on the accepting
+	 * side, or it can pass by refusing everything. Block-north (internal
+	 * 0x44) is the lowest id the rule admits and Paramecium-east (0x6B) the
+	 * highest; a rule tightened by one at either end refuses one of them.
+	 * Like the case above, this guards the rule, not the toggle: both clone
+	 * in the old build as well. */
+	int	parapos;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 4, 5, FIX_CHIP_EAST);
+	fix_settop(&lv, 5, 5, FIX_BUTTON_RED);
+	fix_settop(&lv, 10, 10, 0x0E);			/* cloning block, facing north */
+	fix_setbot(&lv, 10, 10, FIX_CLONEMACHINE);
+	fix_addcloner(&lv, 5, 5, 10, 10);
+	fix_settop(&lv, 4, 20, FIX_BUTTON_RED);
+	fix_settop(&lv, 15, 20, 0x63);			/* paramecium, facing east */
+	fix_setbot(&lv, 15, 20, FIX_CLONEMACHINE);
+	fix_addcloner(&lv, 4, 20, 15, 20);
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(teststate.clonercount, 2);
+	CHECK_MSG(cellat(10 + CXGRID * 9)->top.id != Block_Static,
+		  "there is already a block north of the cloner");
+
+	runticks(4, CmdEast);				/* the block's button */
+	CHECK_MSG(chipx() == 5, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(cellat(10 + CXGRID * 9)->top.id == Block_Static,
+		  "a cloning block facing north was not cloned: (10,9) holds %02X",
+		  cellat(10 + CXGRID * 9)->top.id);
+
+	/* The paramecium's button, directly: Chip walking there would take
+	 * long enough for the block clone to wander into the picture. */
+	parapos = 15 + CXGRID * 20;
+	CHECK_INT(cellat(parapos)->top.id, crtile(Paramecium, EAST));
+	activatecloner(4 + CXGRID * 20);
+	CHECK_MSG(creaturecount == 2,
+		  "a paramecium facing east was not cloned: %d creatures",
+		  creaturecount);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 awakencreature() refuses a Swimming Chip tile itself");
+    {
+	/* activatecloner() is its only caller and refuses first, so the cases
+	 * above cannot see this guard. It is fixed anyway because it is the
+	 * function's own contract -- "never wake a Chip" -- and a later caller
+	 * would otherwise inherit the hole; asked directly here so that
+	 * reverting it alone is not silent. No tick runs afterwards: with the
+	 * guard gone, the phantom it creates would end the binary.
+	 * ⚠ The reverse holds too, and is measured: reverting ONLY
+	 * activatecloner()'s guard passes every case, because this one then
+	 * refuses. That is an equivalent mutant, not a gap -- the one extra
+	 * canmakemove() on the dummy leaves only cmm_keepslot behind, which every
+	 * canmakemove() call resets before anything reads it. So the two cases
+	 * above guard the TOGGLE; neither guards activatecloner()'s line alone. */
+	int	pos;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 4, 5, FIX_CHIP_EAST);
+	fix_settop(&lv, 10, 10, 0x3C);			/* Swimming Chip, facing north */
+	CHECK_INT(startlevel(&lv), TRUE);
+
+	pos = 10 + CXGRID * 10;
+	CHECK_INT(creaturecount, 1);
+	CHECK_MSG(awakencreature(pos) == NULL,
+		  "awakencreature() woke a Swimming Chip tile as a monster");
+	CHECK_INT(creaturecount, 1);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 a ROW-32 cloner whose template is a Swimming Chip does nothing at all");
+    {
+	/* The third site. activaterow32cloner() takes its template from row
+	 * 0's BOTTOM layer with the same narrow guard. A non-block template
+	 * there never becomes a creature -- it warns and stops -- but before
+	 * that, a NORTH-facing one runs resetdata(), the MSCC "variable spill",
+	 * which overwrites row 0's bottom tile in that column. SuperCC returns
+	 * before either: a Swimming Chip is not Tile.isCreature().
+	 * FIX_ROW32_CLONER_CHIP_TILES, its own toggle, so that run-nofix.ps1
+	 * measures THIS case: with one toggle for both sites, the fuzz
+	 * reproducer in the corpus case would end the binary first and count as
+	 * the guard for both.
+	 *
+	 * Column 10, not 2 or 3 (those columns only warn), and (10,31) open, or
+	 * the old build would skip the spill too. ⚠ A refusal looks exactly like
+	 * a button that never fired, so the case ends with a CONTROL: the same
+	 * button, re-pressed with a cloning block as the template, must clone. */
+	int	before;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 4, 5, FIX_CHIP_EAST);
+	fix_settop(&lv, 5, 5, FIX_BUTTON_RED);
+	fix_setbot(&lv, 10, 0, 0x3C);			/* Swimming Chip, facing north */
+	fix_addcloner(&lv, 5, 5, 10, 32);		/* button -> (10, ROW 32) */
+	fix_settop(&lv, 10, 31, FIX_FLOOR);		/* somewhere it could step */
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_MSG(teststate.clonercount == 1,
+		  "the row-32 wiring was dropped; got %d", teststate.clonercount);
+	CHECK_INT(cellat(10)->bot.id, crtile(Swimming_Chip, NORTH));
+
+	before = warn_count;
+	runticks(4, CmdEast);
+	CHECK_MSG(chipx() == 5, "Chip did not reach the button: x=%d", chipx());
+	CHECK_MSG(cellat(10)->bot.id == crtile(Swimming_Chip, NORTH),
+		  "the row-32 cloner ran the variable spill for a Swimming Chip"
+		  " template: (10,0) underneath now holds %02X",
+		  cellat(10)->bot.id);
+	CHECK_MSG(warn_count == before,
+		  "the row-32 cloner treated a Swimming Chip as a template (%d"
+		  " warning(s))", warn_count - before);
+
+	/* The control: a cloning block facing north in the same cell, the
+	 * button pressed again -- the clone must arrive on (10,31). */
+	cellat(10)->bot.id = crtile(Block, NORTH);
+	CHECK_MSG(cellat(10 + CXGRID * 31)->top.id != Block_Static,
+		  "there is already a block on the landing cell");
+	runticks(4, CmdEast);
+	runticks(4, CmdWest);
+	CHECK_MSG(chipx() == 5, "Chip did not return to the button: x=%d", chipx());
+	CHECK_MSG(cellat(10 + CXGRID * 31)->top.id == Block_Static,
+		  "the control failed: a cloning block template did not clone"
+		  " either, so this button never fires and the refusal above"
+		  " proves nothing. (10,31) holds %02X",
+		  cellat(10 + CXGRID * 31)->top.id);
     }
 
     /* ================================================================== */

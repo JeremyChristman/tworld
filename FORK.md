@@ -832,7 +832,8 @@ exactly what's mine:
    `test/fuzz/corpus/mslogic/movelaws-oob-bottom-creature`; reverting the fix makes it die with
    `SIGILL` under `-fsanitize-undefined-trap-on-error`, which runs on Windows.
 
-22. **A negative chip count opened the socket and then killed the program** (`mslogic.c`,
+22. **A negative chip count opened the socket without its chips** -- and killed a debug build on an
+   assert; the shipped Release build compiles that assert away (`mslogic.c`,
    `lxlogic.c`). **Upstream's** (`929d9c6`, the 2.3.1 import), present in **both** engines.
 
    `state.chipsneeded` is a **signed** `short` (`state.h:251`). `encoding.c:187` fills it with
@@ -846,8 +847,11 @@ exactly what's mine:
    | `endmovement()`, `mslogic.c:3264`; `lxlogic.c:1399`, `:1475` | `chipsneeded() == 0` | **false** → `_assert` fails |
 
    The gate lets Chip onto a socket whose requirement was never met, and the assert immediately
-   objects. `_assert` calls `die()`, so **the shipped program exits** with *"internal error: failed
-   sanity check"* — the failure is not a wrong tile or a bad score, it is the process going away.
+   objects. `_assert` calls `die()`, so a debug build exits with *"internal error: failed sanity
+   check"*. ⚠ **Corrected in jc-63: this item first said the SHIPPED program exits. It does not** --
+   the Release build defines `NDEBUG`, which compiles `_assert` to nothing in both engines (the
+   jc-62 and jc-63 executables do not contain the message at all), so there the socket simply
+   opened without its chips.
 
    Both gates now ask **`chipsneeded() != 0`**, which is the same question the assert asks.
 
@@ -2208,7 +2212,134 @@ exactly what's mine:
    16.1.0, `docs/toolchain.lock`'s note). The laptop was not set up or checked here, and this item
    first said it "has only MINGW64". When it was looked at, on 2026-11-22, it had no MSYS2 at all
    and no clone. It got MSYS2, then the same script plus the static Qt file `release.yml` pins, and
-   tested green there (`CHANGELOG.md`, Unreleased).
+   tested green there (`CHANGELOG.md`, under jc-63, where that Unreleased work was folded).
+
+53. **jc-63: a red button clones only a block or a monster -- never any form of Chip**
+   (`mslogic.c` `isclonetemplate()`, `activatecloner()`, `awakencreature()`,
+   `activaterow32cloner()`; `FIX_CLONER_CHIP_TILES`, `FIX_ROW32_CLONER_CHIP_TILES`;
+   `test/mslogic_test.c`, `test/fuzz/corpus/mslogic/redbutton-swimming-chip-template`,
+   `test/nofix/nofix-matrix.tsv`).
+
+   **How it was found -- three times.** The weekly fuzz soak (`soak.yml`) failed in
+   `fuzz_mslogic` on scheduled run 45023261090 (2026-11-22, on jc-62's `568f0e7`), about three
+   and a half minutes into that target, past the 60 seconds each push gets. ⚠ **It was not the
+   soak's first report of this defect.** Runs 35501929929 (2026-09-20, on `93dfdca`, jc-58 + 4)
+   and 43711434868 (2026-11-15, on jc-59's `fea7e53`) had failed the same way -- `die_()` from
+   `choosecreaturemove()`, about six and ten minutes into the target -- and **neither red run was
+   acted on**; the seven weekly runs between them passed. Both earlier reproducers (269 and 250 bytes,
+   downloaded from those runs' artifacts) were replayed by hand on 2026-11-22: `Non-creature 6C`
+   and the assert with the fix off, a clean run with it on. The fuzzer did its job three times; a
+   scheduled failure that nobody acts on is a finding that does not exist. The third run's 250-byte
+   reproducer replayed on Windows through a plain driver (the fuzz
+   target plus a `main()`, with `warn_`/`die_` made to print): Chip steps east onto a red button at
+   tick 0, a creature with id `6C` appears at (1,16), and at tick 4 `choosecreaturemove()` warns
+   `Non-creature 6C trying to move` and dies on `_assert(!"Unknown creature trying to move")`.
+
+   **The defect.** The button is wired to a cell (not a clone machine) whose top tile is a
+   Swimming Chip. `activatecloner()` refused a template with upstream's
+   `!iscreature(tileid) || creatureid(tileid) == Chip`, and `awakencreature()` asked the same;
+   `iscreature()` is `Chip <= id < Water_Splash`, which admits Swimming_Chip, Pushing_Chip and the
+   two reserved entity ids as well as Chip. So the Swimming Chip was woken as a monster. The
+   Release build compiles `_assert` away: the same input, through the fuzz driver built
+   `-DNDEBUG -O2`, prints one warning and the phantom stays in the list, never moving.
+   SuperCC's `MSCreatureList.addClone()` returns
+   unless `Tile.isCreature()` -- `isMonster() || isCloneBlock()`, Bug through Paramecium plus the
+   four cloning blocks -- so there the button does nothing. It is the clone-path half of what
+   jc-11's `FIX_MONSTERLIST_CHIP_TILES` closed for the level's own monster list.
+
+   **Reachable in real levels, two ways.** A read-only scan of all 23,481 levels in the
+   maintainer's 331 `.dat` files (43,343 cloner wirings) found five wired to a Swimming Chip, all
+   one layout: a Bug at (28,23) loops through a 2x2 pocket and steps onto the red button at
+   (29,23) every four moves; the button points at (29,25), a Swimming Chip facing SOUTH on a clone
+   machine; and (29,26) is a permanent invisible wall. Jacques #105 "Invisirace" and #285,
+   JacquesOld #53, JacquesS1 #230, Jacques_Medium #82. ⚠ **This item first said no recorded
+   solution presses that button. The code review measured otherwise** (a print in
+   `activatecloner()` over those four `.dat` files: 25, 25, 18, 15 and 5 presses for #105, #230,
+   #53, #285, #82), **with `canmakemove()` refusing every one**: jc-62 tried the clone on each
+   press and the wall stopped it, which is why no phantom ever appeared. The corpus's missing
+   `Non-creature` warnings meant no phantom, not no press. And `updatecreature()` draws Chip as
+   `Swimming_Chip` whenever he stands in water, so a red button wired to water would clone Chip
+   himself if a creature -- a monster, or a sliding block -- pressed it while he swam there. No
+   level wires a red button to plain water, but JacquesS2 #59 "Don't Wake The Bugs!" wires three to
+   gliders standing on water (non-cloner cells), which are plain water once those gliders have
+   gone. No recorded solution makes a phantom there (the corpus has no `Non-creature` warning);
+   whether any presses those buttons with Chip in the water was not measured.
+
+   **The fix.** `isclonetemplate(id)` is `id >= Block && id < Swimming_Chip` -- SuperCC's
+   `isCreature()` over every id an MS cell can hold (a design review checked the `fileids` table,
+   the variable spill's `fileidtotileid()` writes and the engine's runtime writes). A `static`
+   function, not a macro, because `mutate.ps1` mutates only lines that survive preprocessing; a
+   `_Static_assert` pins the enum layout that makes it one range. Two toggles, not one:
+   `activaterow32cloner()` exists only under `FIX_ROW32_CLONER`, and with a single toggle the
+   committed reproducer ends the unit binary first under `-DNO_FIX_...`, so `run-nofix.ps1` would
+   have counted the row-32 half as guarded without ever measuring its case. At row 32 the old
+   guard let a north-facing Swimming Chip run `resetdata()` -- the variable spill, which rewrites
+   that row-0 cell -- and then warn; SuperCC tests `isCreature()` first and does neither. The
+   spill itself can write file codes 0x3C-0x3F (Swimming Chip) into row 0, so that path is not
+   crafted-file-only either.
+
+   **Guard.** Six cases. With `-DNO_FIX_CLONER_CHIP_TILES` (reproducer moved aside) three fail:
+   the Swimming Chip tile woken (2 creatures), the ball's press cloning the swimming Chip (3), and
+   `awakencreature()` asked directly. With `-DNO_FIX_ROW32_CLONER_CHIP_TILES` only the row-32 case
+   fails, on both its checks: the spill rewrote (10,0) to `1F`, and one warning. Its control
+   re-presses the same button with a cloning-block template, which must clone, because a refusal
+   looks exactly like a button that never fired. The cases stop on the press tick: with a fix off,
+   the phantom asks for its first move within four ticks and would end the whole binary inside
+   the engine instead of failing one check. The other three cases pin the rule's edges and pass in
+   both builds by design: Chip-east (0x43) refused, Block-north (0x44) and Paramecium-east (0x6B)
+   cloned; each of the four one-off bound mutants fails at least one case. `run-nofix.ps1` now
+   counts 12 unit guards among the 17 toggles without a witness (it was 10 among 15).
+   ⚠ **What that count measures for `NO_FIX_CLONER_CHIP_TILES` is the reproducer, not the named
+   cases**: with the toggle off, the binary dies inside the corpus case, the first one, and
+   `run-nofix.ps1` counts any nonzero exit as caught. So a later weakening of those three cases
+   would leave the matrix green; the move-aside run above is what measured them, and the exact
+   check floor still catches a deleted one. (`NO_FIX_ROW32_CLONER_CHIP_TILES` has no such
+   problem: the reproducer does not reach row 32, so its count is its own case.) The test review
+   also measured that reverting ONLY `activatecloner()`'s guard passes every case, because
+   `awakencreature()` then refuses; it is an equivalent mutant (the extra `canmakemove()` leaves
+   only `cmm_keepslot`, reset before any read), and the test file says so.
+
+   **Measured before shipping.** All six local layers green: 23,952 unit checks, the golden
+   master's 1,806 digests unmoved (its reach is 2 of 35 toggles), 18 witnesses. Corpus against
+   jc-62's published download: **IDENTICAL, 0 of 334 per-set outputs differ, 22,953 valid / 1,243
+   invalid on both**, warnings identical. That zero says no solution was harmed; it cannot say the
+   fix works. The Jacques solutions do reach the new guard and are refused one step earlier with
+   the same result, so no solution tells the two builds apart -- the six cases are the evidence.
+
+   **Review, and what was defended.** A design review before the code (taken: the function
+   instead of a macro, the second toggle, stopping on the press tick, the row-32 control; not
+   taken: leaving `awakencreature()` unfixed on the grounds that no test could see it -- a direct
+   call can, and it is that function's own contract). After the code: a test review (signed off;
+   it found the WATER case quietly needs (6,6) open, because Chip faces south by the press, and the
+   `activatecloner()`-only equivalent mutant; both now written into the test file), a code review
+   (signed off on the engine; it found the "no recorded solution presses it" claim above false,
+   corrected here, in `mslogic.c`, `CHANGELOG.md` and `README.txt`), and a hostile hunt for the
+   rest of the class: **0 findings in about 8.3 million generated MS levels** checked every tick
+   for a die() and for any non-monster in the creature or block list (the same search with both
+   toggles off found the phantom 539 times in 200,000). Defended, not fixed:
+   - **The Lynx engine clones Chip or a Swimming Chip too.** `lxlogic.c`'s `activatecloner()`
+     copies whatever `lookupcreature(pos, TRUE)` returns, Chip included, and a hand-built level
+     makes a second Chip creature. Nothing asserts (Lynx has no catch-all), and SuperCC's Lynx
+     engine does the same thing (`LynxCreatureList.addClone()`: `creatureAt(position, true)`), so
+     changing it would break the parity this fork exists for. What the real Lynx does is unknown.
+   - **SuperCC also clones an ICE_BLOCK over a cloning block**; Tile World loads that tile (0x38)
+     as a hidden wall and emulates ICE_BLOCK nowhere. A fidelity gap older than this fix, and no
+     recorded solution depends on it.
+   - **`lookupblock()`'s assert via `springtrap()`'s mutant-block branch**: argued unreachable
+     (the flag is cleared by the only path out of the cell), but by reasoning -- those lines had no
+     coverage in the hunt.
+   - Follow-up idea, not done here: `fuzz_mslogic.c` fails only on a `die()`, so a phantom that
+     never reaches `choosecreaturemove()` passes (one input from the hunt's own fix-off search, not
+     kept in the repository, put one in the list and exited 0). A per-tick creature-list invariant in the target would catch the whole
+     class, not just the inputs that crash. It changes a Linux-only CI target, so it belongs in
+     its own change with its own soak.
+
+   A documentation review came last. It found the two earlier soak runs (above), four stale
+   counts, and an older error repeated in eight places since jc-51: that a failed `_assert` exits
+   the SHIPPED game. It does not -- the Release build defines `NDEBUG`, and neither the jc-62 nor
+   the jc-63 executable contains the assert's message -- and every copy now says so. The two
+   earlier reproducers are not committed: they replay the same defect through the same guard the
+   committed one pins, and were checked by hand instead.
 
 
 ## Testing
@@ -2223,7 +2354,7 @@ release. Only the ASan and fuzz layers are separate, being Linux-only.
 | unit | `test/run-tests.ps1` | a C compiler | one module at a time: the RNG, the `.tws` codec, the MS engine, the keyboard arbitration |
 | end-to-end | `test/run-e2e.ps1` | a built executable | the real program's GUI-free command line, including a batch verification of a synthesized level set |
 | golden master | `test/run-golden.ps1` | a C compiler | 🔴 **the only automated check that can see an engine behavior change**: all 903 committed levels through BOTH engines, deterministic input, gamestate hashed every tick |
-| differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 33 `NO_FIX_*` desync toggles**: for 18 of them, a committed input that provably tells a fix-on build from a fix-off one |
+| differential matrix | `test/run-nofix.ps1` | a C compiler | 🔴 **the only check on the 35 `NO_FIX_*` desync toggles**: for 18 of them, a committed input that provably tells a fix-on build from a fix-off one |
 | sanitize | `test/run-tests.ps1 -Sanitize` | a C compiler | 🔴 **the only local layer that can see a memory-safety guard being deleted**: the same unit cases under a trapping UndefinedBehaviorSanitizer, ~11 s. Added jc-57, after an audit reverted jc-50 wholesale with every other layer green. ⚠ An ORACLE, not coverage — it sees only what a test actually executes |
 
 As of 2026-09-06: **15 unit runs / 17,531 checks, 12 end-to-end cases / 35 checks, and 2 Qt runs / 116

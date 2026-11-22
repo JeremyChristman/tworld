@@ -25,7 +25,8 @@ it says every reproducer this project has found is now in the corpus, replayed o
   `test/fuzz/corpus/mslogic/socket-negative-chipsneeded`.
 
   `_assert(chipsneeded() == 0)` in `endmovement()`'s `Socket` case could fail, so `die()` ran and
-  the shipped game exited with "internal error: failed sanity check". Found by `fuzz_mslogic`
+  a debug build exited with "internal error: failed sanity check" (the shipped Release build
+  compiles `_assert` away; this note said otherwise until jc-63). Found by `fuzz_mslogic`
   ~43 s in. The note kept here at the time guessed that "something reaches `endmovement()` with a
   socket destination **without** going through that gate — a slide or teleport path is the obvious
   suspect". **That guess was wrong**, and it is worth leaving on the record: nothing bypassed the
@@ -35,3 +36,14 @@ it says every reproducer this project has found is now in the corpus, replayed o
 
   The lesson for the next entry in this directory: **an assert names the invariant that broke, not
   the reason it broke.** Trace the reproducer before writing down a suspect.
+
+* **`mslogic` red button / Swimming Chip** — found by the weekly soak **three times**: runs
+  35501929929 (2026-09-20), 43711434868 (2026-11-15) and 45023261090 (2026-11-22). It was **never
+  parked here**: the third run was traced and fixed the same day, in jc-63, and its input went
+  straight to `test/fuzz/corpus/mslogic/redbutton-swimming-chip-template`. 🔴 **The first two red
+  runs were not acted on**, so for nine weeks this directory's "none right now" was false — those
+  reproducers existed only as CI artifacts (both replay the same defect, checked by hand on
+  2026-11-22). A red button wired to a cell holding a Swimming Chip woke it as a monster, and its
+  first move hit `_assert(!"Unknown creature trying to move")`. This time the trace was the first
+  thing done, and the warning printed just before the assert (`Non-creature 6C`) led straight to
+  the guard: the clone path excluded plain Chip and nothing else. See `FORK.md` item 53.

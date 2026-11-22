@@ -363,7 +363,7 @@ jobs:
   # a scheme like this quietly becomes machine-specific.
   #
   # ⚠ Know what it does NOT cover before trusting it: measured, it detects 2 of
-  # the 33 NO_FIX_* engine toggles, and raising the tick or walk count was tried
+  # the 35 NO_FIX_* engine toggles, and raising the tick or walk count was tried
   # and bought nothing. See test/golden/golden.c. run-corpus.ps1, over the
   # maintainer's real solution collection, is still what decides a release --
   # and it now HAS a job: .github/workflows/corpus.yml, dispatch-only because
