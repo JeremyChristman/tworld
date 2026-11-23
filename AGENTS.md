@@ -110,7 +110,7 @@ that is no longer true**: jc-57's direct cases for `movelaw_block()` and `movela
 fail the plain pass with real assertions. Escalating the whole 2026-09-11 census through `-Sanitize`
 found it catches **7 of 949 plain-pass survivors, 0.7%** — small, and not a reason to skip it.
 
-⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 93% of the 23,952.
+⚠ **Check counts are a smoke alarm, not a measure of reach.** Three files are 93% of the 23,981.
 Mutation kill rate is the number that means something, and since 2026-09-11 it is measured rather
 than asserted: `mutate.ps1` breaks each source on purpose and counts how often the suite notices.
 The figures live in [`docs/mutation-baseline.tsv`](docs/mutation-baseline.tsv), never in prose.
@@ -124,7 +124,7 @@ new case). See `CLAUDE.md` §5 and
 *decisions* are tested under Qt's offscreen platform; its pixels are not), and **five of the 35
 `NO_FIX_*` toggles**. Both are measured rather than impressions: the differential matrix
 (`test/run-nofix.ps1`) holds a witness for 18 of the 35, a named unit case guards 12 of the other 17,
-and the golden master alone distinguishes only 2. The remaining five are intra-tick, recorded with
+and the golden master alone distinguishes only 1 (2 before jc-64). The remaining five are intra-tick, recorded with
 the measurement that withdrew each. The matrix declares both counts on its `#!EXPECT` line and the
 runner requires them **exactly**, so losing a witness or a guard fails the run instead of quietly
 moving a toggle into the unguarded list. Read §5 before claiming a green run means more than it does.

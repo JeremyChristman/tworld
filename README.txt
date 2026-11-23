@@ -1,5 +1,5 @@
 ==============================================================================
-  Tile World  --  Jeremy Christman's fork                    build jc-63
+  Tile World  --  Jeremy Christman's fork                    build jc-64
 ==============================================================================
 
   1. What this is
@@ -529,6 +529,34 @@ jc-44 is the exception, and deliberately so: it changes no engine code at all,
 only the checks that decide whether a damaged FILE is refused, so there is
 nothing for a solution corpus to measure. What was done instead is described in
 that entry.
+
+
+jc-64  --  An exit on a clone machine no longer lets Chip in
+------------------------------------------------------------
+
+  * UNDER MS, CHIP CAN NO LONGER STEP ONTO AN EXIT THAT SITS ON A CLONE
+    MACHINE. In the original Microsoft game that square stops him the
+    way a wall does, and level designers use it that way: 247 levels in
+    40 sets in the maintainer's collection have one. Since jc-6 this
+    fork had let Chip onto any clone machine he could otherwise enter,
+    to match SuperCC, so he walked onto such an exit and won. SuperCC
+    jc-47 now refuses that square, and so does this build: exactly as a
+    wall there would refuse him, whether he walks, slides on ice or a
+    force floor, steps out of a teleport or follows a mouse click, with
+    the same facing and the same random numbers afterwards.
+
+  * ONLY THE EXIT. Official Tile World refuses Chip every square with a
+    clone machine underneath, but whether the original game does for a
+    computer chip, a key, boots, a door or plain floor on one is not
+    settled, so those are still entered exactly as before. Lynx is
+    unchanged.
+
+  * THIS CHANGES RECORDED SOLUTIONS, ON PURPOSE. 4 of the maintainer's
+    won by stepping onto such an exit and no longer replay: d-bomb #64,
+    JimmyV1 #29, and TomP3 #58 (with its copy in TomP3Lynx). SuperCC
+    jc-47 rejects the same 4, and official Tile World always did. Every
+    other recorded solution replays exactly as on jc-63: 22,954 valid
+    and 1,242 invalid across the 328 level sets with solutions to check.
 
 
 jc-63  --  A red button no longer copies Chip

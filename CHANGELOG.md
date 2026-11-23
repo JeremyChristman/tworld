@@ -23,6 +23,34 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+## jc-64 — 2026-11-23
+
+Under MS an exit sitting on a clone machine refuses Chip, as a wall does -- the maintainer's ruling
+that this is MSCC's rule, following SuperCC jc-47. Exactly 4 recorded solutions stop replaying, the
+same 4 SuperCC jc-47 lost and official Tile World 2.3.1 already rejected.
+
+### Changed
+- **`FIX_CHIP_ONTO_CLONER` no longer admits Chip onto an EXIT on a clone machine** (`mslogic.c`
+  `canmakemove()`, FORK.md item 54). jc-6 copied SuperCC's rule that Chip may enter a clone-machine
+  cell whose top tile is not a creature; SuperCC jc-47 excepts the exit, and so does this: its
+  `return TRUE` gained `&& cellat(to)->top.id != Exit`, and the cell falls through to upstream's
+  blanket refusal, the same `FALSE` a wall gets. **Exit only, by the maintainer's decision**: a
+  chip, key, boots, door, hint or floor on a clone machine still lets Chip in, though official Tile
+  World refuses those too. No new toggle; `-DNO_FIX_CHIP_ONTO_CLONER` still restores upstream.
+  Corpus against jc-63 (334 sets): 22,958 → 22,954 valid; exactly 4 sets differ, each by one level
+  going invalid -- d-bomb #64, JimmyV1 #29, TomP3 #58 and its TomP3Lynx copy. Lynx unchanged.
+
+### Changed (tests)
+- Four new `mslogic_test.c` cases against a WALL in the same cell (walking into it, ice reversing
+  Chip, a random force floor's PRNG value) plus floor, an IC chip and a key on a clone machine still
+  entered; floor 364 → 393. On jc-63's engine the 3 refusal cases fail (8 checks). Four planted
+  defects, all caught.
+- **Golden master re-baselined by one row, deliberately**: CCLP2 #57 "Quad-Boot" (won in 9 ticks →
+  running at 400), where the walker had won through an exit on a clone machine. It was
+  `NO_FIX_CHIP_ONTO_CLONER`'s only golden row and now reads the same as a `-DNO_FIX_CHIP_ONTO_CLONER`
+  build, so the golden master's reach is 1 of 35 toggles (was 2); corrected in `golden.c`,
+  `run-golden.ps1`, `run-nofix.ps1` and `CLAUDE.md`. The `NO_FIX_*` matrix is unchanged.
+
 ### Fixed (tooling)
 - **`test\run-playtest.ps1`'s GUI half waits for the window instead of guessing.** It slept a fixed
   5 seconds and looked once, and on the laptop the window takes about 8.8 s to appear (measured

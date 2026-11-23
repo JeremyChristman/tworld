@@ -274,13 +274,13 @@ on the same revert: `movelaw_creature` traps (the fuzz corpus happens to drive i
 `movelaw_block` does **not**, because nothing called it with a bad id. Both halves are needed, which
 is why jc-57 also added direct cases for those helpers.
 
-Current state: **19 unit runs, 23,952 checks; 13 end-to-end cases, 38 checks; 4 Qt runs, 245 checks;
+Current state: **19 unit runs, 23,981 checks; 13 end-to-end cases, 38 checks; 4 Qt runs, 245 checks;
 1,806 golden-master digests; 18 NO_FIX_* witnesses; 0 failures.**
 
-🔴 **DO NOT READ 23,952 AS A MEASURE OF REACH. Three files are 93% of it.**
+🔴 **DO NOT READ 23,981 AS A MEASURE OF REACH. Three files are 93% of it.**
 `random_test.c` alone is **15,534** — 65%, because it asserts a handful of properties a couple of
 thousand times each — then `tile_test.c` 5,211 and `solution_test.c` 1,460. That leaves about
-**1,747 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
+**1,776 checks for everything else**, including `mslogic.c` (210 KB), `tworld.c`, `lxlogic.c`,
 `series.c`, `encoding.c`, `play.c`, `res.c` and `generic/`.
 
 That is not padding: `random_test.c` kills 9 of 10 mutations, including all four LCG constants, so
@@ -309,7 +309,7 @@ layers that can see an engine behavior change**, so run them after any edit to `
   entire automated replay gate was one end-to-end case with a single valid and a single invalid
   solution, and a push that altered engine behavior went green everywhere.
 
-  ⚠ **Know its reach before quoting it: 2 of 35 `NO_FIX_*` toggles, measured** (jc-60's did not move a digest, nor did jc-63's two) — and neither more
+  ⚠ **Know its reach before quoting it: 1 of 35 `NO_FIX_*` toggles since jc-64, measured** (it was 2: `NO_FIX_CHIP_ONTO_CLONER`'s one row, CCLP2 #57, was Chip winning through an exit on a clone machine, which jc-64 refuses with the fix on as well; jc-60's toggle did not move a digest, nor did jc-63's two) — and neither more
   ticks nor more walks helps. It catches gross change (a mutation to Chip's idle timer moved 577 of
   1,806 rows). It is a smoke alarm, not an audit, and **`run-corpus.ps1` still decides a release.**
   It now has a CI job of its own — [`.github/workflows/corpus.yml`](.github/workflows/corpus.yml),

@@ -2341,6 +2341,60 @@ exactly what's mine:
    earlier reproducers are not committed: they replay the same defect through the same guard the
    committed one pins, and were checked by hand instead.
 
+54. **jc-64: an EXIT on a clone machine refuses Chip, as a wall does** (`mslogic.c` `canmakemove()`,
+   the `FIX_CHIP_ONTO_CLONER` block; `test/mslogic_test.c`; `test/golden/engine-snapshot.tsv`).
+
+   **The ruling.** The maintainer, 2026-11-23: in MSCC Chip cannot walk onto a square with an exit
+   on the top layer and a clone machine on the bottom. SuperCC changed first (its jc-47): in
+   `MSCreature.tryMove` the line `if (newTileBG == CLONE_MACHINE && (!isChip ||
+   newTileFG.isCreature())) newTileFG = newTileBG;` gained `|| newTileFG == EXIT`, so the move is
+   judged against the clone machine and refused exactly as a wall refuses it. This fork's jc-6
+   (`FIX_CHIP_ONTO_CLONER`, documented in its header in `mslogic.c`) had copied SuperCC's OLD rule -- Chip may enter a clone-machine
+   cell whose top tile is not a creature -- so the copy follows: its `return TRUE` gained
+   `&& cellat(to)->top.id != Exit`, and the exit falls through to upstream's blanket `return FALSE`.
+   **EXIT ONLY, by the maintainer's decision**: official Tile World refuses Chip every clone-machine
+   cell, but whether MSCC does for a chip, key, boots, door, hint or floor on one is not settled,
+   so those stay as SuperCC has them. No new toggle: `-DNO_FIX_CHIP_ONTO_CLONER` still restores
+   upstream, which refuses the exit too.
+
+   **Scope.** 7,468 such cells in 247 levels of 40 sets in the collection (TomP3 and TomP3Lynx over
+   1,100 each); in the committed `data/`, CCLP2 #57 "Quad-Boot", #99 and #109.
+
+   **Measured.**
+   - Corpus (`run-corpus.ps1`, 334 sets) against jc-63's deployed executable: 22,958 → **22,954
+     valid**, 1,238 → 1,242 invalid; **exactly 4 sets differ, each by one level going invalid**:
+     d-bomb #64, JimmyV1 #29, TomP3 #58 "TIME WARP" and its TomP3Lynx copy. They are the same 4
+     SuperCC jc-47 lost, and the same 4 the official-baseline record listed as valid only in this
+     fork (official 2.3.1 already rejected them), so all three engines now agree on them. The
+     `.err` differences in TomP3/TomP3Lynx are exactly #58's missing "solution time of 6 ticks,
+     but replay took 5" clock-offset warning pair: the 6-tick solution no longer finishes.
+   - Golden master: **one row moved, deliberately re-baselined** -- CCLP2.dat ms 57 "Quad-Boot",
+     `3a2e471bebf44637 -> d11d882cf6eb3b80`, won in 9 ticks -> running at 400: the walker had won
+     through one of the four exits on clone machines around Chip's start. It was
+     `NO_FIX_CHIP_ONTO_CLONER`'s only golden row, and a `-DNO_FIX_CHIP_ONTO_CLONER` build gives the
+     same `d11d882cf6eb3b80`, measured, so the golden master's reach drops from 2 toggles to 1. The
+     row now pins the new term instead: delete it and Quad-Boot is won in 9 ticks again.
+   - `NO_FIX_*` matrix: unchanged, all 18 witnesses (seed 66, `CHIP_ONTO_CLONER`'s, included) and
+     the ratchet `witnesses=18 guarded=12`.
+   - Unit: four new cases, floor 364 -> 393. The oracle is a WALL in the same cell: walking into
+     it (position, Chip's tile, not won, the cell unchanged, plus the wall run itself pinned so the
+     comparison cannot be empty), ice reversing him, and a random force floor ringed by the square
+     drawing exactly the wall run's PRNG value; and FLOOR, an IC chip and a key on a clone machine
+     still entered and collected. On jc-63's engine exactly the 3 refusal cases fail (8 checks).
+     Planted defects, all caught: the wrong tile (`Exit_Extra_1`), the bottom layer tested instead
+     of the top, every clone machine refused (`&& FALSE`), and the exit refused only off ice.
+
+   **From review** (two agents, the line and its tests; bypasses, side effects and the gates).
+   Neither found a way in or a change to anything but Chip entering that square. Both measured
+   parity with a wall by hand, tick for tick, over 12 and 9 scenarios (walk, ice, force floors with
+   overrides, a random force floor, mouse goals, click-early, one and two teleports, block pushes):
+   identical under jc-64, and 8 of them won through the exit under jc-63. Taken: the wall oracle
+   pinned, the random-force-floor RNG case, the jc-8 comment's quote of SuperCC brought up to date,
+   and the golden master's reach corrected in `golden.c`, `run-golden.ps1`, `run-nofix.ps1` and
+   `CLAUDE.md`. Teleport exits needed nothing: choosing one already refused every buried clone
+   machine (`CMM_TELEPORTPUSH`), and `Exited_Chip`/`Exit_Extra_1`/`Exit_Extra_2` were already walls
+   to Chip in both engines.
+
 
 ## Testing
 
