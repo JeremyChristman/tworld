@@ -326,7 +326,7 @@ int main(void)
     int warn_before;
 
     tw_begin("mslogic");
-    tw_expect_atleast(364);
+    tw_expect_atleast(393);
 
     /* ================================================================== */
     tw_case("every committed mslogic fuzz corpus input still plays");
@@ -1601,6 +1601,169 @@ int main(void)
 	CHECK_MSG(teststate.map[dest].bot.id == Block_Static,
 		  "the block should still be under Chip, revealed when he steps"
 		  " off; the cell now holds %d", teststate.map[dest].bot.id);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 an EXIT on a clone machine refuses Chip exactly as a wall does (jc-64)");
+    {
+	/* FIX_CHIP_ONTO_CLONER lets Chip onto a clone machine whose top tile is
+	 * not a creature, as SuperCC does -- EXCEPT, since jc-64, an exit. The
+	 * maintainer's ruling: in MSCC that square refuses Chip the way a wall
+	 * does, and SuperCC jc-47 refuses it by judging the move against the clone
+	 * machine. Before jc-64 this engine walked him onto it and he won.
+	 *
+	 * The oracle is a WALL in the same cell, not an observed output: the same
+	 * input must leave Chip in the same cell, facing the same way, with the
+	 * level not won. A plain exit there is won ("reaching the exit wins the
+	 * level" above), so the refusal is the clone machine's, not the exit's. */
+	int	dest = 6 + CXGRID * 5;
+	int	wallpos, walltile;
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_WALL);
+	CHECK_INT(startlevel(&lv), TRUE);
+	r = runticks(20, CmdEast);
+	CHECK_INT(r, 0);
+	wallpos = chippos();
+	walltile = teststate.map[wallpos].top.id;
+	/* Pin the oracle itself, or the comparisons below could agree on
+	 * nothing: against a wall Chip stays put and turns to face it. */
+	CHECK_INT(wallpos, 5 + CXGRID * 5);
+	CHECK_INT(walltile, crtile(Chip, EAST));
+
+	fix_init(&lv);
+	fix_border(&lv);
+	fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	fix_settop(&lv, 6, 5, FIX_EXIT);		/* an exit ...              */
+	fix_setbot(&lv, 6, 5, FIX_CLONEMACHINE);	/* ... on a clone machine   */
+	CHECK_INT(startlevel(&lv), TRUE);
+	CHECK_INT(teststate.map[dest].top.id, Exit);
+	CHECK_INT(teststate.map[dest].bot.id, CloneMachine);
+	r = runticks(20, CmdEast);
+	CHECK_MSG(r == 0,
+		  "walking onto an exit on a clone machine returned %d; wanted 0,"
+		  " refused as a wall is (1 means Chip walked on and WON)", r);
+	CHECK_MSG(chippos() == wallpos,
+		  "Chip ended at (%d,%d); against a wall he ends at (%d,%d)",
+		  chipx(), chipy(), wallpos % CXGRID, wallpos / CXGRID);
+	CHECK_MSG(teststate.map[chippos()].top.id == walltile,
+		  "Chip's tile is %d; against a wall it is %d (his facing differs)",
+		  teststate.map[chippos()].top.id, walltile);
+	CHECK_MSG(teststate.map[dest].top.id == Exit
+		      && teststate.map[dest].bot.id == CloneMachine,
+		  "the refused cell changed: top %d, bottom %d",
+		  teststate.map[dest].top.id, teststate.map[dest].bot.id);
+    }
+
+    /* ================================================================== */
+    tw_case("🔴 ice against an EXIT on a clone machine reverses Chip, as a wall does (jc-64)");
+    /* The same layout as "ice against a wall REVERSES Chip" above, with the
+     * wall at 13 replaced by an exit on a clone machine. A slide is where the
+     * WAY a move is refused shows: a refusal that stopped Chip instead of
+     * turning him would leave him on the ice. He must come all the way back. */
+    fix_init(&lv);
+    fix_border(&lv);
+    fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+    for (i = 6 ; i <= 12 ; ++i)
+	fix_settop(&lv, i, 5, FIX_ICE);
+    fix_settop(&lv, 13, 5, FIX_EXIT);
+    fix_setbot(&lv, 13, 5, FIX_CLONEMACHINE);
+    CHECK_INT(startlevel(&lv), TRUE);
+    runticks(4, CmdEast);
+    r = runticks(120, CmdNone);
+    CHECK_MSG(r == 0, "sliding into an exit on a clone machine returned %d, wanted 0", r);
+    CHECK_MSG(chipx() == 5, "after the bounce Chip is at x=%d, wanted 5 (as off a wall)", chipx());
+    CHECK_INT(chipy(), 5);
+
+    /* ================================================================== */
+    tw_case("🔴 a random force floor ringed by EXITS on clone machines draws exactly as walls do (jc-64)");
+    {
+	/* RNG drift is this fork's classic desync: a refusal that drew one more
+	 * (or one fewer) random number than a wall would send every later random
+	 * force floor and blob somewhere else. Chip steps east onto a force floor
+	 * that carries him onto a random force floor whose other three sides are
+	 * the square under test. Each time the random floor sends him back west,
+	 * the force floor returns him, so for 200 ticks he is refused by the ring
+	 * again and again (measured in review: about 78 draws and 34 refusals).
+	 * The run ringed by exits on clone machines must end exactly where the run
+	 * ringed by walls ends -- same cell, same tile, same PRNG value -- and the
+	 * PRNG must have moved AFTER his first ride onto the floor, or the
+	 * comparison could rest on a single draw and no refusal at all. (From the
+	 * jc-64 reviews, which measured this by hand.) */
+	unsigned long	first[2], value[2];
+	int		pos[2], tile[2], won[2], k;
+
+	for (k = 0 ; k < 2 ; ++k) {
+	    fix_init(&lv);
+	    fix_border(&lv);
+	    fix_settop(&lv, 7, 10, FIX_CHIP_SOUTH);
+	    fix_settop(&lv, 8, 10, FIX_SLIDE_EAST);
+	    fix_settop(&lv, 9, 10, FIX_SLIDE_RANDOM);
+	    fix_settop(&lv, 10, 10, k ? FIX_EXIT : FIX_WALL);
+	    fix_settop(&lv, 9, 9, k ? FIX_EXIT : FIX_WALL);
+	    fix_settop(&lv, 9, 11, k ? FIX_EXIT : FIX_WALL);
+	    if (k) {
+		fix_setbot(&lv, 10, 10, FIX_CLONEMACHINE);
+		fix_setbot(&lv, 9, 9, FIX_CLONEMACHINE);
+		fix_setbot(&lv, 9, 11, FIX_CLONEMACHINE);
+	    }
+	    CHECK_INT(startlevel(&lv), TRUE);
+	    runticks(4, CmdEast);
+	    first[k] = teststate.mainprng.value;
+	    won[k] = runticks(200, CmdNone);
+	    pos[k] = chippos();
+	    tile[k] = teststate.map[pos[k]].top.id;
+	    value[k] = teststate.mainprng.value;
+	}
+	CHECK_MSG(value[0] != first[0],
+		  "the wall run drew no random number after Chip's first step (%lu),"
+		  " so he was never sent back into the ring and the comparison is"
+		  " empty", value[0]);
+	CHECK_MSG(won[1] == 0, "the exit run returned %d; wanted 0 (1 = won through the exit)", won[1]);
+	CHECK_MSG(pos[1] == pos[0] && tile[1] == tile[0],
+		  "the exit run ended at (%d,%d) tile %d; the wall run at (%d,%d) tile %d",
+		  pos[1] % CXGRID, pos[1] / CXGRID, tile[1],
+		  pos[0] % CXGRID, pos[0] / CXGRID, tile[0]);
+	CHECK_MSG(value[1] == value[0],
+		  "the PRNG drifted: %lu after the exit run, %lu after the wall run",
+		  value[1], value[0]);
+    }
+
+    /* ================================================================== */
+    tw_case("Chip still walks onto FLOOR, a CHIP and a KEY on a clone machine -- EXIT only (jc-64)");
+    {
+	/* The scope, by the maintainer's decision: official Tile World refuses
+	 * Chip every clone-machine cell, but whether MSCC does for anything but
+	 * the exit is not settled, so the rest stays as SuperCC has it. A wall
+	 * beyond each cell stops Chip ON it. These pass before jc-64 too; they
+	 * fail if the refusal is widened past the exit. */
+	static int const tops[3] = { FIX_FLOOR, FIX_ICCHIP, 0x64 /* blue key */ };
+	int	k;
+
+	for (k = 0 ; k < 3 ; ++k) {
+	    fix_init(&lv);
+	    fix_border(&lv);
+	    lv.chips = 1;
+	    fix_settop(&lv, 5, 5, FIX_CHIP_SOUTH);
+	    fix_settop(&lv, 6, 5, tops[k]);
+	    fix_setbot(&lv, 6, 5, FIX_CLONEMACHINE);
+	    fix_settop(&lv, 7, 5, FIX_WALL);
+	    CHECK_INT(startlevel(&lv), TRUE);
+	    runticks(8, CmdEast);
+	    CHECK_MSG(chipx() == 6 && chipy() == 5,
+		      "Chip did not walk onto tile 0x%02X on a clone machine: he is"
+		      " at (%d,%d)", tops[k], chipx(), chipy());
+	    if (tops[k] == FIX_ICCHIP)
+		CHECK_MSG(chipsneeded() == 0,
+			  "Chip stood on a CHIP on a clone machine and did not collect"
+			  " it: %d still needed", chipsneeded());
+	}
+	CHECK_MSG(chipsneeded() == 1 && possession(Key_Blue) == 1,
+		  "the last pass walked onto a KEY on a clone machine: wanted it"
+		  " collected (keys %d) and the chip count untouched (%d)",
+		  possession(Key_Blue), chipsneeded());
     }
 
     /* ================================================================== */

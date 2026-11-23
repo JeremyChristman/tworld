@@ -8,7 +8,7 @@ WHAT THE MATRIX IS FOR
 
 mslogic.c carries 35 NO_FIX_* toggles, each isolating one engine fix from the
 desync project (docs/adr/0002). Nothing tested any of them: the golden master
-can distinguish only two of the 35 over all 903 committed levels, because a
+can distinguish only one of the 35 over all 903 committed levels (two before jc-64), because a
 random walk through a real level never CONSTRUCTS a tank on a cloner or a block
 on a teleport.
 

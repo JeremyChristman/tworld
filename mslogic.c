@@ -72,12 +72,15 @@
  * desyncs, 0 regressions -- the largest single win in this fork.
  * canmakemove() refused a clone-machine cell to every creature; SuperCC refuses
  * it to everyone except Chip, and only when the cloner's top tile is not a
- * creature. Measured: 19 of the 34 CHIP-POS desyncs were Tile World stalling
+ * creature (nor, since SuperCC jc-47 and this fork's jc-64, an exit -- see
+ * below). Measured: 19 of the 34 CHIP-POS desyncs were Tile World stalling
  * Chip, and 9 of those had SuperCC's Chip standing on a cloner. The other ten
  * stalls turned out to be downstream of the same refusal.
  * Deliberately NOT applied while picking a teleport exit -- SuperCC forces the
  * exit tile to CLONE_MACHINE there and refuses it even to Chip, and allowing it
  * cost 7 teleport levels. See the long note in canmakemove().
+ * Since jc-64 NOT to an EXIT on a clone machine either: in MSCC that square
+ * refuses Chip as a wall does (the maintainer's ruling, SuperCC jc-47).
  * Build with -DNO_FIX_CHIP_ONTO_CLONER to restore the old behavior.
  */
 #if !defined(NO_FIX_CHIP_ONTO_CLONER) && !defined(FIX_CHIP_ONTO_CLONER)
@@ -1854,7 +1857,8 @@ static int canmakemove(creature const* cr, int dir, int flags) {
          * final `|| newTileBG == CLONE_MACHINE`, and then
          *     if (newTileBG == CLONE_MACHINE && (!isChip || newTileFG.isCreature()))
          *         newTileFG = newTileBG;
-         * leaves newTileFG alone, because a pickup is not a creature -- so
+         * (since SuperCC jc-47 also `|| newTileFG == EXIT`) leaves newTileFG
+         * alone, because a pickup is neither a creature nor an exit -- so
          * tryEnter() runs on the key/boot and Chip picks it up.
          * Judge the move by the pickup, as SuperCC does; the clone-machine
          * question is then settled by the relaxed rule at the end.
@@ -2259,8 +2263,25 @@ static int canmakemove(creature const* cr, int dir, int flags) {
          * different teleporter and cost 7 previously-valid replays, ALL of them
          * teleports: BHLS1#74, DanM1#114, EricS1#120, Jacques_Medium#183,
          * TomP2#103, TomP3#108, TomP3#144. Same shape as the jc-3
-         * FIX_TELEPORT_BLOCK_ONTO_CHIP scoping. */
+         * FIX_TELEPORT_BLOCK_ONTO_CHIP scoping.
+         *
+         * MOD (Jeremy, jc-64): ⚠ and NOT an EXIT on a clone machine. The
+         * maintainer's ruling (2026-11-23): in MSCC that square refuses Chip as a
+         * wall does, and SuperCC jc-47 made it so -- its condition above became
+         *     if (newTileBG == CLONE_MACHINE
+         *             && (!isChip || newTileFG.isCreature() || newTileFG == EXIT))
+         * so the exit is judged against CLONE_MACHINE, and refused. That is the
+         * blanket rule below, which is upstream's: this exception simply stops
+         * covering the exit. EXIT ONLY, by the maintainer's decision -- a chip, a
+         * key, boots, a door he has the key for, a hint or floor on a clone
+         * machine still lets Chip in, as SuperCC still does. Measured over the
+         * maintainer's 334 recorded sets against jc-63: exactly 4 solutions stop
+         * replaying, each one that won by stepping onto such an exit -- d-bomb
+         * #64, JimmyV1 #29, TomP3 #58 and its TomP3Lynx copy -- the same 4 that
+         * SuperCC jc-47 lost and official Tile World 2.3.1 already rejected;
+         * nothing else moved. */
         if (cr->id == Chip && !iscreature(cellat(to)->top.id)
+                           && cellat(to)->top.id != Exit
                            && !(flags & CMM_TELEPORTPUSH))
             return TRUE;
 #endif

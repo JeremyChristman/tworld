@@ -50,6 +50,13 @@
  * Every one of the 32 NO_FIX_* engine toggles was built separately and checked
  * against this baseline. It detects TWO of them: NO_FIX_BLUE_BUTTON_TIMING
  * (26 rows) and NO_FIX_CHIP_ONTO_CLONER (1 row). The other 30 are invisible.
+ * ⚠ Since jc-64 it is ONE: NO_FIX_CHIP_ONTO_CLONER's row, CCLP2 #57
+ * "Quad-Boot", was the walker winning in 9 ticks through an exit sitting on a
+ * clone machine, and jc-64 refuses that square with the fix on too, so the row
+ * reads the same either way (measured: both builds give d11d882cf6eb3b80).
+ * The row did not lose its value, it changed what it pins: it is now the only
+ * guard IN CI on jc-64's `!= Exit` term in canmakemove() (the local corpus run
+ * guards it too) -- delete the term and Quad-Boot is won in 9 ticks again.
  *
  * That is not a bug to be tuned away, and two experiments say so:
  *
