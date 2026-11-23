@@ -23,6 +23,17 @@ stay attached to something someone can see.
 
 ## Unreleased
 
+### Fixed (tooling)
+- **`test\run-playtest.ps1`'s GUI half waits for the window instead of guessing.** It slept a fixed
+  5 seconds and looked once, and on the laptop the window takes about 8.8 s to appear (measured
+  2026-11-22 with the scratch install's 662 sets: jc-62 8.73 s, jc-63 8.83 s). So the GUI half had
+  failed there on every run with "no main window ever appeared", which is exactly what a
+  static-link failure looks like, and laptop releases were checked `-NoGui` instead. A control
+  settled it: the published jc-62, which passed 23 of 23 on the desktop, failed identically. Now
+  `Wait-MainWindow` polls for up to 30 s and still never looks before the 5-second mark, so
+  "starts and stays running" means what it did. First run: jc-63's published asset, 23 of 23 on
+  the laptop.
+
 ## jc-63 — 2026-11-22
 
 A red button no longer clones any form of Chip. Found by the weekly fuzz soak on its third report:

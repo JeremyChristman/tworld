@@ -456,13 +456,35 @@ public class TWPT {
         $guiArgs = @("-S", (Join-Path $scratch "save"), "-L", "sets", "-D", "data", "-R", "res")
         if (Test-Path (Join-Path $scratch "sets/$guiSet")) { $guiArgs += $guiSet }
 
+        # 🔴 WAIT FOR THE WINDOW; DO NOT GUESS HOW LONG IT TAKES. This used to be
+        # a fixed `Start-Sleep -Seconds 5` and one look. Measured 2026-11-22 on
+        # the laptop: with this scratch install (662 sets) jc-62 and jc-63 both
+        # draw their window at about 8.8 s, so the GUI half had failed there on
+        # every run -- "no main window ever appeared" -- while the desktop, which
+        # is faster, passed. Poll instead, and give up only after 30 s; a real
+        # static-link or Qt-plugin failure still never shows a window at all.
+        function Wait-MainWindow([System.Diagnostics.Process]$p, [int]$TimeoutSec = 30) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                Start-Sleep -Milliseconds 250
+                $p.Refresh()
+                if ($p.HasExited -or $p.MainWindowHandle -ne 0) { break }
+            } while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec)
+            # Let the first frame settle before anything is clicked or typed, and
+            # never look sooner than the old 5 s: "starts and stays running" still
+            # means alive five seconds after launch.
+            if (-not $p.HasExited -and $p.MainWindowHandle -ne 0) {
+                Start-Sleep -Milliseconds ([int](1000 * [Math]::Max(1, 5 - $sw.Elapsed.TotalSeconds)))
+                $p.Refresh()
+            }
+        }
+
         # 🔴 THE PID COMES FROM -PassThru AND NOTHING IS EVER KILLED BY NAME.
         # The maintainer may well have his own Tile World open; killing by
         # process name would take it with us.
         $proc = Start-Process -FilePath $exe -ArgumentList $guiArgs -PassThru -WorkingDirectory $scratch
         try {
-            Start-Sleep -Seconds 5
-            $proc.Refresh()
+            Wait-MainWindow $proc
             Check "the GUI starts and stays running" (-not $proc.HasExited) `
                   ("exited immediately with " + $(if ($proc.HasExited) { $proc.ExitCode } else { "n/a" }))
 
@@ -588,8 +610,7 @@ public class TWPT {
                                 (New-Object Text.UTF8Encoding $false))
         $proc2 = Start-Process -FilePath $exe -ArgumentList $guiArgs -PassThru -WorkingDirectory $scratch
         try {
-            Start-Sleep -Seconds 5
-            $proc2.Refresh()
+            Wait-MainWindow $proc2
             if (-not $proc2.HasExited -and $proc2.MainWindowHandle -ne 0) {
                 $h2 = $proc2.MainWindowHandle
                 $null = [TWPT]::ShowWindow($h2, 9)
